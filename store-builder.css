@@ -118,3 +118,42 @@
 @media (max-width: 1150px) { .store-main { padding-inline: 30px; }.store-topbar { padding-inline: 30px; }.metric-grid { grid-template-columns: repeat(2,1fr); }.dashboard-columns { grid-template-columns: 1fr; } }
 @media (max-width: 800px) { .store-sidebar { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: 265px; transform: translateX(-100%); transition: transform .22s ease; box-shadow: 12px 0 35px rgba(20,25,45,.2); }.store-sidebar.open { transform: none; }.sidebar-close, .mobile-menu-button { display: inline-block; }.sidebar-overlay { position: fixed; z-index: 30; inset: 0; background: rgba(20,25,42,.4); }.sidebar-overlay.open { display: block; }.store-topbar { height: 62px; padding: 0 18px; }.topbar-actions { gap: 11px; }.save-indicator { display: none; }.store-main { padding: 27px 18px 55px; }.view-heading { align-items: flex-start; flex-direction: column; margin-bottom: 22px; }.view-heading .primary-button, .view-heading .secondary-button { align-self: flex-start; }.theme-editor-layout { grid-template-columns: 1fr; }.theme-controls { border-right: 0; border-bottom: 1px solid var(--admin-line); }.section-stack { display: flex; gap: 5px; overflow-x: auto; }.section-item { min-width: 155px; margin: 0; }.section-actions { opacity: 1; }.editor-canvas { padding: 15px 10px 18px; }.store-preview-frame { min-height: 0; }.store-preview-frame.mobile { width: min(390px,100%); }.preview-product-grid { grid-template-columns: repeat(3, minmax(85px,1fr)); }.navigation-layout { grid-template-columns: 1fr; }.collection-grid, .marketing-grid { grid-template-columns: 1fr 1fr; }.toolbar-row { flex-wrap: wrap; }.search-field { width: 100%; }.filter-pills { order: 3; flex-basis: 100%; }.customer-stats { grid-template-columns: 1fr; }.form-grid { grid-template-columns: 1fr; }.store-admin-body label.wide { grid-column: auto; }.domain-box { align-items: flex-start; flex-wrap: wrap; }.domain-box > div { min-width: 180px; }.modal-form .form-row { grid-template-columns: 1fr; } }
 @media (max-width: 520px) { .breadcrumb-parent { display: none; }.topbar-actions .preview-link { display: none; }.health-banner { align-items: flex-start; flex-wrap: wrap; }.health-copy { min-width: 140px; }.health-percent { margin-left: 47px; margin-top: -4px; }.banner-close { margin-left: auto; }.metric-grid { grid-template-columns: 1fr 1fr; gap: 9px; }.metric-tile { padding: 13px; min-height: 145px; }.metric-tile > strong { font-size: 1.2rem; }.sparkline { right: 11px; bottom: 12px; transform: scale(.8); transform-origin: right bottom; }.content-card { padding: 15px; }.card-heading { gap: 9px; }.heading-actions { width: 100%; }.heading-actions button { flex: 1; }.collection-grid, .marketing-grid { grid-template-columns: 1fr; }.theme-control-header { padding: 14px; }.preview-banner { min-height: 240px; padding: 23px; }.preview-banner-content { max-width: 78%; }.preview-visual { right: -7%; width: 43%; opacity: .5; }.preview-product-grid { gap: 6px; }.preview-product-image { height: 72px; }.store-preview-links { gap: 7px; }.store-preview-nav { padding: 12px; }.preview-products-block { padding: 18px 12px; }.modal-card { padding: 20px 17px; }.toast { right: 15px; bottom: 15px; left: 15px; justify-content: center; } }
+
+/* Manual payment admin page */
+.payments-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) .85fr; gap: 18px; align-items: start; }
+.whatsapp-preview-card { position: sticky; top: 92px; overflow: hidden; color: #fff; border: 0; background: radial-gradient(circle at 15% 10%, rgba(255,255,255,.22), transparent 28%), linear-gradient(145deg,#1f9f72,#136a53); box-shadow: 0 18px 40px rgba(19,106,83,.16); }
+.whatsapp-preview-card .overline { color: rgba(255,255,255,.72); }
+.whatsapp-preview-card h2 { margin: 0 0 10px; font-family: "Plus Jakarta Sans", sans-serif; font-size: 1.35rem; letter-spacing: -.06em; }
+.whatsapp-preview-card p:not(.overline) { color: rgba(255,255,255,.78); font-size: .75rem; line-height: 1.7; }
+.payment-preview-icon { width: 44px; height: 44px; display: grid; place-items: center; margin-bottom: 18px; border-radius: 14px; color: #1f9f72; background: #fff; font-size: 1.05rem; font-weight: 900; }
+.payment-steps { display: grid; gap: 10px; margin: 20px 0; }
+.payment-steps div { display: grid; grid-template-columns: 28px 1fr; gap: 2px 10px; align-items: center; padding: 11px; border: 1px solid rgba(255,255,255,.16); border-radius: 9px; background: rgba(255,255,255,.1); }
+.payment-steps span { grid-row: span 2; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: #136a53; background: #fff; font-size: .65rem; font-weight: 900; }
+.payment-steps strong { font-size: .72rem; }
+.payment-steps small { color: rgba(255,255,255,.7); font-size: .62rem; }
+.whatsapp-preview-card .primary-button { width: 100%; color: #136a53; background: #fff; box-shadow: none; }
+.whatsapp-preview-card .primary-button:hover { color: #0c5b46; background: #f2fff9; }
+.connect-note .text-link { display: inline-flex; padding: 0; vertical-align: baseline; }
+@media (max-width: 900px) { .payments-layout { grid-template-columns: 1fr; } .whatsapp-preview-card { position: static; } }
+.ai-draft-button { justify-self: start; min-height: 34px; }
+.modal-form .file-field textarea { min-height: 74px; margin-top: 8px; border: 1px solid #e4e1fb; padding: 9px; border-radius: 6px; color: #4d5570; background: #fff; resize: vertical; }
+.order-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+.order-detail-grid section, .order-items-panel { padding: 14px; border: 1px solid #edf0f5; border-radius: 9px; background: #fbfbfd; }
+.order-detail-grid h3 { margin: 0 0 8px; color: #20283a; font-family: "Plus Jakarta Sans", sans-serif; }
+.order-item-line { display: grid; grid-template-columns: 42px 1fr auto; gap: 10px; align-items: center; padding: 9px 0; border-bottom: 1px solid #edf0f5; }
+.order-item-line:last-child { border-bottom: 0; }
+.order-item-line img { width: 42px; height: 42px; object-fit: cover; border-radius: 6px; }
+.order-item-line strong { display: block; font-size: .73rem; }
+.order-item-line small { color: #8b94a5; font-size: .64rem; }
+.order-total-line { display: flex; justify-content: space-between; padding-top: 13px; font-size: .9rem; }
+.wide-actions { flex-wrap: wrap; }
+.customer-profile { display: flex; gap: 14px; align-items: center; margin-bottom: 16px; }
+.customer-stat-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 9px; margin-bottom: 15px; }
+.customer-stat-grid div { padding: 12px; border: 1px solid #edf0f5; border-radius: 8px; background: #fbfbfd; }
+.customer-stat-grid span { display: block; color: #929aaa; font-size: .62rem; }
+.customer-stat-grid strong { display: block; margin-top: 4px; color: #20283a; }
+.customer-order-link { width: 100%; display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: center; padding: 10px 0; border: 0; border-bottom: 1px solid #edf0f5; color: #4e586c; background: none; text-align: left; }
+.customer-order-link small { color: #8e96a6; }
+.publish-box { margin-top: 18px; }
+.publish-box button { margin-left: 6px; }
+@media (max-width: 700px) { .order-detail-grid, .customer-stat-grid { grid-template-columns: 1fr; } .customer-order-link { grid-template-columns: 1fr; } }
