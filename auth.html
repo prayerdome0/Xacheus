@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Login — Xacheus</title>
+    <link rel="icon" href="assets/xacheus-icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="auth-page">
+    <main class="auth-shell container">
+      <a class="brand brand-image" href="index.html"><img src="assets/xacheus-icon.svg" alt="" /><span>Xacheus</span></a>
+      <section class="auth-card">
+        <div class="auth-tabs"><button class="active" data-auth-tab="register" type="button">Register</button><button data-auth-tab="login" type="button">Login</button></div>
+        <div>
+          <p class="eyebrow">Start Building Free</p>
+          <h1>Access your Xacheus dashboard.</h1>
+          <p>Create an account or log in to save AI website plans, payment confirmations, and business setup data.</p>
+        </div>
+        <form id="auth-form">
+          <label>Full name <input name="name" id="name" placeholder="Zacheus Simbaya" /></label>
+          <label>Email <input name="email" id="email" type="email" placeholder="you@example.com" required /></label>
+          <label>Password <input name="password" id="password" type="password" placeholder="At least 6 characters" required minlength="6" /></label>
+          <div class="form-row auth-buttons">
+            <button class="btn btn-primary" type="submit" data-mode="register">Create account</button>
+            <button class="btn btn-secondary" type="submit" data-mode="login">Log in</button>
+          </div>
+          <button class="btn btn-secondary full" id="google-login" type="button">Continue with Google</button>
+          <button class="text-button" id="reset-password" type="button">Forgot password?</button>
+          <p class="form-status" id="auth-status" aria-live="polite"></p>
+        </form>
+        <div class="auth-links">
+          <a href="index.html">← Back to website</a>
+          <a href="admin.html">Admin dashboard</a>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="auth.js"></script>
+  </body>
+</html>

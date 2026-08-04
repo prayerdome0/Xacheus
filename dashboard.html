@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dashboard — Xacheus</title>
+    <link rel="icon" href="assets/xacheus-icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-layout">
+      <aside class="app-sidebar">
+        <a class="brand brand-image" href="index.html"><img src="assets/xacheus-icon.svg" alt="" /><span>Xacheus</span></a>
+        <nav>
+          <a href="#overview" class="active">Dashboard</a>
+          <a href="builder.html">Real AI Builder</a>
+          <a href="ai-assistant.html">AI Assistant</a>
+          <a href="#create">Quick Plan</a>
+          <a href="#payment">Payment Confirmation</a>
+          <a href="#websites">My Websites</a>
+          <a href="admin.html" id="admin-link" hidden>Admin</a>
+        </nav>
+        <button class="btn btn-secondary full" id="logout-button">Log out</button>
+      </aside>
+      <section class="app-main">
+        <div class="app-topbar">
+          <div>
+            <p class="eyebrow">User dashboard</p>
+            <h1>Build, save, and confirm your business setup.</h1>
+          </div>
+          <div class="user-pill" id="user-pill">Checking account…</div>
+        </div>
+
+        <section class="app-grid" id="overview">
+          <article class="metric-card"><small>AI websites</small><strong id="website-count">0</strong><p>Saved website/store plans.</p></article>
+          <article class="metric-card"><small>Payment status</small><strong id="payment-status">Pending</strong><p>Admin confirms through WhatsApp.</p></article>
+          <article class="metric-card"><small>Support</small><strong>WhatsApp</strong><p><a href="https://wa.me/260973028342" target="_blank" rel="noreferrer">+260 973 028 342</a></p></article>
+        </section>
+
+        <section class="dashboard-panel premium-panel" id="premium-panel"><div class="panel-heading"><p class="eyebrow">Premium access</p><h2 id="premium-title">Awaiting admin approval</h2><p id="premium-copy">Submit payment confirmation and message WhatsApp admin. After approval, premium builder features unlock here.</p></div><a class="btn btn-primary" href="#payment">Submit payment</a><a class="btn btn-secondary" href="builder.html">Try AI Builder demo</a></section>
+
+        <section class="dashboard-panel" id="create">
+          <div class="panel-heading"><p class="eyebrow">Create Website</p><h2>Tell Xacheus AI what to build.</h2></div>
+          <form id="dashboard-builder" class="dashboard-form">
+            <div class="form-row"><label>Business name<input name="businessName" required placeholder="My Shoe Store" /></label><label>Business type<input name="businessType" required placeholder="Shoes, restaurant, church, school..." /></label></div>
+            <label>Describe what you need<textarea name="prompt" required placeholder="Create a professional website and online store with WhatsApp ordering..."></textarea></label>
+            <div class="form-row"><label>Main color<select name="color"><option>Blue / Cyan / Teal</option><option>Black / Gold</option><option>White / Minimal</option><option>Purple AI</option></select></label><label>Region<select name="region"><option>Zambia</option><option>Southern Africa</option><option>Africa</option><option>Worldwide</option></select></label></div>
+            <button class="btn btn-primary" type="submit">Save AI website plan</button>
+            <p class="form-status" id="builder-status"></p>
+          </form>
+        </section>
+
+        <section class="dashboard-panel" id="payment">
+          <div class="panel-heading"><p class="eyebrow">Payment / Admin confirmation</p><h2>Send your payment confirmation to Xacheus admin.</h2><p>For now, customers can confirm payments through WhatsApp admin: <b>+260 973 028 342</b>.</p></div>
+          <form id="payment-form" class="dashboard-form">
+            <div class="form-row"><label>Paid by / customer name<input name="customerName" required /></label><label>Amount paid<input name="amount" required placeholder="Example: K250" /></label></div>
+            <div class="form-row"><label>Payment method<select name="method"><option>WhatsApp admin confirmation</option><option>Mobile money</option><option>Bank payment</option><option>Cash</option><option>Card</option></select></label><label>Reference number<input name="reference" placeholder="Transaction ID or note" /></label></div>
+            <label>Message to admin<textarea name="message" placeholder="I paid for Starter plan. Please activate my dashboard."></textarea></label>
+            <button class="btn btn-primary" type="submit">Submit confirmation</button>
+            <a class="btn btn-secondary" href="https://wa.me/260973028342" target="_blank" rel="noreferrer">Open WhatsApp admin</a>
+            <p class="form-status" id="payment-message"></p>
+          </form>
+        </section>
+
+        <section class="dashboard-panel" id="websites">
+          <div class="panel-heading"><p class="eyebrow">My Websites</p><h2>Saved AI plans</h2></div>
+          <div class="saved-list" id="saved-list"><p class="placeholder">No website plans saved yet.</p></div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="dashboard.js"></script>
+  </body>
+</html>

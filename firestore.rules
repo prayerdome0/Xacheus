@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return signedIn() && request.auth.token.email == 'zacheussimbaya@gmail.com';
+    }
+
+    function owns(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    match /users/{userId} {
+      allow create: if owns(userId) || isAdmin();
+      allow read, update: if owns(userId) || isAdmin();
+      allow delete: if isAdmin();
+
+      match /blueprints/{blueprintId} {
+        allow create, read, update: if owns(userId) || isAdmin();
+        allow delete: if owns(userId) || isAdmin();
+      }
+
+      match /paymentConfirmations/{paymentId} {
+        allow create, read: if owns(userId) || isAdmin();
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /contact_messages/{messageId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
+    match /payment_confirmations/{paymentId} {
+      allow create: if signedIn();
+      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
+      allow update, delete: if isAdmin();
+    }
+  }
+}

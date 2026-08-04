@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Assistant — Xacheus</title>
+    <link rel="icon" href="assets/xacheus-icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header"><nav class="nav container"><a class="brand brand-image" href="index.html"><img src="assets/xacheus-icon.svg" alt="" /><span>Xacheus</span></a><div class="nav-links static-links"><a href="builder.html">AI Builder</a><a href="dashboard.html">Dashboard</a><a href="auth.html">Login</a></div></nav></header>
+    <main class="assistant-page container">
+      <section class="builder-hero"><p class="eyebrow">Xacheus AI Assistant</p><h1>Generate marketing, WhatsApp sales messages, and business content.</h1><p>This assistant creates practical business content for entrepreneurs while the full AI model integration is prepared.</p></section>
+      <section class="assistant-grid">
+        <form class="builder-input-panel" id="assistant-form">
+          <label>Business name <input name="businessName" required placeholder="Example: Kalomo Fresh Foods" /></label>
+          <label>Product/service <input name="offer" required placeholder="Shoes, food, consulting, church event..." /></label>
+          <label>Audience <input name="audience" required placeholder="Local families, students, business owners..." /></label>
+          <label>What do you need? <select name="task"><option>WhatsApp sales reply</option><option>Facebook post</option><option>Instagram caption</option><option>TikTok content idea</option><option>Email campaign</option><option>Product description</option><option>Business plan summary</option><option>SEO blog idea</option></select></label>
+          <button class="btn btn-primary full" type="submit">Generate</button>
+        </form>
+        <section class="assistant-output" id="assistant-output"><div class="empty-state">Your generated content will appear here.</div></section>
+      </section>
+    </main>
+    <script src="ai-assistant.js"></script>
+  </body>
+</html>
