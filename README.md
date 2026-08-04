@@ -26,7 +26,7 @@ The theme editor stores a structured page model and renders the same model into 
 
 ### Store management
 
-- Products with title, description, real image upload, price, compare-at price, inventory, SKU, category, and variants.
+- Products with title, description, Cloudinary-hosted image upload, price, compare-at price, inventory, SKU, category, and variants.
 - Collections/categories with names and descriptions.
 - Editable navigation labels and links.
 - Orders, customers, inventory, marketing, payment-provider settings, and custom-domain setup surfaces.
@@ -62,6 +62,10 @@ Important collections and paths:
 - `payment_confirmations`
 
 The admin email remains `zacheussimbaya@gmail.com`. Firebase client configuration is in `firebase.js`; do not put server secrets in the browser.
+
+### Store image uploads
+
+Store product and banner images upload directly from the browser to Cloudinary using the unsigned `website_store` preset on cloud `dhad95cch`. The preset owns the `samples/ecommerce` asset folder, so no Cloudinary API secret is exposed in the app. Public upload settings live in `cloudinary.js`; keep the preset unsigned only for the intended image formats and size limits.
 
 ## Run locally
 

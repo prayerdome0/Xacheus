@@ -1,6 +1,7 @@
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import { doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 import { auth, db, serverTimestamp } from "./firebase.js";
+import { uploadStoreImage } from "./cloudinary.js";
 
 const demoMode = new URLSearchParams(window.location.search).get("demo") === "1";
 const LOCAL_KEY = demoMode ? "xacheus-demo-store" : "xacheus-store";
@@ -224,7 +225,7 @@ function openSectionEditor(id) {
   const section = state.sections.find((item) => item.id === id); if (!section) return;
   const d = section.data || {};
   if (section.type === "banner") {
-    openModal("Banner settings", `<form class="modal-form" id="section-form"><label>Eyebrow <input name="eyebrow" value="${esc(d.eyebrow)}" placeholder="NEW SEASON / 2026" /></label><label>Heading <input name="heading" value="${esc(d.heading)}" placeholder="Summer collection" required /></label><label>Description <textarea name="description" placeholder="Tell customers what makes this collection special.">${esc(d.description)}</textarea></label><div class="form-row"><label>Button text <input name="buttonText" value="${esc(d.buttonText)}" placeholder="Shop now" /></label><label>Button link <input name="buttonLink" value="${esc(d.buttonLink)}" placeholder="/collections/summer" /></label></div><label>Layout<select name="layout"><option ${d.layout === "Full width" ? "selected" : ""}>Full width</option><option ${d.layout === "Split" ? "selected" : ""}>Split</option><option ${d.layout === "Centered" ? "selected" : ""}>Centered</option></select></label><label class="file-field">Image <span>Upload a JPG, PNG, or use an image URL</span><input type="file" id="section-image-file" accept="image/*" /><input name="image" value="${esc(d.image)}" placeholder="https://images.unsplash.com/..." /></label>${d.image ? `<img class="image-preview" src="${esc(d.image)}" alt="Current banner" />` : ""}${formActions("Cancel", "Save section")}</form>`, "Banner settings");
+    openModal("Banner settings", `<form class="modal-form" id="section-form"><label>Eyebrow <input name="eyebrow" value="${esc(d.eyebrow)}" placeholder="NEW SEASON / 2026" /></label><label>Heading <input name="heading" value="${esc(d.heading)}" placeholder="Summer collection" required /></label><label>Description <textarea name="description" placeholder="Tell customers what makes this collection special.">${esc(d.description)}</textarea></label><div class="form-row"><label>Button text <input name="buttonText" value="${esc(d.buttonText)}" placeholder="Shop now" /></label><label>Button link <input name="buttonLink" value="${esc(d.buttonLink)}" placeholder="/collections/summer" /></label></div><label>Layout<select name="layout"><option ${d.layout === "Full width" ? "selected" : ""}>Full width</option><option ${d.layout === "Split" ? "selected" : ""}>Split</option><option ${d.layout === "Centered" ? "selected" : ""}>Centered</option></select></label><label class="file-field">Image <span>Upload a JPG, PNG, or use an image URL</span><input type="file" id="section-image-file" accept="image/*" /><input name="image" value="${esc(d.image)}" placeholder="https://images.unsplash.com/..." /></label><p class="modal-hint" id="section-image-upload-status">Uploads securely to your store media library.</p><img class="image-preview" src="${esc(d.image)}" alt="Banner preview" ${d.image ? "" : "hidden"} />${formActions("Cancel", "Save section")}</form>`, "Banner settings");
   } else if (section.type === "products") {
     openModal("Featured products", `<form class="modal-form" id="section-form"><label>Section heading <input name="heading" value="${esc(d.heading)}" required /></label><label>Supporting text <textarea name="description">${esc(d.description)}</textarea></label><label>Show products from<select name="collection"><option value="all">All products</option>${state.collections.map((collection) => `<option value="${esc(collection.id)}" ${d.collection === collection.id ? "selected" : ""}>${esc(collection.title)}</option>`).join("")}</select></label>${formActions("Cancel", "Save section")}</form>`, "Section settings");
   } else if (section.type === "story") {
@@ -237,11 +238,24 @@ function openSectionEditor(id) {
   $("#modal-cancel").addEventListener("click", closeModal);
   $("#section-form").addEventListener("submit", async (event) => {
     event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget).entries());
-    if (section.type === "banner") { const file = $("#section-image-file")?.files?.[0]; if (file) values.image = await fileToDataUrl(file); }
+    if (section.type === "banner") {
+      const file = $("#section-image-file")?.files?.[0];
+      if (file) {
+        const uploadStatus = $("#section-image-upload-status");
+        try {
+          if (uploadStatus) uploadStatus.textContent = "Uploading image…";
+          values.image = await uploadStoreImage(file);
+          if (uploadStatus) uploadStatus.textContent = "Image uploaded.";
+        } catch (error) {
+          if (uploadStatus) uploadStatus.textContent = error.message;
+          return;
+        }
+      }
+    }
     section.data = { ...section.data, ...values }; if (section.type === "announcement") state.store.announcement = values.text;
     closeModal(); renderAll(); await saveStore("Section saved");
   });
-  $("#section-image-file")?.addEventListener("change", (event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { const preview = $(".image-preview"); if (preview) preview.src = reader.result; }; reader.readAsDataURL(file); });
+  $("#section-image-file")?.addEventListener("change", (event) => previewSelectedImage(event.target.files?.[0]));
 }
 
 function openAddSection() {
@@ -258,11 +272,30 @@ function addSection(type) {
 
 function openProductEditor(id = null) {
   const product = id ? state.products.find((item) => item.id === id) : { title: "", description: "", price: "", compareAt: "", inventory: 0, sku: "", category: "New arrivals", image: "", variants: "" };
-  openModal(id ? "Edit product" : "Add product", `<form class="modal-form" id="product-form"><label>Product name <input name="title" value="${esc(product.title)}" placeholder="Product name" required /></label><div class="form-row"><label>Price <input name="price" type="number" min="0" step="1" value="${esc(product.price)}" placeholder="0" required /></label><label>Compare-at price <input name="compareAt" type="number" min="0" value="${esc(product.compareAt || "")}" placeholder="Optional" /></label></div><div class="form-row"><label>Inventory <input name="inventory" type="number" min="0" value="${esc(product.inventory)}" required /></label><label>SKU <input name="sku" value="${esc(product.sku)}" placeholder="SKU-001" /></label></div><label>Category <input name="category" value="${esc(product.category)}" placeholder="New arrivals" /></label><label>Variants <input name="variants" value="${esc(product.variants)}" placeholder="S, M, L, XL" /></label><label>Description <textarea name="description" placeholder="Describe this product.">${esc(product.description)}</textarea></label><label class="file-field">Product image <span>Upload a real product image or paste a URL</span><input type="file" id="product-image-file" accept="image/*" /><input name="image" value="${esc(product.image)}" placeholder="https://..." /></label>${product.image ? `<img class="image-preview" src="${esc(product.image)}" alt="Current product" />` : ""}<div class="modal-form-actions">${id ? `<button type="button" class="danger-button" id="delete-product-modal">Delete product</button>` : ""}<span></span><button type="button" class="secondary-button" id="modal-cancel">Cancel</button><button type="submit" class="primary-button">${id ? "Save product" : "Add product"}</button></div></form>`, "Catalog");
+  openModal(id ? "Edit product" : "Add product", `<form class="modal-form" id="product-form"><label>Product name <input name="title" value="${esc(product.title)}" placeholder="Product name" required /></label><div class="form-row"><label>Price <input name="price" type="number" min="0" step="1" value="${esc(product.price)}" placeholder="0" required /></label><label>Compare-at price <input name="compareAt" type="number" min="0" value="${esc(product.compareAt || "")}" placeholder="Optional" /></label></div><div class="form-row"><label>Inventory <input name="inventory" type="number" min="0" value="${esc(product.inventory)}" required /></label><label>SKU <input name="sku" value="${esc(product.sku)}" placeholder="SKU-001" /></label></div><label>Category <input name="category" value="${esc(product.category)}" placeholder="New arrivals" /></label><label>Variants <input name="variants" value="${esc(product.variants)}" placeholder="S, M, L, XL" /></label><label>Description <textarea name="description" placeholder="Describe this product.">${esc(product.description)}</textarea></label><label class="file-field">Product image <span>Upload a real product image or paste a URL</span><input type="file" id="product-image-file" accept="image/*" /><input name="image" value="${esc(product.image)}" placeholder="https://..." /></label><p class="modal-hint" id="product-image-upload-status">Uploads securely to your store media library.</p><img class="image-preview" src="${esc(product.image)}" alt="Product preview" ${product.image ? "" : "hidden"} /><div class="modal-form-actions">${id ? `<button type="button" class="danger-button" id="delete-product-modal">Delete product</button>` : ""}<span></span><button type="button" class="secondary-button" id="modal-cancel">Cancel</button><button type="submit" class="primary-button">${id ? "Save product" : "Add product"}</button></div></form>`, "Catalog");
   $("#modal-cancel").addEventListener("click", closeModal);
   $("#delete-product-modal")?.addEventListener("click", async () => { state.products = state.products.filter((item) => item.id !== id); closeModal(); renderAll(); await saveStore("Product deleted"); });
-  $("#product-image-file")?.addEventListener("change", (event) => { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { const preview = $(".image-preview"); if (preview) preview.src = reader.result; }; reader.readAsDataURL(file); });
-  $("#product-form").addEventListener("submit", async (event) => { event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget).entries()); const file = $("#product-image-file")?.files?.[0]; if (file) values.image = await fileToDataUrl(file); values.price = Number(values.price || 0); values.compareAt = Number(values.compareAt || 0); values.inventory = Number(values.inventory || 0); values.status = "Active"; if (id) Object.assign(product, values); else state.products.unshift({ ...product, ...values, id: uid("product") }); closeModal(); renderAll(); await saveStore(id ? "Product updated" : "Product added"); });
+  $("#product-image-file")?.addEventListener("change", (event) => previewSelectedImage(event.target.files?.[0]));
+  $("#product-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const file = $("#product-image-file")?.files?.[0];
+    if (file) {
+      const uploadStatus = $("#product-image-upload-status");
+      const submitButton = event.currentTarget.querySelector('[type="submit"]');
+      try {
+        if (uploadStatus) uploadStatus.textContent = "Uploading image…";
+        if (submitButton) { submitButton.disabled = true; submitButton.textContent = "Uploading…"; }
+        values.image = await uploadStoreImage(file);
+        if (uploadStatus) uploadStatus.textContent = "Image uploaded.";
+      } catch (error) {
+        if (uploadStatus) uploadStatus.textContent = error.message;
+        if (submitButton) { submitButton.disabled = false; submitButton.textContent = id ? "Save product" : "Add product"; }
+        return;
+      }
+    }
+    values.price = Number(values.price || 0); values.compareAt = Number(values.compareAt || 0); values.inventory = Number(values.inventory || 0); values.status = "Active"; if (id) Object.assign(product, values); else state.products.unshift({ ...product, ...values, id: uid("product") }); closeModal(); renderAll(); await saveStore(id ? "Product updated" : "Product added");
+  });
 }
 
 function openCollectionEditor(id = null) {
@@ -276,7 +309,13 @@ function openThemeSettings() {
   $("#modal-cancel").addEventListener("click", closeModal); $("#theme-settings-form").addEventListener("submit", async (event) => { event.preventDefault(); const values = Object.fromEntries(new FormData(event.currentTarget).entries()); Object.assign(state.store, values); state.sections.find((section) => section.type === "announcement")?.data && (state.sections.find((section) => section.type === "announcement").data.text = values.announcement); closeModal(); renderAll(); await saveStore("Theme settings saved"); });
 }
 
-function fileToDataUrl(file) { return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
+function previewSelectedImage(file) {
+  if (!file) return;
+  const preview = $(".image-preview");
+  if (!preview) return;
+  preview.src = URL.createObjectURL(file);
+  preview.hidden = false;
+}
 function exportData(filename, data) { const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); }
 
 function navigate(view) {
