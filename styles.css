@@ -1164,6 +1164,26 @@ select:focus {
   width: 100%;
 }
 
+.demo-access {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 22px;
+  padding: 14px;
+  border: 1px solid rgba(114, 242, 182, 0.25);
+  border-radius: 16px;
+  color: var(--muted);
+  background: rgba(114, 242, 182, 0.06);
+  font-size: .82rem;
+}
+
+.demo-access .btn {
+  padding: 9px 12px;
+  font-size: .74rem;
+  white-space: nowrap;
+}
+
 .auth-links {
   display: flex;
   flex-wrap: wrap;
