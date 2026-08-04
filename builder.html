@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Builder — Xacheus</title>
+    <link rel="icon" href="assets/xacheus-icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav container">
+        <a class="brand brand-image" href="index.html"><img src="assets/xacheus-icon.svg" alt="" /><span>Xacheus</span></a>
+        <div class="nav-links static-links"><a href="dashboard.html">Dashboard</a><a href="ai-assistant.html">AI Assistant</a><a href="auth.html">Login</a></div>
+      </nav>
+    </header>
+
+    <main class="builder-workspace container">
+      <section class="builder-hero">
+        <p class="eyebrow">Real AI Builder Flow</p>
+        <h1>Create a website/store preview from one business idea.</h1>
+        <p>Type what you want to build. Xacheus generates a business brief, homepage copy, product/service sections, SEO, WhatsApp sales message, launch checklist, and a live preview you can save to Firebase.</p>
+      </section>
+
+      <section class="builder-console">
+        <form class="builder-input-panel" id="real-builder-form">
+          <label>Business name <input name="businessName" placeholder="Example: Zed Shoe Market" required /></label>
+          <label>What should Xacheus build? <textarea name="prompt" placeholder="Create an online store for my shoe business with WhatsApp ordering and delivery in Zambia." required></textarea></label>
+          <div class="form-row">
+            <label>Business type <select name="businessType"><option>Online Store</option><option>Services</option><option>Restaurant / Food</option><option>Church / Ministry</option><option>School / Organization</option><option>Nonprofit</option><option>Marketplace</option></select></label>
+            <label>Target customers <input name="audience" placeholder="Families, students, churches, retailers..." required /></label>
+          </div>
+          <div class="form-row">
+            <label>Main offer/products <input name="offer" placeholder="Shoes, catering, consulting, donations..." required /></label>
+            <label>Region <select name="region"><option>Zambia</option><option>Southern Africa</option><option>Africa</option><option>Worldwide</option></select></label>
+          </div>
+          <div class="form-row">
+            <label>Style <select name="style"><option>Premium Tech</option><option>Clean Business</option><option>Bold E-commerce</option><option>Warm Community</option></select></label>
+            <label>Primary CTA <select name="cta"><option>Order on WhatsApp</option><option>Start Building Free</option><option>Book a Consultation</option><option>Contact Us</option><option>Shop Now</option></select></label>
+          </div>
+          <button class="btn btn-primary full" type="submit">Generate Website Preview</button>
+          <button class="btn btn-secondary full" type="button" id="save-generated-site">Save to My Dashboard</button>
+          <p class="form-status" id="builder-save-status"></p>
+        </form>
+
+        <section class="builder-output-panel">
+          <div class="generation-tabs">
+            <button class="active" data-tab="preview" type="button">Preview</button>
+            <button data-tab="copy" type="button">Copy</button>
+            <button data-tab="seo" type="button">SEO</button>
+            <button data-tab="launch" type="button">Launch</button>
+          </div>
+          <div class="generation-output active" id="tab-preview"><div class="empty-state">Your generated website preview will appear here.</div></div>
+          <div class="generation-output" id="tab-copy"><div class="empty-state">Generated page copy will appear here.</div></div>
+          <div class="generation-output" id="tab-seo"><div class="empty-state">Generated SEO package will appear here.</div></div>
+          <div class="generation-output" id="tab-launch"><div class="empty-state">Generated launch checklist will appear here.</div></div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="builder.js"></script>
+  </body>
+</html>

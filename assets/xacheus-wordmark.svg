@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 220" role="img" aria-label="Xacheus">
+  <defs>
+    <linearGradient id="xg" x1="20" y1="190" x2="170" y2="20" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0288e8"/>
+      <stop offset=".52" stop-color="#00b8f4"/>
+      <stop offset="1" stop-color="#d6ffff"/>
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-40%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#00b8ff" flood-opacity=".45"/>
+    </filter>
+  </defs>
+  <rect width="980" height="220" rx="34" fill="#02070d"/>
+  <g filter="url(#glow)">
+    <path d="M35 36h61l54 67 51-67h57l-77 98 78 99h-62l-54-69-54 69H31l80-101L35 36Z" fill="url(#xg)"/>
+    <text x="250" y="163" font-family="Inter, Arial, Helvetica, sans-serif" font-size="132" font-weight="900" letter-spacing="-8" fill="#fff">acheus</text>
+  </g>
+</svg>
