@@ -2,57 +2,45 @@
 
 Xacheus is an AI-powered business, website, and e-commerce platform created by Zacheus Simbaya to help entrepreneurs and organizations build, launch, manage, and grow online.
 
-## Built in this version
+## Platform core (current build)
 
-### Public website
+The main product flow is now a real store-builder workspace rather than a landing-page-only demo:
 
-- Xacheus branded homepage using the blue/cyan/teal logo direction
-- AI Website Builder and AI Store Builder sections
-- Solutions, roadmap, pricing, founder, and contact sections
-- Contact form connected to Firebase Firestore
-- Public pages for About, Features, Pricing, Contact, Solutions, Blog, Help, FAQ, Terms, and Privacy
+- `auth.html` — Firebase email/password registration, login, Google sign-in, email verification, and password reset.
+- `dashboard.html` — authenticated Xacheus store admin with Home, Theme editor, Navigation, Products, Collections, Inventory, Orders, Customers, Marketing, and Settings.
+- `dashboard.html?demo=1` — a fully interactive demo workspace for exploring the platform before creating an account.
+- `storefront.html` — storefront renderer for previews and published stores, including responsive layout, real product cards, cart, and WhatsApp checkout hand-off.
+- `store-builder.css` and `storefront.css` — responsive admin and storefront interfaces.
 
-### Real product flow
+### Theme editor capabilities
 
-- `builder.html` — real AI-style website/store builder flow
-- Generates a live website preview from a business idea
-- Generates homepage copy, SEO package, WhatsApp sales message, and launch checklist
-- Saves generated website plans to the user dashboard in Firebase
-- `ai-assistant.html` — generates WhatsApp replies, Facebook posts, Instagram captions, TikTok ideas, email campaigns, product descriptions, business summaries, and SEO blog ideas
+The theme editor stores a structured page model and renders the same model into the preview and storefront:
 
-### Authentication and dashboards
+- Add, remove, edit, enable/disable, and reorder sections.
+- Banner editor with heading, description, image upload or URL, button text/link, and layout.
+- Product grid, image-with-text, testimonials, newsletter, announcement bar, and footer sections.
+- Theme settings for store name, colors, font, spacing, and announcement message.
+- Desktop/mobile preview switcher.
+- Save changes locally immediately and sync them to Firestore when signed in.
+- Publish a copy to `publicStores/{slug}` for the public storefront renderer.
 
-- `auth.html` — Firebase login/register
-- Email/password sign-up
-- Google sign-in support when enabled in Firebase
-- Email verification after registration
-- Forgot-password reset
-- `dashboard.html` — user dashboard for saved AI website plans and payment confirmations
-- `admin.html` — admin dashboard for payment approvals, lead CRM status updates, and saved website plans
+### Store management
 
-### Payment / admin confirmation
+- Products with title, description, real image upload, price, compare-at price, inventory, SKU, category, and variants.
+- Collections/categories with names and descriptions.
+- Editable navigation labels and links.
+- Orders, customers, inventory, marketing, payment-provider settings, and custom-domain setup surfaces.
+- Export orders and customers as JSON.
+- Cart and WhatsApp checkout hand-off on the storefront.
 
-- WhatsApp admin/payment number: +260 973 028 342
-- Customers submit payment confirmation from their dashboard
-- Admin can approve or reject confirmations
-- Dashboard shows premium approval status after admin approval
+This is the platform foundation: the structured store data is the source of truth, the theme editor changes that data, and the storefront renderer reads it. Payment providers, domain provisioning, and server-side order processing should be connected to the existing settings surfaces as their production credentials and backend endpoints become available.
 
-### Firebase security
+## Existing product tools
 
-- `firestore.rules` included for production setup
-- Admin email: zacheussimbaya@gmail.com
-- Users can read/write their own data
-- Admin can manage leads, payments, and platform data
-
-## Main pages
-
-- `index.html` — public website
-- `builder.html` — AI website/store preview generator
-- `ai-assistant.html` — AI business and marketing assistant
-- `auth.html` — login/register
-- `dashboard.html` — user dashboard
-- `admin.html` — admin dashboard
-- `about.html`, `features.html`, `pricing.html`, `contact.html`, `solutions.html`, `blog.html`, `help.html`, `faq.html`, `terms.html`, `privacy.html`
+- `builder.html` — AI-style website/store brief generator with free Pollinations AI, preview, copy, SEO, launch checklist, export, and Firebase save.
+- `ai-assistant.html` — business and marketing assistant.
+- `admin.html` — admin dashboard for payment confirmations, leads, and older saved website plans.
+- Public pages for About, Features, Pricing, Contact, Solutions, Blog, Help, FAQ, Terms, and Privacy.
 
 ## Firebase setup required
 
@@ -61,15 +49,19 @@ In Firebase Console for project `xacheus`, enable:
 1. Authentication → Sign-in method → Email/Password
 2. Optional: Authentication → Google provider
 3. Firestore Database
-4. Publish the rules from `firestore.rules`
+4. Publish `firestore.rules`
 
-Recommended Firestore collections:
+Important collections and paths:
 
-- `users`
-- `contact_messages`
-- `payment_confirmations`
+- `users/{uid}`
+- `users/{uid}/store/main` — structured store, theme, catalog, navigation, order, and customer state
 - `users/{uid}/blueprints`
 - `users/{uid}/paymentConfirmations`
+- `publicStores/{storeSlug}` — published storefront copy
+- `contact_messages`
+- `payment_confirmations`
+
+The admin email remains `zacheussimbaya@gmail.com`. Firebase client configuration is in `firebase.js`; do not put server secrets in the browser.
 
 ## Run locally
 
@@ -77,6 +69,6 @@ Recommended Firestore collections:
 npm run dev
 ```
 
-Then open <http://localhost:5173>.
+Then open <http://localhost:5173>. To preview the builder without signing in, use <http://localhost:5173/dashboard.html?demo=1>.
 
 No install step is required because this is a static HTML/CSS/JavaScript site served by Python.

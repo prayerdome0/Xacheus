@@ -27,6 +27,20 @@ service cloud.firestore {
         allow create, read: if owns(userId) || isAdmin();
         allow update, delete: if isAdmin();
       }
+
+      // The store document is the source of truth for the theme editor, catalog,
+      // navigation, orders, and settings belonging to one account.
+      match /store/{storeId} {
+        allow create, read, update, delete: if owns(userId) || isAdmin();
+      }
+    }
+
+    // Published storefronts are public to read, but only the owner can publish
+    // or update their copy (admins can manage them too).
+    match /publicStores/{storeSlug} {
+      allow read: if resource.data.published == true || isAdmin();
+      allow create, update: if isAdmin() || (signedIn() && request.resource.data.publishedBy == request.auth.uid);
+      allow delete: if isAdmin() || (signedIn() && resource.data.publishedBy == request.auth.uid);
     }
 
     match /contact_messages/{messageId} {
