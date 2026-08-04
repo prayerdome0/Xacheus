@@ -81,6 +81,10 @@ Important collections and paths:
 
 The admin email remains `zacheussimbaya@gmail.com`. Firebase client configuration is in `firebase.js`; do not put server secrets in the browser.
 
+### Store image uploads
+
+Store product and banner images upload directly from the browser to Cloudinary using the unsigned `website_store` preset on cloud `dhad95cch`. The preset owns the `samples/ecommerce` asset folder, so no Cloudinary API secret is exposed in the app. Public upload settings live in `cloudinary.js`; keep the preset unsigned only for the intended image formats and size limits.
+
 ## Run locally
 
 ```bash
