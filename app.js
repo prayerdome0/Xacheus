@@ -4,6 +4,20 @@ const launchForm = document.querySelector('#launch-form');
 const resultPanel = document.querySelector('#result-panel');
 const accordionItems = document.querySelectorAll('.accordion-item');
 
+// Theme toggle
+const themeToggle = document.getElementById('theme-toggle');
+if (themeToggle) {
+  const savedTheme = localStorage.getItem('xacheus-theme');
+  if (savedTheme === 'light') document.documentElement.classList.add('light');
+  themeToggle.textContent = document.documentElement.classList.contains('light') ? '☾' : '☀︎';
+
+  themeToggle.addEventListener('click', () => {
+    const isLight = document.documentElement.classList.toggle('light');
+    localStorage.setItem('xacheus-theme', isLight ? 'light' : 'dark');
+    themeToggle.textContent = isLight ? '☾' : '☀︎';
+  });
+}
+
 navToggle?.addEventListener('click', () => {
   const isOpen = navLinks.classList.toggle('open');
   document.body.classList.toggle('nav-open', isOpen);

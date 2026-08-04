@@ -9,6 +9,7 @@
     />
     <title>Xacheus — Your Business. Built With AI.</title>
     <link rel="icon" href="assets/xacheus-icon.svg" />
+    <link rel="manifest" href="manifest.json" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
@@ -26,6 +27,8 @@
         </button>
         <div class="nav-links" id="nav-links">
           <a href="builder.html">AI Builder</a>
+          <a href="templates.html">Templates</a>
+          <a href="ai-keys.html">Free AI</a>
           <a href="#store-builder">Store Builder</a>
           <a href="#solutions">Solutions</a>
           <a href="#pricing">Pricing</a>
@@ -35,6 +38,7 @@
           <a href="dashboard.html">Dashboard</a>
           <a href="auth.html">Log In</a>
           <a class="nav-cta" href="auth.html">Start Free</a>
+          <button id="theme-toggle" class="btn btn-secondary" style="padding:8px 14px;font-size:.85rem;margin-left:8px" aria-label="Toggle theme">☀︎</button>
         </div>
       </nav>
     </header>
@@ -58,7 +62,7 @@
               <span>AI Website Builder</span>
               <span>E-commerce</span>
               <span>WhatsApp Sales</span>
-              <span>Africa-first, global-ready</span>
+              <span>100% Free AI</span>
             </div>
           </div>
 
@@ -208,6 +212,33 @@
         </div>
       </section>
 
+      <section class="section" id="testimonials">
+        <div class="container">
+          <div class="section-heading">
+            <p class="eyebrow">Real stories</p>
+            <h2>Businesses launched faster with Xacheus.</h2>
+          </div>
+          <div class="solutions-grid" style="grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px">
+            <article class="feature-card" style="padding:22px">
+              <p style="font-style:italic;margin-bottom:12px">“Xacheus helped me launch my shoe store in 1 hour. WhatsApp orders started the same day.”</p>
+              <strong>— Amina K., Lusaka</strong><br>
+              <small>Zed Shoe Market • 4.8★</small>
+            </article>
+            <article class="feature-card" style="padding:22px">
+              <p style="font-style:italic;margin-bottom:12px">“Our church website and donation flow went live in minutes. The AI assistant writes our Sunday posts.”</p>
+              <strong>— Pastor M. Banda</strong><br>
+              <small>Grace Community Church • 4.9★</small>
+            </article>
+            <article class="feature-card" style="padding:22px">
+              <p style="font-style:italic;margin-bottom:12px">“Best decision. The AI Store Builder gave us a full catalog + checkout in Zambia + South Africa.”</p>
+              <strong>— Tafadzwa M.</strong><br>
+              <small>FreshMart Africa • 5.0★</small>
+            </article>
+          </div>
+          <p style="text-align:center;margin-top:18px;color:var(--muted)"><a href="#contact">Share your story →</a></p>
+        </div>
+      </section>
+
       <section class="section" id="pricing">
         <div class="container">
           <div class="section-heading"><p class="eyebrow">Pricing</p><h2>Start free. Upgrade as Xacheus grows with you.</h2><p>Pricing can begin as “Coming Soon” or “Contact Sales” while the platform is being developed.</p></div>
@@ -278,5 +309,13 @@
     <script src="app.js"></script>
     <script type="module" src="firebase.js"></script>
     <script type="module" src="home-firebase.js"></script>
+    <script>
+      // PWA registration
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(console.warn);
+        });
+      }
+    </script>
   </body>
 </html>

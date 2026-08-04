@@ -1,0 +1,23 @@
+{
+  "name": "Xacheus — AI Business Platform",
+  "short_name": "Xacheus",
+  "description": "AI-powered website, store, and business builder. Build, launch, and grow with Xacheus.",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#72f2b6",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "assets/xacheus-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity", "ecommerce"],
+  "lang": "en",
+  "scope": "/",
+  "related_applications": [],
+  "prefer_related_applications": false
+}
