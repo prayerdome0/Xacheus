@@ -41,6 +41,23 @@ service cloud.firestore {
       allow read: if resource.data.published == true || isAdmin();
       allow create, update: if isAdmin() || (signedIn() && request.resource.data.publishedBy == request.auth.uid);
       allow delete: if isAdmin() || (signedIn() && resource.data.publishedBy == request.auth.uid);
+
+      match /orders/{orderId} {
+        allow create: if get(/databases/$(database)/documents/publicStores/$(storeSlug)).data.published == true
+          && request.resource.data.storeSlug == storeSlug
+          && request.resource.data.customerName is string
+          && request.resource.data.customerName.size() <= 80
+          && request.resource.data.customerPhone is string
+          && request.resource.data.customerPhone.size() <= 30
+          && request.resource.data.items is list
+          && request.resource.data.items.size() <= 50
+          && request.resource.data.total is number
+          && request.resource.data.total >= 0
+          && request.resource.data.total <= 1000000
+          && request.resource.data.source == "whatsapp_manual";
+        allow read, update: if isAdmin() || (signedIn() && get(/databases/$(database)/documents/publicStores/$(storeSlug)).data.publishedBy == request.auth.uid);
+        allow delete: if isAdmin() || (signedIn() && get(/databases/$(database)/documents/publicStores/$(storeSlug)).data.publishedBy == request.auth.uid);
+      }
     }
 
     match /contact_messages/{messageId} {

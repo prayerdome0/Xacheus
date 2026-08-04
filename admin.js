@@ -14,9 +14,11 @@ import { ADMIN_EMAIL, auth, db } from "./firebase.js";
 
 const adminUser = document.querySelector("#admin-user");
 const logout = document.querySelector("#admin-logout");
+const storeOrdersList = document.querySelector("#store-orders-list");
 const paymentsList = document.querySelector("#payments-list");
 const messagesList = document.querySelector("#messages-list");
 const plansList = document.querySelector("#plans-list");
+const storeOrdersCount = document.querySelector("#store-orders-count");
 const paymentsCount = document.querySelector("#payments-count");
 const messagesCount = document.querySelector("#messages-count");
 const plansCount = document.querySelector("#plans-count");
@@ -41,6 +43,19 @@ onAuthStateChanged(auth, (user) => {
   }
 
   adminUser.textContent = user.email;
+
+  onSnapshot(query(collectionGroup(db, "orders"), orderBy("createdAt", "desc")), (snapshot) => {
+    storeOrdersCount.textContent = snapshot.size;
+    storeOrdersList.innerHTML = snapshot.empty
+      ? empty("manual store orders")
+      : snapshot.docs.map((docSnap) => {
+          const item = docSnap.data();
+          const items = (item.items || []).map((entry) => `${entry.quantity || 1}× ${entry.title}`).join(", ");
+          const phone = String(item.customerPhone || "").replace(/\D/g, "");
+          const whatsapp = phone ? `https://wa.me/${phone.startsWith("0") ? `260${phone.slice(1)}` : phone}?text=${encodeURIComponent(`Hello ${item.customerName || "customer"}, we received your order ${item.orderNumber || docSnap.id}. Total: ${item.total || 0}.`)}` : "#";
+          return `<article class="saved-card"><div><small>${item.storeName || item.storeSlug || "Store"} • ${item.paymentStatus || "Manual pending"}</small><h3>${item.orderNumber || docSnap.id} — ${item.customerName || "WhatsApp customer"}</h3><p>${items || "No items"}<br>Total: ${item.total || 0}<br>${item.deliveryLocation || "No location"}</p></div><div class="admin-actions"><a class="btn btn-primary" href="${whatsapp}" target="_blank" rel="noreferrer">WhatsApp</a><button class="btn btn-secondary store-order-action" data-status="Paid" data-path="${docSnap.ref.path}">Mark paid</button><button class="btn btn-secondary store-order-action" data-fulfillment="Delivered" data-path="${docSnap.ref.path}">Delivered</button></div></article>`;
+        }).join("");
+  });
 
   onSnapshot(query(collection(db, "payment_confirmations"), orderBy("createdAt", "desc")), (snapshot) => {
     paymentsCount.textContent = snapshot.size;
@@ -74,6 +89,13 @@ onAuthStateChanged(auth, (user) => {
 });
 
 document.addEventListener("click", async (event) => {
+  const storeOrderButton = event.target.closest(".store-order-action");
+  if (storeOrderButton) {
+    const parts = storeOrderButton.dataset.path.split("/");
+    await updateDoc(doc(db, ...parts), { ...(storeOrderButton.dataset.status ? { paymentStatus: storeOrderButton.dataset.status } : {}), ...(storeOrderButton.dataset.fulfillment ? { fulfillment: storeOrderButton.dataset.fulfillment } : {}) });
+    storeOrderButton.textContent = "Updated";
+    return;
+  }
   const paymentButton = event.target.closest(".payment-action");
   if (paymentButton) {
     await updateDoc(doc(db, "payment_confirmations", paymentButton.dataset.id), { status: paymentButton.dataset.status });

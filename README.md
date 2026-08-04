@@ -26,12 +26,28 @@ The theme editor stores a structured page model and renders the same model into 
 
 ### Store management
 
-- Products with title, description, real image upload, price, compare-at price, inventory, SKU, category, and variants.
+- Products with title, AI-assisted description drafting, multi-image Cloudinary uploads, price, compare-at price, inventory, SKU, category, and variants.
 - Collections/categories with names and descriptions.
 - Editable navigation labels and links.
 - Orders, customers, inventory, marketing, payment-provider settings, and custom-domain setup surfaces.
 - Export orders and customers as JSON.
-- Cart and WhatsApp checkout hand-off on the storefront.
+- Manual payments admin page for WhatsApp checkout setup, including store WhatsApp number, customer instructions, delivery fees, free-delivery threshold, and a preview link.
+- Cart and WhatsApp checkout hand-off on the storefront using the store owner's configured WhatsApp number.
+- Storefront search, category filters, sorting, product detail modal, image gallery, related products, multiple-image product indicators, variant selection, and a manual checkout form that captures customer name, phone, delivery location, and notes before WhatsApp hand-off.
+- Public checkout orders can be saved under `publicStores/{storeSlug}/orders` for store-owner/admin review when Firestore rules are deployed.
+- Orders dashboard supports details, payment/fulfillment status updates, WhatsApp customer replies, printable receipts, local checkout imports, and real dashboard metrics.
+- Customers dashboard derives customer profiles from checkout/order history with WhatsApp follow-up actions.
+- Publishing controls include published/draft state, copy public store link, unpublish, custom domain notes, and delivery settings.
+
+### Cloudinary store image uploads
+
+Store product and banner image uploads use a browser-safe unsigned Cloudinary preset:
+
+- Cloud name: `dhad95cch`
+- Upload preset: `website_store`
+- Asset folder configured in Cloudinary: `samples/ecommerce`
+
+Only the unsigned preset name and cloud name are included in client code (`cloudinary.js`). Do not expose `CLOUDINARY_URL`, API keys, or API secrets in the browser.
 
 This is the platform foundation: the structured store data is the source of truth, the theme editor changes that data, and the storefront renderer reads it. Payment providers, domain provisioning, and server-side order processing should be connected to the existing settings surfaces as their production credentials and backend endpoints become available.
 
@@ -39,7 +55,7 @@ This is the platform foundation: the structured store data is the source of trut
 
 - `builder.html` — AI-style website/store brief generator with free Pollinations AI, preview, copy, SEO, launch checklist, export, and Firebase save.
 - `ai-assistant.html` — business and marketing assistant.
-- `admin.html` — admin dashboard for payment confirmations, leads, and older saved website plans.
+- `admin.html` — admin dashboard for manual store orders, payment confirmations, leads, and older saved website plans.
 - Public pages for About, Features, Pricing, Contact, Solutions, Blog, Help, FAQ, Terms, and Privacy.
 
 ## Firebase setup required
@@ -58,10 +74,16 @@ Important collections and paths:
 - `users/{uid}/blueprints`
 - `users/{uid}/paymentConfirmations`
 - `publicStores/{storeSlug}` — published storefront copy
+- `publicStores/{storeSlug}/orders/{orderId}` — public manual WhatsApp checkout orders for store-owner/admin review
 - `contact_messages`
 - `payment_confirmations`
+- collection group `orders` — admin can review manual WhatsApp checkout orders across stores
 
 The admin email remains `zacheussimbaya@gmail.com`. Firebase client configuration is in `firebase.js`; do not put server secrets in the browser.
+
+### Store image uploads
+
+Store product and banner images upload directly from the browser to Cloudinary using the unsigned `website_store` preset on cloud `dhad95cch`. The preset owns the `samples/ecommerce` asset folder, so no Cloudinary API secret is exposed in the app. Public upload settings live in `cloudinary.js`; keep the preset unsigned only for the intended image formats and size limits.
 
 ## Run locally
 
