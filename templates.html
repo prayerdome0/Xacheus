@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Templates — Xacheus</title>
+    <link rel="icon" href="assets/xacheus-icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="manifest" href="manifest.json" />
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav container">
+        <a class="brand brand-image" href="index.html"><img src="assets/xacheus-icon.svg" alt="" /><span>Xacheus</span></a>
+        <div class="nav-links static-links">
+          <a href="builder.html">AI Builder</a>
+          <a href="ai-assistant.html">AI Assistant</a>
+          <a href="templates.html">Templates</a>
+          <a class="nav-cta" href="auth.html">Start Free</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="builder-workspace container">
+      <section class="builder-hero">
+        <p class="eyebrow">Starter Templates</p>
+        <h1>Launch in minutes. Pick a ready template.</h1>
+        <p>Professional AI-generated templates for common businesses in Zambia and Africa. Click “Use Template” to load it instantly in the AI Builder.</p>
+      </section>
+
+      <div class="solutions-grid" style="grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-top:40px">
+        <article class="feature-card">
+          <h3>Shoe &amp; Fashion Store</h3>
+          <p>Modern e-commerce for shoes, clothing, accessories. Includes products, WhatsApp checkout, and delivery.</p>
+          <div style="margin-top:14px">
+            <a href="builder.html" class="btn btn-primary" onclick="loadTemplate('shoe')">Use Template →</a>
+          </div>
+          <small style="display:block;margin-top:10px;color:#94a3b8">Zambia • Bold style • 12 products</small>
+        </article>
+
+        <article class="feature-card">
+          <h3>Restaurant &amp; Catering</h3>
+          <p>Menu, ordering, WhatsApp delivery flow. Perfect for food businesses.</p>
+          <div style="margin-top:14px">
+            <a href="builder.html" class="btn btn-primary" onclick="loadTemplate('food')">Use Template →</a>
+          </div>
+          <small style="display:block;margin-top:10px;color:#94a3b8">Lusaka • Warm community • Delivery zones</small>
+        </article>
+
+        <article class="feature-card">
+          <h3>Church &amp; Ministry</h3>
+          <p>Events, sermons, donations, community contact. Includes WhatsApp and giving.</p>
+          <div style="margin-top:14px">
+            <a href="builder.html" class="btn btn-primary" onclick="loadTemplate('church')">Use Template →</a>
+          </div>
+          <small style="display:block;margin-top:10px;color:#94a3b8">Southern Africa • Community focused</small>
+        </article>
+
+        <article class="feature-card">
+          <h3>Fashion Boutique</h3>
+          <p>Trendy clothing store with collections, size guides, and fast checkout.</p>
+          <div style="margin-top:14px">
+            <a href="builder.html" class="btn btn-primary" onclick="loadTemplate('retail')">Use Template →</a>
+          </div>
+          <small style="display:block;margin-top:10px;color:#94a3b8">Premium Tech style</small>
+        </article>
+
+        <article class="feature-card">
+          <h3>School &amp; Education</h3>
+          <p>Admissions, programs, news, parent portal. Great for schools.</p>
+          <div style="margin-top:14px">
+            <a href="builder.html" class="btn btn-primary" onclick="loadTemplate('school')">Use Template →</a>
+          </div>
+          <small style="display:block;margin-top:10px;color:#94a3b8">Organization • Clean</small>
+        </article>
+
+        <article class="feature-card">
+          <h3>Professional Services</h3>
+          <p>Consulting, coaching, legal, or creative agency. Booking + lead capture.</p>
+          <div style="margin-top:14px">
+            <a href="builder.html" class="btn btn-primary" onclick="loadTemplate('services')">Use Template →</a>
+          </div>
+          <small style="display:block;margin-top:10px;color:#94a3b8">Services model</small>
+        </article>
+      </div>
+
+      <div class="section" style="margin-top:60px;text-align:center">
+        <p style="color:var(--muted)">Want something custom? <a href="builder.html">Open the full AI Builder</a> or <a href="ai-assistant.html">use the AI Assistant</a>.</p>
+      </div>
+    </main>
+
+    <script>
+      function loadTemplate(type) {
+        // store template key and redirect
+        localStorage.setItem('xacheusTemplate', type);
+        window.location.href = 'builder.html';
+      }
+      // auto-load from previous if any
+      const tpl = localStorage.getItem('xacheusTemplate');
+      if (tpl && window.location.search.includes('auto')) {
+        // handled in builder.js
+      }
+    </script>
+  </body>
+</html>

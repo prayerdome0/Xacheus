@@ -1,6 +1,11 @@
 const form = document.querySelector('#assistant-form');
 const output = document.querySelector('#assistant-output');
-function esc(v){return String(v||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+
+// Import real AI (same file as builder)
+import { generateWithAI } from './ai-config.js';
+
+function esc(v){return String(v||'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'}[m]));}
+
 function content(d){
   const name=esc(d.businessName), offer=esc(d.offer), audience=esc(d.audience);
   const templates={
@@ -15,9 +20,21 @@ function content(d){
   };
   return templates[d.task];
 }
-form.addEventListener('submit', e=>{
+
+form.addEventListener('submit', async e=>{
   e.preventDefault();
   const d=Object.fromEntries(new FormData(form).entries());
-  output.innerHTML=`<article class="generated-doc"><p class="eyebrow">Generated ${esc(d.task)}</p><h2>${esc(d.businessName)}</h2><p>${content(d).replace(/\n/g,'<br>')}</p><button class="btn btn-secondary" id="copy-output" type="button">Copy content</button></article>`;
-  document.querySelector('#copy-output').onclick=()=>navigator.clipboard.writeText(output.innerText);
+  
+  let text = content(d); // local fallback
+
+  // Use 100% free keyless AI (Pollinations) by default
+  try {
+    const prompt = `Write a ${d.task} for ${d.businessName}. They sell ${d.offer} to ${d.audience}. Keep it professional, short, and sales-focused. Include a WhatsApp call-to-action.`;
+    text = await generateWithAI(prompt, "pollinations");
+  } catch (err) {
+    console.warn('Free AI failed, using template fallback');
+  }
+
+  output.innerHTML = `<article class="generated-doc"><p class="eyebrow">Generated ${esc(d.task)}</p><h2>${esc(d.businessName)}</h2><p>${text.replace(/\n/g,'<br>')}</p><button class="btn btn-secondary" id="copy-output" type="button">Copy content</button></article>`;
+  document.querySelector('#copy-output').onclick = () => navigator.clipboard.writeText(output.innerText);
 });

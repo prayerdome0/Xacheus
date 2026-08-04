@@ -27,6 +27,11 @@
 
       <section class="builder-console">
         <form class="builder-input-panel" id="real-builder-form">
+          <div style="background:rgba(255,255,255,0.05);padding:12px;border-radius:12px;margin-bottom:16px;font-size:0.85rem">
+            <strong>🆓 100% Free AI — No key, no signup ever</strong><br>
+            <span id="ai-status">Using Pollinations.ai (completely free &amp; keyless). <a href="ai-keys.html" style="color:#72f2b6">Optional better models</a></span>
+          </div>
+
           <label>Business name <input name="businessName" placeholder="Example: Zed Shoe Market" required /></label>
           <label>What should Xacheus build? <textarea name="prompt" placeholder="Create an online store for my shoe business with WhatsApp ordering and delivery in Zambia." required></textarea></label>
           <div class="form-row">
@@ -41,8 +46,20 @@
             <label>Style <select name="style"><option>Premium Tech</option><option>Clean Business</option><option>Bold E-commerce</option><option>Warm Community</option></select></label>
             <label>Primary CTA <select name="cta"><option>Order on WhatsApp</option><option>Start Building Free</option><option>Book a Consultation</option><option>Contact Us</option><option>Shop Now</option></select></label>
           </div>
+
+          <!-- NEW: Quick Templates -->
+          <div style="margin:12px 0 4px">
+            <small style="color:var(--muted);font-weight:700">Quick templates</small>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
+              <button type="button" class="btn btn-secondary" style="padding:6px 12px;font-size:0.8rem" data-template="shoe">Shoe Store</button>
+              <button type="button" class="btn btn-secondary" style="padding:6px 12px;font-size:0.8rem" data-template="food">Restaurant</button>
+              <button type="button" class="btn btn-secondary" style="padding:6px 12px;font-size:0.8rem" data-template="church">Church</button>
+              <button type="button" class="btn btn-secondary" style="padding:6px 12px;font-size:0.8rem" data-template="retail">Fashion</button>
+            </div>
+          </div>
           <button class="btn btn-primary full" type="submit">Generate Website Preview</button>
           <button class="btn btn-secondary full" type="button" id="save-generated-site">Save to My Dashboard</button>
+          <button class="btn btn-secondary full" type="button" id="export-html">Export as HTML</button>
           <p class="form-status" id="builder-save-status"></p>
         </form>
 
@@ -60,6 +77,7 @@
         </section>
       </section>
     </main>
+    <script type="module" src="ai-config.js"></script>
     <script type="module" src="builder.js"></script>
   </body>
 </html>
