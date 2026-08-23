@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Xacheus AI Studio — generate text, images, video, audio, realtime voice, and embeddings with one unified API." />
+    <title>AI Studio — Xacheus</title>
+    <link rel="icon" href="assets/xacheus-icon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="ai-studio.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav container">
+        <a class="brand brand-image" href="index.html"><img src="assets/xacheus-icon.svg" alt="" /><span>Xacheus</span></a>
+        <div class="nav-links static-links">
+          <a href="builder.html">AI Builder</a>
+          <a href="ai-assistant.html">AI Assistant</a>
+          <a href="ai-studio.html" aria-current="page"><strong>AI Studio</strong></a>
+          <a href="ai-keys.html">Free API Keys</a>
+          <a href="dashboard.html">Dashboard</a>
+        </div>
+      </nav>
+    </header>
+
+    <main class="container studio-main">
+      <section class="studio-hero">
+        <p class="eyebrow">Xacheus AI Studio</p>
+        <h1>One API key. Every AI modality.</h1>
+        <p>
+          Text, images, video, audio, realtime voice, and embeddings — all through the unified
+          <code>gen.pollinations.ai</code> endpoint, OpenAI-compatible. Everything runs in your browser;
+          your key never leaves your device.
+        </p>
+      </section>
+
+      <!-- ==================== API KEY BAR ==================== -->
+      <section class="studio-card key-bar" id="key-bar">
+        <div class="key-bar-row">
+          <div class="key-field">
+            <label for="api-key-input">Pollinations API key</label>
+            <div class="key-input-wrap">
+              <input id="api-key-input" type="password" placeholder="sk_... (get one at enter.pollinations.ai/keys)" autocomplete="off" spellcheck="false" />
+              <button class="btn btn-secondary btn-small" id="toggle-key-visibility" type="button" title="Show / hide key">👁</button>
+            </div>
+            <small class="muted">
+              Saved only in this browser (localStorage). Secret keys are for private use — rotate yours if it has been shared.
+              <a href="https://enter.pollinations.ai/keys" target="_blank" rel="noreferrer">Get a key →</a>
+            </small>
+          </div>
+          <div class="key-actions">
+            <button class="btn btn-primary" id="save-key" type="button">Save key</button>
+            <button class="btn btn-secondary" id="clear-key" type="button">Clear</button>
+            <button class="btn btn-secondary" id="check-balance" type="button">Check balance</button>
+          </div>
+        </div>
+        <p class="status-line" id="key-status"></p>
+      </section>
+
+      <!-- ==================== TABS ==================== -->
+      <nav class="studio-tabs" aria-label="AI Studio tools">
+        <button class="active" data-tab="text" type="button">💬 Text</button>
+        <button data-tab="image" type="button">🖼️ Images</button>
+        <button data-tab="video" type="button">🎬 Video</button>
+        <button data-tab="audio" type="button">🔊 Audio</button>
+        <button data-tab="realtime" type="button">🎙️ Realtime Voice</button>
+        <button data-tab="embeddings" type="button">🧮 Embeddings</button>
+        <button data-tab="models" type="button">📚 Models</button>
+      </nav>
+
+      <!-- ==================== TEXT ==================== -->
+      <section class="studio-panel active" id="panel-text">
+        <div class="panel-grid panel-grid-text">
+          <aside class="studio-card controls-card">
+            <h3>Chat settings</h3>
+            <label>Model
+              <select id="text-model"></select>
+            </label>
+            <label>System prompt
+              <textarea id="text-system" rows="4">You are a helpful AI assistant for Xacheus. Be concise, professional, and sales-focused for African businesses.</textarea>
+            </label>
+            <div class="form-row">
+              <label>Temperature <output id="text-temp-out">0.7</output>
+                <input id="text-temp" type="range" min="0" max="2" step="0.05" value="0.7" />
+              </label>
+              <label>Max tokens
+                <input id="text-max-tokens" type="number" min="1" max="32000" value="1200" />
+              </label>
+            </div>
+            <label class="checkbox-row"><input id="text-stream" type="checkbox" checked /> Stream responses</label>
+            <div class="stack">
+              <button class="btn btn-secondary full" id="text-clear" type="button">Clear conversation</button>
+              <button class="btn btn-secondary full" id="text-copy" type="button">Copy transcript</button>
+            </div>
+            <p class="muted small">OpenAI-compatible <code>POST /v1/chat/completions</code> — vision, tools and structured outputs supported by many models.</p>
+          </aside>
+          <div class="studio-card chat-card">
+            <div class="chat-log" id="chat-log">
+              <div class="empty-state">Ask anything — write product copy, business plans, WhatsApp replies, code…</div>
+            </div>
+            <form class="chat-composer" id="chat-form">
+              <textarea id="chat-input" rows="2" placeholder="Type a message… (Enter to send, Shift+Enter for a new line)" required></textarea>
+              <button class="btn btn-primary" id="chat-send" type="submit">Send</button>
+            </form>
+            <p class="status-line" id="text-status"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== IMAGE ==================== -->
+      <section class="studio-panel" id="panel-image">
+        <div class="panel-grid">
+          <aside class="studio-card controls-card">
+            <h3>Image generation</h3>
+            <label>Prompt
+              <textarea id="image-prompt" rows="3" placeholder="a lion wearing sunglasses, studio lighting, product photo" required></textarea>
+            </label>
+            <label>Model
+              <select id="image-model"></select>
+            </label>
+            <div class="form-row">
+              <label>Width <input id="image-width" type="number" min="64" max="4096" step="32" value="1024" /></label>
+              <label>Height <input id="image-height" type="number" min="64" max="4096" step="32" value="1024" /></label>
+            </div>
+            <div class="form-row">
+              <label>Seed <input id="image-seed" type="number" placeholder="random" /></label>
+              <label>Quality
+                <select id="image-quality">
+                  <option value="">auto</option><option>low</option><option>medium</option><option>high</option><option>hd</option>
+                </select>
+              </label>
+            </div>
+            <div class="checkbox-grid">
+              <label class="checkbox-row"><input id="image-enhance" type="checkbox" /> Enhance prompt</label>
+              <label class="checkbox-row"><input id="image-nologo" type="checkbox" checked /> No logo</label>
+              <label class="checkbox-row"><input id="image-private" type="checkbox" /> Private</label>
+              <label class="checkbox-row"><input id="image-safe" type="checkbox" /> Safe mode</label>
+              <label class="checkbox-row"><input id="image-transparent" type="checkbox" /> Transparent PNG</label>
+            </div>
+            <button class="btn btn-primary full" id="image-generate" type="button">Generate image</button>
+            <p class="status-line" id="image-status"></p>
+          </aside>
+          <div class="studio-card output-card">
+            <div class="media-output" id="image-output">
+              <div class="empty-state">Your generated image will appear here.</div>
+            </div>
+            <div class="output-actions" id="image-actions" hidden>
+              <a class="btn btn-secondary btn-small" id="image-open" target="_blank" rel="noreferrer">Open full size</a>
+              <a class="btn btn-secondary btn-small" id="image-download" download="xacheus-image">Download</a>
+              <button class="btn btn-secondary btn-small" id="image-to-video" type="button" title="Upload this image and use it as the video reference frame">Use as video start frame ➜</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== VIDEO ==================== -->
+      <section class="studio-panel" id="panel-video">
+        <div class="panel-grid">
+          <aside class="studio-card controls-card">
+            <h3>Video generation</h3>
+            <label>Prompt
+              <textarea id="video-prompt" rows="3" placeholder="sunset timelapse over the savannah, cinematic" required></textarea>
+            </label>
+            <label>Model
+              <select id="video-model"></select>
+            </label>
+            <div class="form-row">
+              <label>Duration (s) <input id="video-duration" type="number" min="1" max="15" value="4" /></label>
+              <label>Aspect ratio
+                <select id="video-aspect">
+                  <option value="">auto</option><option value="16:9">16:9 landscape</option><option value="9:16">9:16 portrait</option><option value="1:1">1:1 square</option>
+                </select>
+              </label>
+            </div>
+            <label>Optional reference image (image-to-video)
+              <input id="video-ref-file" type="file" accept="image/*" />
+            </label>
+            <p class="muted small" id="video-ref-status">No reference image uploaded.</p>
+            <button class="btn btn-primary full" id="video-generate" type="button">Generate video</button>
+            <p class="status-line" id="video-status"></p>
+            <p class="muted small">Videos can take 1–5 minutes depending on the model — the timer below keeps running while it renders.</p>
+          </aside>
+          <div class="studio-card output-card">
+            <div class="media-output" id="video-output">
+              <div class="empty-state">Your generated video will appear here.</div>
+            </div>
+            <div class="output-actions" id="video-actions" hidden>
+              <a class="btn btn-secondary btn-small" id="video-open" target="_blank" rel="noreferrer">Open full size</a>
+              <a class="btn btn-secondary btn-small" id="video-download" download="xacheus-video.mp4">Download MP4</a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== AUDIO ==================== -->
+      <section class="studio-panel" id="panel-audio">
+        <div class="panel-grid">
+          <div class="studio-card controls-card">
+            <h3>Text-to-speech &amp; music</h3>
+            <label>Text / music description
+              <textarea id="tts-text" rows="3" placeholder="Hello! Welcome to Xacheus — your business, built with AI." required></textarea>
+            </label>
+            <div class="form-row">
+              <label>Model <select id="tts-model"></select></label>
+              <label>Voice <select id="tts-voice"></select></label>
+            </div>
+            <button class="btn btn-primary full" id="tts-generate" type="button">Generate audio</button>
+            <div class="media-output audio-output" id="tts-output"><div class="empty-state">Audio player will appear here.</div></div>
+            <div class="output-actions" id="tts-actions" hidden>
+              <a class="btn btn-secondary btn-small" id="tts-download" download="xacheus-audio.mp3">Download audio</a>
+            </div>
+            <p class="status-line" id="tts-status"></p>
+            <p class="muted small">Pick a music model (e.g. <code>elevenmusic</code>, <code>lyria-3-clip</code>) and describe the track you want — voices only apply to speech models.</p>
+          </div>
+          <div class="studio-card controls-card">
+            <h3>Speech-to-text</h3>
+            <label>Audio / video file
+              <input id="stt-file" type="file" accept="audio/*,video/*" />
+            </label>
+            <label>Model
+              <select id="stt-model">
+                <option value="gpt-transcribe">gpt-transcribe</option>
+                <option value="whisper">whisper</option>
+                <option value="scribe">scribe</option>
+                <option value="grok-transcribe">grok-transcribe</option>
+                <option value="universal-2">universal-2</option>
+                <option value="universal-3.5-pro">universal-3.5-pro</option>
+              </select>
+            </label>
+            <button class="btn btn-primary full" id="stt-transcribe" type="button">Transcribe</button>
+            <div class="text-result" id="stt-output"><div class="empty-state">Transcription will appear here.</div></div>
+            <div class="output-actions" id="stt-actions" hidden>
+              <button class="btn btn-secondary btn-small" id="stt-copy" type="button">Copy text</button>
+            </div>
+            <p class="status-line" id="stt-status"></p>
+            <p class="muted small">OpenAI-compatible <code>POST /v1/audio/transcriptions</code>.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== REALTIME ==================== -->
+      <section class="studio-panel" id="panel-realtime">
+        <div class="panel-grid">
+          <aside class="studio-card controls-card">
+            <h3>Realtime voice session</h3>
+            <label>Model
+              <select id="rt-model">
+                <option value="gpt-realtime-2.1">gpt-realtime-2.1 (voice)</option>
+                <option value="gpt-realtime-2.1-mini">gpt-realtime-2.1-mini (voice)</option>
+                <option value="gpt-realtime-2">gpt-realtime-2 (voice)</option>
+                <option value="scribe-realtime">scribe-realtime (transcription only)</option>
+              </select>
+            </label>
+            <label>Voice
+              <select id="rt-voice"></select>
+            </label>
+            <label>Instructions
+              <textarea id="rt-instructions" rows="3">You are a warm, concise voice assistant for Xacheus users. Keep replies short.</textarea>
+            </label>
+            <div class="stack">
+              <button class="btn btn-primary full" id="rt-connect" type="button">🎙️ Start voice session</button>
+              <button class="btn btn-secondary full" id="rt-disconnect" type="button" disabled>End session</button>
+            </div>
+            <p class="status-line" id="rt-status">Disconnected.</p>
+            <div class="mic-meter" title="Microphone level"><div class="mic-meter-fill" id="rt-meter"></div></div>
+            <p class="muted small">Uses the OpenAI Realtime WebSocket protocol. Your mic streams to the model; its voice plays back through an audio element so browser echo-cancellation keeps working.</p>
+          </aside>
+          <div class="studio-card chat-card">
+            <div class="chat-log" id="rt-log">
+              <div class="empty-state">Start a voice session, then just talk. Live transcripts of you and the model will appear here.</div>
+            </div>
+            <audio id="rt-player" autoplay></audio>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== EMBEDDINGS ==================== -->
+      <section class="studio-panel" id="panel-embeddings">
+        <div class="panel-grid">
+          <aside class="studio-card controls-card">
+            <h3>Embeddings</h3>
+            <label>Model
+              <select id="emb-model"></select>
+            </label>
+            <div class="form-row">
+              <label>Dimensions <input id="emb-dimensions" type="number" min="1" max="4096" placeholder="model default" /></label>
+              <label id="emb-task-wrap">Task type
+                <select id="emb-task-type">
+                  <option value="">none</option>
+                  <option value="RETRIEVAL_QUERY">retrieval query</option>
+                  <option value="RETRIEVAL_DOCUMENT">retrieval document</option>
+                  <option value="SEMANTIC_SIMILARITY">semantic similarity</option>
+                  <option value="CLASSIFICATION">classification</option>
+                  <option value="CLUSTERING">clustering</option>
+                </select>
+              </label>
+            </div>
+            <label>Inputs — one per line (batch up to 32)
+              <textarea id="emb-input" rows="5" placeholder="Xacheus builds online stores with AI&#10;Shoes delivered across Zambia&#10;How to grow a small business"></textarea>
+            </label>
+            <button class="btn btn-primary full" id="emb-run" type="button">Generate embeddings</button>
+            <p class="status-line" id="emb-status"></p>
+            <p class="muted small">OpenAI-compatible <code>POST /v1/embeddings</code>. Two or more lines automatically produce a cosine-similarity matrix.</p>
+          </aside>
+          <div class="studio-card output-card">
+            <div class="emb-results" id="emb-output"><div class="empty-state">Embedding vectors and the similarity matrix will appear here.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== MODELS ==================== -->
+      <section class="studio-panel" id="panel-models">
+        <div class="studio-card">
+          <div class="models-toolbar">
+            <h3 style="margin:0">Model catalog</h3>
+            <label class="inline-filter">Show
+              <select id="models-filter">
+                <option value="all">All models</option>
+                <option value="official">Official only</option>
+                <option value="community">Community only</option>
+              </select>
+            </label>
+            <button class="btn btn-secondary btn-small" id="models-refresh" type="button">Refresh</button>
+          </div>
+          <p class="status-line" id="models-status"></p>
+          <div class="models-table-wrap">
+            <table class="models-table" id="models-table">
+              <thead><tr><th>Model</th><th>Type / modalities</th><th>Capabilities</th><th>Pricing</th></tr></thead>
+              <tbody id="models-tbody"><tr><td colspan="4">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="ai-studio.js"></script>
+  </body>
+</html>

@@ -53,10 +53,15 @@ This is the platform foundation: the structured store data is the source of trut
 
 ## Existing product tools
 
+- `ai-studio.html` — **Xacheus AI Studio**: one unified multimodal workspace on `gen.pollinations.ai` (OpenAI-compatible). Text chat with streaming, image generation, video generation (with image-to-video reference frames via `media.pollinations.ai` uploads), text-to-speech/music and speech-to-text, realtime voice conversations over the OpenAI Realtime WebSocket protocol (PCM16 + echo-safe `<audio>` playback), and embeddings with a cosine-similarity matrix — plus a live model catalog browser. The Pollinations API key is entered in the UI and stored per-browser in localStorage (`xacheus_pollinations_key`); it is never committed to the repo.
 - `builder.html` — AI-style website/store brief generator with free Pollinations AI, preview, copy, SEO, launch checklist, export, and Firebase save.
 - `ai-assistant.html` — business and marketing assistant.
 - `admin.html` — admin dashboard for manual store orders, payment confirmations, leads, and older saved website plans.
 - Public pages for About, Features, Pricing, Contact, Solutions, Blog, Help, FAQ, Terms, and Privacy.
+
+### Pollinations unified API
+
+`ai-config.js` now targets the unified `https://gen.pollinations.ai` gateway for text and images whenever a key is saved (OpenAI-compatible `POST /v1/chat/completions`, `GET /image/{prompt}`), falling back to the legacy keyless Pollinations endpoints when no key is present. Get a key at [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys). Keep secret `sk_` keys out of client-side bundles in production — for public apps use Connect User Wallets (BYOP).
 
 ## Firebase setup required
 
