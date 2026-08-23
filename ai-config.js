@@ -1,11 +1,50 @@
-// Xacheus Completely Free AI (2026)
-// NO API KEYS REQUIRED for basic use!
-// Uses Pollinations.ai (keyless + anonymous) + optional user keys for better models
+// Xacheus AI configuration (2026)
+// One unified API: https://gen.pollinations.ai — text, images, video, audio, realtime, embeddings.
+// The full multimodal workspace lives in ai-studio.html.
+//
+// Key handling: the Pollinations key is stored per-browser in localStorage under
+// "xacheus_pollinations_key" (saved from ai-studio.html or ai-keys.html).
+// Without a key we fall back to the legacy keyless endpoints so the site still works.
 
-// ==================== KEYLESS FREE (Recommended) ====================
+export const GEN_BASE = "https://gen.pollinations.ai";
+export const KEY_STORAGE = "xacheus_pollinations_key";
 
-// Pollinations Text — completely free, no key, no signup
+export function getPollinationsKey() {
+  try { return localStorage.getItem(KEY_STORAGE) || ""; } catch { return ""; }
+}
+
+// ==================== UNIFIED TEXT (gen.pollinations.ai, OpenAI-compatible) ====================
+
+async function callGenText(prompt, systemPrompt) {
+  const key = getPollinationsKey();
+  if (!key) throw new Error("no pollinations key");
+  const res = await fetch(`${GEN_BASE}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model: "openai",
+      messages: [
+        { role: "system", content: systemPrompt || "You are a helpful AI assistant for Xacheus. Be concise, professional, and sales-focused for African businesses." },
+        { role: "user", content: prompt },
+      ],
+      max_tokens: 1200,
+    }),
+  });
+  if (!res.ok) throw new Error(`gen.pollinations.ai HTTP ${res.status}`);
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content?.trim() || "";
+}
+
+// ==================== LEGACY KEYLESS FREE (fallback) ====================
+
+// Pollinations Text legacy — keyless endpoint kept as a no-key fallback
 export async function callPollinationsText(prompt) {
+  try {
+    const text = await callGenText(prompt);
+    if (text) return text;
+  } catch (e) {
+    console.warn("[Xacheus] gen.pollinations.ai unavailable, trying legacy:", e.message);
+  }
   try {
     const res = await fetch("https://text.pollinations.ai", {
       method: "POST",
@@ -29,11 +68,15 @@ export async function callPollinationsText(prompt) {
   }
 }
 
-// Pollinations Image — completely free, no key, no signup
+// Pollinations Image — unified gateway when a key is saved, legacy keyless otherwise
 export const POLLINATIONS_IMAGE = "https://image.pollinations.ai/prompt/";
 
 export function getPollinationsImage(prompt, width = 800, height = 500) {
   const safe = encodeURIComponent(prompt);
+  const key = getPollinationsKey();
+  if (key) {
+    return `${GEN_BASE}/image/${safe}?width=${width}&height=${height}&seed=${Date.now()}&nologo=true&key=${encodeURIComponent(key)}`;
+  }
   return `${POLLINATIONS_IMAGE}${safe}?width=${width}&height=${height}&seed=${Date.now()}`;
 }
 
@@ -41,6 +84,11 @@ export function getPollinationsImage(prompt, width = 800, height = 500) {
 // Users can paste keys here for higher quality (still free tiers)
 
 export const FREE_AI_PROVIDERS = {
+  pollinations: {
+    name: "Pollinations (one key for text, image, video, audio)",
+    getKeyUrl: "https://enter.pollinations.ai/keys",
+    limits: "OpenAI-compatible • pay-as-you-go pollen"
+  },
   gemini: {
     name: "Google Gemini (Better quality)",
     getKeyUrl: "https://aistudio.google.com/app/apikey",
@@ -90,22 +138,22 @@ export async function callGroq(prompt, apiKey) {
   return data.choices?.[0]?.message?.content || callPollinationsText(prompt);
 }
 
-// ==================== MAIN FUNCTION (Always prefers free no-key) ====================
+// ==================== MAIN FUNCTION (prefers unified Pollinations key) ====================
 
 export async function generateWithAI(prompt, provider = "pollinations", apiKey = "") {
   const clean = prompt.trim();
 
-  // 1. Always try keyless Pollinations first (completely free)
-  if (!apiKey || provider === "pollinations") {
-    return await callPollinationsText(clean);
+  // 1. Unified Pollinations gateway when a key is saved (or requested explicitly)
+  if (provider === "pollinations" || !apiKey) {
+    return await callPollinationsText(clean); // uses gen key when saved, legacy keyless otherwise
   }
 
-  // 2. If user provided a key, try the better model
+  // 2. If user provided another provider key, try it
   try {
     if (provider === "gemini") return await callGemini(clean, apiKey);
     if (provider === "groq") return await callGroq(clean, apiKey);
   } catch (e) {
-    console.warn("Key-based AI failed, falling back to free Pollinations");
+    console.warn("Key-based AI failed, falling back to Pollinations");
   }
 
   // 3. Final fallback

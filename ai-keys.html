@@ -14,6 +14,7 @@
       <div class="nav-links static-links">
         <a href="builder.html">AI Builder</a>
         <a href="ai-assistant.html">AI Assistant</a>
+        <a href="ai-studio.html">AI Studio</a>
         <a href="ai-keys.html">Free API Keys</a>
       </div>
     </nav>
@@ -33,7 +34,25 @@
     <p style="margin:12px 0 20px;color:#94a3b8">The section below is <strong>completely optional</strong>. Pollinations works instantly with zero setup.</p>
 
     <div style="display:grid;gap:24px">
-      
+
+      <!-- Pollinations Unified -->
+      <div class="feature-card" style="padding:24px;border-color:rgba(114,242,182,.45)">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+          <div>
+            <h3 style="margin:0">Pollinations — One Key for Everything</h3>
+            <p style="margin:4px 0 0;color:#94a3b8">Text • Images • Video • Audio • Realtime voice • Embeddings • OpenAI-compatible</p>
+          </div>
+          <span style="background:#72f2b6;color:#052e16;padding:4px 12px;border-radius:999px;font-size:0.75rem;font-weight:700">NEW UNIFIED API</span>
+        </div>
+        <ol style="margin:12px 0 16px 18px">
+          <li>Go to <a href="https://enter.pollinations.ai/keys" target="_blank">enter.pollinations.ai/keys</a></li>
+          <li>Create a secret <code>sk_</code> key</li>
+          <li>Paste it below — it powers the Builder, Assistant, and the full AI Studio</li>
+        </ol>
+        <a href="https://enter.pollinations.ai/keys" target="_blank" class="btn btn-primary" style="display:inline-flex">Get Pollinations Key →</a>
+        <a href="ai-studio.html" class="btn btn-secondary" style="display:inline-flex;margin-left:8px">Open AI Studio 🎛️</a>
+      </div>
+
       <!-- Gemini -->
       <div class="feature-card" style="padding:24px">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -86,6 +105,9 @@
     <div style="margin-top:40px;background:#0d1d32;padding:24px;border-radius:20px">
       <h3 style="margin-top:0">Paste your keys here (saved in your browser only)</h3>
       <div style="display:grid;gap:16px;max-width:520px">
+        <label>Pollinations API Key <span style="color:#72f2b6">(powers everything — one key)</span>
+          <input id="pollinations-key" placeholder="sk_..." style="width:100%">
+        </label>
         <label>Gemini API Key
           <input id="gemini-key" placeholder="AIzaSy..." style="width:100%">
         </label>
@@ -108,21 +130,23 @@
 
   <script>
     // Load saved keys
-    ['gemini', 'groq', 'openrouter'].forEach(p => {
+    ['pollinations', 'gemini', 'groq', 'openrouter'].forEach(p => {
       const val = localStorage.getItem(`xacheus_${p}_key`);
       if (val) document.getElementById(`${p}-key`).value = val;
     });
 
     document.getElementById('save-keys').onclick = () => {
+      const pollinations = document.getElementById('pollinations-key').value.trim();
       const gemini = document.getElementById('gemini-key').value.trim();
       const groq = document.getElementById('groq-key').value.trim();
       const openrouter = document.getElementById('openrouter-key').value.trim();
 
+      if (pollinations) localStorage.setItem('xacheus_pollinations_key', pollinations);
       if (gemini) localStorage.setItem('xacheus_gemini_key', gemini);
       if (groq) localStorage.setItem('xacheus_groq_key', groq);
       if (openrouter) localStorage.setItem('xacheus_openrouter_key', openrouter);
 
-      document.getElementById('key-status').textContent = '✅ Keys saved! They will be used automatically in the Builder and AI Assistant.';
+      document.getElementById('key-status').textContent = '✅ Keys saved! They will be used automatically in the Builder, AI Assistant, and AI Studio.';
       setTimeout(() => {
         document.getElementById('key-status').textContent = '';
       }, 3000);
