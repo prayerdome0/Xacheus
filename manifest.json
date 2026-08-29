@@ -1,7 +1,7 @@
 {
-  "name": "Xacheus Social",
+  "name": "Xacheus — Short Video Platform",
   "short_name": "Xacheus",
-  "description": "Share updates, follow people, talk in real time and find your community.",
+  "description": "Zambia's short vertical video community — real videos, free sounds, churches, opportunities. Built for creators.",
   "start_url": "/index.html",
   "display": "standalone",
   "background_color": "#0a0b12",
@@ -13,19 +13,9 @@
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
-    },
-    {
-      "src": "assets/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "assets/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
     }
   ],
-  "categories": ["social", "communication"],
+  "categories": ["social", "video", "entertainment"],
   "lang": "en",
   "scope": "/",
   "related_applications": [],

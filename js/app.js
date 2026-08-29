@@ -1,4 +1,4 @@
-/** Xacheus Social — app shell, router and session state. */
+/** Xacheus — App shell, router and session state (Phase 1: video platform) */
 
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import { getDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
@@ -9,56 +9,54 @@ import {
   getSuggestedUsers,
   getTrending,
   watchProfile,
+  isAdminProfile,
 } from "./data.js";
 import { avatar, clear, esc, formatCount, toast } from "./ui.js";
 import { friendlyAuthError, mountAuth } from "./auth.js";
-import { openComposer } from "./views/components.js";
 import { homeView } from "./views/home.js";
-import { exploreView } from "./views/explore.js";
+import { discoverView } from "./views/discover.js";
+import { createView } from "./views/create.js";
 import { notificationsView } from "./views/notifications.js";
-import { conversationView, messagesView } from "./views/messages.js";
 import { profileView } from "./views/profile.js";
-import { threadView } from "./views/thread.js";
 import { settingsView } from "./views/settings.js";
+import { adminView } from "./views/admin.js";
+import { soundsView } from "./views/sounds.js";
 
 const NAV = [
-  { href: "#/home", label: "Home", icon: "home", match: ["home"] },
-  { href: "#/explore", label: "Explore", icon: "search", match: ["explore", "tag"] },
-  { href: "#/notifications", label: "Notifications", icon: "bell", match: ["notifications"] },
-  { href: "#/messages", label: "Messages", icon: "mail", match: ["messages"] },
-  { href: "#/settings", label: "Settings", icon: "gear", match: ["settings"] },
+  { href: "#/home", label: "Home", icon: "home", match: ["home", ""] },
+  { href: "#/discover", label: "Discover", icon: "search", match: ["discover", "tag", "search"] },
+  { href: "#/create", label: "Create", icon: "plus", match: ["create"], special: true },
+  { href: "#/notifications", label: "Inbox", icon: "bell", match: ["notifications"] },
+  { href: "#/profile", label: "Profile", icon: "user", match: ["profile", "u"] },
 ];
 
 const ICONS = {
   home: '<path d="M4 11l8-7 8 7v9a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1z"/>',
   search: '<path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12zm11 17-5.2-5.2"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
   bell: '<path d="M12 3a6 6 0 0 1 6 6v4l2 3H4l2-3V9a6 6 0 0 1 6-6zm-3 15a3 3 0 0 0 6 0z"/>',
-  mail: '<path d="M3 6h18v12H3zM3 6l9 7 9-7"/>',
+  user: '<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0v1H5v-1z"/>',
   gear: '<path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm9 3l2 1.5-2 3.5-2.4-.8-1.6 1.8-.2 2.5h-4l-.2-2.5-1.6-1.8-2.4.8-2-3.5L5.9 12l-2-1.5 2-3.5 2.4.8 1.6-1.8.2-2.5h4l.2 2.5 1.6 1.8 2.4-.8 2 3.5z"/>',
-  compose: '<path d="M12 5v14M5 12h14"/>',
+  admin: '<path d="M12 2l2.5 5 5.5.8-4 3.9.9 5.3L12 14.8l-4.9 2.2.9-5.3-4-3.9 5.5-.8L12 2z"/>',
 };
-
-/* ------------------------------------------------------------------ */
-/* state                                                               */
-/* ------------------------------------------------------------------ */
 
 const state = {
   user: null,
   profile: null,
   theme: "dark",
   themePref: localStorage.getItem("xacheus_theme") || "dark",
-  feedMode: "foryou",
+  feedMode: localStorage.getItem("xacheus_feedMode") || "foryou",
 };
 
-const postCache = new Map();
+const videoCache = new Map();
 let currentView = null;
 let unsubProfile = null;
 let authController = null;
-const conversationCache = new Map();
 
 const ctx = {
   state,
-  postCache,
+  videoCache,
+  postCache: videoCache, // compat
   navigate(hash) {
     if (location.hash === hash) render();
     else location.hash = hash;
@@ -69,9 +67,7 @@ const ctx = {
   setNotificationCount(count) {
     setBadge("notifications", count);
   },
-  setMessageUnread(count) {
-    setBadge("messages", count);
-  },
+  setMessageUnread() {},
   setThemePref(pref) {
     state.themePref = pref;
     localStorage.setItem("xacheus_theme", pref);
@@ -82,22 +78,12 @@ const ctx = {
     const fresh = await ensureProfile(state.user).catch(() => null);
     if (fresh) state.profile = fresh;
   },
-  async loadConversation(cid) {
-    if (conversationCache.has(cid)) return conversationCache.get(cid);
-    const snap = await getDoc(doc(db, "conversations", cid));
-    const value = snap.exists() ? { id: snap.id, ...snap.data() } : null;
-    conversationCache.set(cid, value);
-    return value;
-  },
-  onPostsChanged() {
+  onVideosChanged() {
     render();
   },
 };
 
-/* ------------------------------------------------------------------ */
-/* theme                                                               */
-/* ------------------------------------------------------------------ */
-
+/* theme */
 function applyTheme() {
   const prefersLight =
     state.themePref === "light" ||
@@ -105,21 +91,23 @@ function applyTheme() {
   state.theme = prefersLight ? "light" : "dark";
   document.documentElement.classList.toggle("light", prefersLight);
   document.documentElement.classList.toggle("dark", !prefersLight);
-  document
-    .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", prefersLight ? "#f4f6fb" : "#0a0b12");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", prefersLight ? "#f4f6fb" : "#0a0b12");
   document.querySelectorAll("[data-theme-icon]").forEach((node) => {
     node.textContent = prefersLight ? "🌙" : "☀️";
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* shell                                                               */
-/* ------------------------------------------------------------------ */
-
-function navItem(item, { iconOnly = false } = {}) {
+/* shell */
+function navItem(item, { iconOnly = false, isAdmin = false } = {}) {
+  if (item.special) {
+    return `
+      <a class="nav-item nav-create" href="${item.href}" data-nav="${item.match[0]}" aria-label="${item.label}">
+        <span class="nav-create-inner"><svg viewBox="0 0 24 24">${ICONS[item.icon]}</svg></span>
+        ${iconOnly ? "" : `<span class="nav-label">${item.label}</span>`}
+      </a>`;
+  }
   return `
-    <a class="nav-item" href="${item.href}" data-nav="${item.match[0]}">
+    <a class="nav-item ${isAdmin ? "nav-admin" : ""}" href="${item.href}" data-nav="${item.match[0]}">
       <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${ICONS[item.icon]}</svg></span>
       ${iconOnly ? "" : `<span class="nav-label">${item.label}</span>`}
       <span class="nav-badge" data-badge-for="${item.match[0]}" hidden></span>
@@ -128,63 +116,80 @@ function navItem(item, { iconOnly = false } = {}) {
 
 function buildShell() {
   const shell = document.querySelector("#app");
+  const isAdmin = isAdminProfile(state.profile);
+  const extraNav = isAdmin ? [{ href: "#/admin", label: "Admin", icon: "admin", match: ["admin"] }] : [];
+
+  const allNav = [...NAV, ...extraNav];
+
   shell.innerHTML = `
     <header class="topbar">
       <div class="topbar-inner">
         <a class="brand" href="#/home" aria-label="Xacheus home">
           <img class="brand-logo" src="assets/icon.svg" alt="Xacheus" />
+          <span class="brand-text">Xacheus</span>
         </a>
 
-        <form class="topbar-search" id="topbar-search" role="search">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12zm11 17-5.2-5.2"/></svg>
-          <input type="search" placeholder="Search Xacheus" aria-label="Search Xacheus" autocomplete="off" />
-        </form>
+        <div class="topbar-tabs" id="topbar-tabs">
+          <button class="top-tab ${state.feedMode === "foryou" ? "is-active" : ""}" data-feed="foryou">For You</button>
+          <button class="top-tab ${state.feedMode === "following" ? "is-active" : ""}" data-feed="following">Following</button>
+        </div>
 
         <div class="topbar-right">
           <button class="icon-btn theme-toggle" type="button" data-act="theme" aria-label="Toggle theme">
             <span data-theme-icon>☀️</span>
           </button>
-          <button class="btn btn-primary btn-sm topbar-post" type="button" data-act="compose">Post</button>
+          <a class="icon-btn" href="#/discover" aria-label="Discover">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12zm11 17-5.2-5.2"/></svg>
+          </a>
           <button class="topbar-me" type="button" data-act="me" aria-label="Account menu"></button>
         </div>
       </div>
     </header>
 
-    <div class="layout">
-      <nav class="sidebar" aria-label="Primary">
+    <div class="layout layout-video">
+      <nav class="sidebar sidebar-video" aria-label="Primary">
         <a class="brand sidebar-brand" href="#/home" aria-label="Xacheus home">
           <img class="brand-logo" src="assets/icon.svg" alt="Xacheus" />
         </a>
-        ${NAV.map((item) => navItem(item)).join("")}
-        <button class="btn btn-primary btn-block sidebar-post" type="button" data-act="compose">Post</button>
+        ${allNav.map((item) => navItem(item)).join("")}
         <div class="sidebar-me" data-role="sidebar-me"></div>
+        <div class="sidebar-foot">
+          <p>Phase 1: Video Platform</p>
+          <p>Built in Zambia 🌍</p>
+        </div>
       </nav>
 
-      <main class="main" id="view" tabindex="-1"></main>
+      <main class="main main-video" id="view" tabindex="-1"></main>
 
-      <aside class="rail" aria-label="Discover">
+      <aside class="rail rail-video" aria-label="Discover">
         <section class="panel" id="rail-trends">
-          <h2 class="panel-title">Trending</h2>
+          <h2 class="panel-title">Trending hashtags</h2>
           <div class="loader-row"><span class="spinner"></span></div>
         </section>
         <section class="panel" id="rail-people">
-          <h2 class="panel-title">Who to follow</h2>
+          <h2 class="panel-title">Suggested creators</h2>
           <div class="loader-row"><span class="spinner"></span></div>
         </section>
+        <section class="panel">
+          <h2 class="panel-title">How Xacheus works</h2>
+          <ul class="tip-list">
+            <li>🎬 Real vertical videos via Cloudinary</li>
+            <li>🔒 Strict Firestore rules, no secrets in frontend</li>
+            <li>👤 Roles: user, creator, business, church, admin</li>
+            <li>🎵 Free sounds only — no copyrighted YouTube tracks</li>
+          </ul>
+        </section>
         <p class="rail-foot">
-          <a class="link" href="#/explore">Explore</a> ·
-          <a class="link" href="#/settings">Settings</a> · Built in Zambia 🌍
+          <a class="link" href="#/discover">Discover</a> ·
+          <a class="link" href="#/sounds">Sounds</a> ·
+          <a class="link" href="#/settings">Settings</a>
         </p>
       </aside>
     </div>
 
-    <nav class="tabbar" aria-label="Primary mobile">
-      ${NAV.map((item) => navItem(item, { iconOnly: true })).join("")}
+    <nav class="tabbar tabbar-video" aria-label="Primary mobile">
+      ${allNav.map((item) => navItem(item, { iconOnly: true })).join("")}
     </nav>
-
-    <button class="fab" type="button" data-act="compose" aria-label="Create post">
-      <svg viewBox="0 0 24 24" aria-hidden="true">${ICONS.compose}</svg>
-    </button>
 
     <div class="account-menu" id="account-menu" hidden></div>`;
 
@@ -195,26 +200,28 @@ function buildShell() {
 function wireShell() {
   const shell = document.querySelector("#app");
 
-  shell.querySelector("#topbar-search").addEventListener("submit", (event) => {
-    event.preventDefault();
-    const term = event.target.querySelector("input").value.trim();
-    if (!term) return;
-    location.hash = `#/explore?q=${encodeURIComponent(term)}`;
-  });
-
   shell.addEventListener("click", (event) => {
-    const trigger = event.target.closest("[data-act]");
+    const trigger = event.target.closest("[data-act],[data-feed]");
     if (!trigger) return;
     const act = trigger.dataset.act;
+    const feed = trigger.dataset.feed;
+
+    if (feed) {
+      state.feedMode = feed;
+      localStorage.setItem("xacheus_feedMode", feed);
+      shell.querySelectorAll(".top-tab").forEach((t) => t.classList.toggle("is-active", t.dataset.feed === feed));
+      if (location.hash.startsWith("#/home") || location.hash === "" || location.hash === "#/") {
+        render();
+      } else {
+        location.hash = "#/home";
+      }
+      return;
+    }
 
     if (act === "theme") {
       const next = state.theme === "light" ? "dark" : "light";
       ctx.setThemePref(next);
       return;
-    }
-    if (act === "compose") {
-      if (!state.profile) return openAuthOverlay();
-      return openComposer(ctx, { onPosted: () => render() });
     }
     if (act === "me") return toggleAccountMenu(trigger);
   });
@@ -233,16 +240,18 @@ function toggleAccountMenu(anchor) {
   if (!state.profile) return openAuthOverlay();
 
   const rect = anchor.getBoundingClientRect();
+  const isAdmin = isAdminProfile(state.profile);
   menu.innerHTML = `
     <div class="account-head">
       ${avatar(state.profile, "md")}
       <div>
         <strong>${esc(state.profile.displayName)}</strong>
-        <em>@${esc(state.profile.username)}</em>
+        <em>@${esc(state.profile.username)} · ${esc(state.profile.role || "user")}</em>
       </div>
     </div>
     <a class="account-item" href="#/u/${esc(state.profile.username)}">View profile</a>
     <a class="account-item" href="#/settings">Settings</a>
+    ${isAdmin ? `<a class="account-item" href="#/admin">Admin panel</a>` : ""}
     <button class="account-item" type="button" data-act="signout">Sign out</button>`;
 
   menu.hidden = false;
@@ -268,10 +277,7 @@ function setBadge(key, count) {
   });
 }
 
-/* ------------------------------------------------------------------ */
-/* auth overlay                                                        */
-/* ------------------------------------------------------------------ */
-
+/* auth overlay */
 function openAuthOverlay() {
   const overlay = document.querySelector("#auth-overlay");
   overlay.hidden = false;
@@ -297,10 +303,7 @@ function closeAuthOverlay() {
   }, 220);
 }
 
-/* ------------------------------------------------------------------ */
-/* router                                                              */
-/* ------------------------------------------------------------------ */
-
+/* router */
 function parseHash() {
   const raw = (location.hash || "").replace(/^#/, "") || "/home";
   const [path, queryString] = raw.split("?");
@@ -311,36 +314,43 @@ function parseHash() {
 
 function resolveRoute() {
   const { segments, params } = parseHash();
-  const [first, second] = segments;
+  const [first, second, third] = segments;
 
   switch (first) {
     case undefined:
     case "home":
       return { view: homeView(ctx), key: "home" };
-    case "explore":
-      return { view: exploreView(ctx, { tab: params.tab, q: params.q }), key: "explore" };
+    case "discover":
+      return { view: discoverView(ctx, { tab: params.tab, q: params.q }), key: "discover" };
+    case "sounds":
+      return { view: soundsView(ctx, { q: params.q }), key: "sounds" };
+    case "create":
+      return { view: createView(ctx), key: "create" };
     case "tag":
-      return { view: exploreView(ctx, { q: `#${second}` }), key: `tag:${second}` };
+      return { view: discoverView(ctx, { q: `#${second}` }), key: `tag:${second}` };
     case "notifications":
+    case "inbox":
       return { view: notificationsView(ctx), key: "notifications" };
-    case "messages":
-      return second
-        ? { view: conversationView(ctx, { cid: second }), key: `messages:${second}` }
-        : { view: messagesView(ctx), key: "messages" };
     case "u":
-      return { view: profileView(ctx, { username: second, tab: params.tab }), key: `u:${second}` };
-    case "post":
-      return { view: threadView(ctx, { id: second, focus: params.focus }), key: `post:${second}` };
-    case "settings":
-      return { view: settingsView(ctx), key: "settings" };
+      return { view: profileView(ctx, { username: second, tab: params.tab || third }), key: `u:${second}` };
+    case "video":
+    case "v":
+      return { view: homeView(ctx, { focusVideoId: second }), key: `video:${second}` };
     case "profile":
       return { view: profileView(ctx, { username: state.profile?.username, tab: params.tab }), key: "me" };
+    case "settings":
+      return { view: settingsView(ctx), key: "settings" };
+    case "admin":
+      if (!isAdminProfile(state.profile)) {
+        return { view: homeView(ctx), key: "home" };
+      }
+      return { view: adminView(ctx), key: "admin" };
     default:
       return { view: homeView(ctx), key: "home" };
   }
 }
 
-const AUTH_ROUTES = new Set(["notifications", "messages", "settings"]);
+const AUTH_ROUTES = new Set(["create", "notifications", "inbox", "settings", "admin"]);
 
 function render() {
   const viewHost = document.querySelector("#view");
@@ -357,12 +367,12 @@ function render() {
       <div class="locked-view">
         <div class="locked-card">
           <h2>Sign in to continue</h2>
-          <p>Notifications, messages and settings are private to your account.</p>
+          <p>${segments[0] === "create" ? "You need an account to post videos." : "This section is private to your account."}</p>
           <button class="btn btn-primary" type="button" data-act="login">Log in or sign up</button>
-          <a class="btn btn-ghost" href="#/home">Browse the public feed instead</a>
+          <a class="btn btn-ghost" href="#/home">Browse videos instead</a>
         </div>
       </div>`;
-    viewHost.querySelector('[data-act="login"]').addEventListener("click", openAuthOverlay);
+    viewHost.querySelector('[data-act="login"]')?.addEventListener("click", openAuthOverlay);
     markActiveNav(segments[0]);
     return;
   }
@@ -389,21 +399,20 @@ function render() {
           <button class="btn btn-primary" type="button" data-act="retry">Try again</button>
         </div>
       </div>`;
-    viewHost.querySelector('[data-act="retry"]').addEventListener("click", () => render());
+    viewHost.querySelector('[data-act="retry"]')?.addEventListener("click", () => render());
   }
 
   window.scrollTo(0, 0);
 }
 
 function markActiveNav(segment) {
+  const seg = segment || "home";
   document.querySelectorAll("[data-nav]").forEach((node) => {
-    node.classList.toggle("is-active", node.dataset.nav === (segment || "home"));
+    const matches = node.dataset.nav?.split(",") || [node.dataset.nav];
+    const isActive = node.dataset.nav === seg || (seg === "" && node.dataset.nav === "home") || matches.includes(seg);
+    node.classList.toggle("is-active", isActive);
   });
 }
-
-/* ------------------------------------------------------------------ */
-/* right rail                                                          */
-/* ------------------------------------------------------------------ */
 
 async function refreshRail() {
   const trends = document.querySelector("#rail-trends");
@@ -425,17 +434,17 @@ async function refreshRail() {
         <a class="trend-row" href="#/tag/${esc(tag.tag || tag.id)}">
           <span class="trend-meta">
             <strong>#${esc(tag.tag || tag.id)}</strong>
-            <em>${formatCount(tag.count)} ${tag.count === 1 ? "post" : "posts"}</em>
+            <em>${formatCount(tag.count)} ${tag.count === 1 ? "video" : "videos"}</em>
           </span>
           <span class="trend-arrow" aria-hidden="true">→</span>
         </a>`
             )
             .join("")
-        : `<p class="panel-empty">Post with a #hashtag to start a trend.</p>`
+        : `<p class="panel-empty">Post a video with a #hashtag to start a trend.</p>`
     }`;
 
   people.innerHTML = `
-    <h2 class="panel-title">Who to follow</h2>
+    <h2 class="panel-title">Suggested creators</h2>
     ${
       peopleList.length
         ? peopleList
@@ -445,7 +454,7 @@ async function refreshRail() {
           ${avatar(user, "sm")}
           <span>
             <strong>${esc(user.displayName || user.username)}</strong>
-            <em>@${esc(user.username)}</em>
+            <em>@${esc(user.username)} · ${esc(user.role || "user")}</em>
           </span>
         </a>`
             )
@@ -453,10 +462,6 @@ async function refreshRail() {
         : `<p class="panel-empty">You're following everyone here already.</p>`
     }`;
 }
-
-/* ------------------------------------------------------------------ */
-/* session chrome                                                      */
-/* ------------------------------------------------------------------ */
 
 function paintSession() {
   const me = document.querySelector(".topbar-me");
@@ -466,9 +471,15 @@ function paintSession() {
     if (me) me.innerHTML = `<span class="btn btn-primary btn-sm">Log in</span>`;
     if (sidebarMe) {
       sidebarMe.innerHTML = `
-        <p class="sidebar-guest">Sign in to post, follow and message.</p>
+        <p class="sidebar-guest">Sign in to post videos, follow and interact.</p>
         <button class="btn btn-outline btn-sm" type="button" data-act="login">Log in</button>`;
       sidebarMe.querySelector('[data-act="login"]')?.addEventListener("click", openAuthOverlay);
+    }
+    // rebuild shell to hide admin if needed
+    const app = document.querySelector("#app");
+    if (app && !app.hidden) {
+      // only rebuild if admin visibility changed? For simplicity rebuild nav badges but not whole shell
+      document.querySelectorAll('[data-nav="admin"]').forEach((n) => n.remove());
     }
     return;
   }
@@ -480,23 +491,26 @@ function paintSession() {
         ${avatar(state.profile, "md")}
         <span>
           <strong>${esc(state.profile.displayName)}</strong>
-          <em>@${esc(state.profile.username)}</em>
+          <em>@${esc(state.profile.username)} · ${esc(state.profile.role || "user")}</em>
         </span>
         <span class="sidebar-more" aria-hidden="true">⋯</span>
       </a>`;
   }
-}
 
-/* ------------------------------------------------------------------ */
-/* boot                                                                */
-/* ------------------------------------------------------------------ */
+  // If admin, ensure admin nav exists - rebuild shell if needed
+  if (isAdminProfile(state.profile)) {
+    const hasAdmin = document.querySelector('[data-nav="admin"]');
+    if (!hasAdmin) {
+      buildShell();
+      paintSession();
+      refreshRail();
+    }
+  }
+}
 
 function finishBoot() {
   const bootScreen = document.querySelector("#boot");
   if (!bootScreen || bootScreen.hidden) return;
-
-  // Never make the first paint wait for Firebase/Auth or the right rail. The
-  // shell is usable immediately; those services hydrate it in the background.
   bootScreen.classList.add("is-done");
   window.setTimeout(() => {
     bootScreen.hidden = true;
@@ -515,7 +529,7 @@ function boot() {
 
   window.addEventListener("hashchange", () => {
     render();
-    if (location.hash.startsWith("#/home")) refreshRail();
+    if (location.hash.startsWith("#/home") || location.hash.startsWith("#/discover")) refreshRail();
   });
 
   onAuthStateChanged(auth, async (user) => {
@@ -524,7 +538,9 @@ function boot() {
       state.profile = null;
       unsubProfile?.();
       setBadge("notifications", 0);
-      setBadge("messages", 0);
+      paintSession();
+      // rebuild shell to hide admin
+      buildShell();
       paintSession();
       render();
       return;
@@ -557,16 +573,9 @@ function boot() {
     render();
   });
 
-  // Kick off the first paint for guests; signed-in users get a render from onAuthStateChanged.
-  // Do this synchronously so a slow Firebase request cannot hold the app behind
-  // the loading screen.
   render();
   finishBoot();
 }
-
-/* ------------------------------------------------------------------ */
-/* global error hints                                                  */
-/* ------------------------------------------------------------------ */
 
 window.addEventListener("unhandledrejection", (event) => {
   const error = event.reason;
