@@ -1,4 +1,4 @@
-/** Xacheus Social — Settings, appearance and account controls. */
+/** Xacheus — Settings (Phase 1 video platform) */
 
 import {
   EmailAuthProvider,
@@ -9,14 +9,23 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
 import { auth } from "../firebase.js";
-import { purgeUserData, updateProfile } from "../data.js";
+import { purgeUserData } from "../data.js";
 import { avatar, confirmDialog, esc, openModal, toast } from "../ui.js";
 
 export function settingsView(ctx) {
   const me = ctx.state.profile;
+  if (!me) {
+    return {
+      html: `<div class="locked-view"><div class="locked-card"><h2>Sign in required</h2></div></div>`,
+      title: "Settings",
+      mount() {},
+    };
+  }
+
   const html = `
     <div class="view-head">
       <h1>Settings</h1>
+      <p class="view-sub">Manage your account, appearance and privacy.</p>
     </div>
 
     <section class="panel">
@@ -25,11 +34,12 @@ export function settingsView(ctx) {
         <div class="setting-main">
           ${avatar(me, "lg")}
           <div>
-            <strong>${esc(me.displayName)}</strong>
-            <em>@${esc(me.username)} · ${esc(me.email || "no email on file")}</em>
+            <strong>${esc(me.displayName)} ${me.verified ? '<span class="verified">✓</span>' : ""}</strong>
+            <em>@${esc(me.username)} · ${esc(me.role || "user")} · ${esc(me.email || "no email")}</em>
+            <em>${formatRoleDesc(me.role)}</em>
           </div>
         </div>
-        <button class="btn btn-outline btn-sm" type="button" data-act="edit">Edit profile</button>
+        <a class="btn btn-outline btn-sm" href="#/u/${esc(me.username)}">View profile</a>
       </div>
       ${
         auth.currentUser && !auth.currentUser.emailVerified
@@ -59,6 +69,18 @@ export function settingsView(ctx) {
     </section>
 
     <section class="panel">
+      <h2 class="panel-title">Video preferences</h2>
+      <div class="setting-row">
+        <div class="setting-main"><div><strong>Auto-play videos</strong><em>Videos play automatically when in view.</em></div></div>
+        <span class="badge">On</span>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main"><div><strong>Data saver</strong><em>Coming soon — lower quality on mobile data.</em></div></div>
+        <span class="badge">Soon</span>
+      </div>
+    </section>
+
+    <section class="panel">
       <h2 class="panel-title">Session</h2>
       <div class="setting-row">
         <div class="setting-main"><div><strong>Sign out</strong><em>You can come back any time.</em></div></div>
@@ -72,7 +94,7 @@ export function settingsView(ctx) {
         <div class="setting-main">
           <div>
             <strong>Delete account</strong>
-            <em>Removes your profile, posts, follows and messages. This can't be undone.</em>
+            <em>Removes your profile, videos, follows and notifications. This can't be undone.</em>
           </div>
         </div>
         <button class="btn btn-danger btn-sm" type="button" data-act="delete">Delete account</button>
@@ -80,9 +102,19 @@ export function settingsView(ctx) {
     </section>
 
     <p class="settings-foot">
-      Xacheus Social · Built in Zambia 🌍 ·
-      <a class="link" href="#/home">Back to feed</a>
+      Xacheus · Phase 1: Video Platform · Built in Zambia 🌍 · <a class="link" href="#/home">Back to feed</a>
     </p>`;
+
+  function formatRoleDesc(role) {
+    const map = {
+      user: "Viewer — watch and interact",
+      creator: "Creator — post videos, grow audience",
+      business: "Business — promote products/services",
+      church: "Church/Community — share sermons & updates",
+      admin: "Admin — full platform access",
+    };
+    return map[role] || map.user;
+  }
 
   return {
     html,
@@ -101,11 +133,6 @@ export function settingsView(ctx) {
         const trigger = event.target.closest("[data-act]");
         if (!trigger) return;
         const act = trigger.dataset.act;
-
-        if (act === "edit") {
-          const { openEditProfile } = await import("./profile.js");
-          return openEditProfile(ctx);
-        }
 
         if (act === "verify") {
           sendEmailVerification(auth.currentUser)
@@ -127,13 +154,12 @@ export function settingsView(ctx) {
         if (act === "delete") {
           const ok = await confirmDialog({
             title: "Delete your account?",
-            body: "Your profile, posts, replies, follows and messages will be permanently removed.",
+            body: "Your profile, videos, follows and notifications will be permanently removed.",
             confirmLabel: "Delete everything",
             danger: true,
           });
           if (!ok) return;
 
-          // Deleting an account needs a recent login; ask for the password when needed.
           if (auth.currentUser?.providerData?.some((p) => p.providerId === "password")) {
             const password = await askForPassword();
             if (password === null) return;
@@ -207,5 +233,3 @@ function askForPassword() {
     });
   });
 }
-
-export { updateProfile };

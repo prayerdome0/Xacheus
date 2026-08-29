@@ -1,119 +1,142 @@
-/** Xacheus Social — Home feed. */
+/** Xacheus — Home vertical video feed (Phase 1) */
 
-import { fetchFeedPage, getFollowingIds, watchFeed } from "../data.js";
-import { avatar, bindZoom, clear, emptyState, esc, skeletonPosts, toast } from "../ui.js";
-import { bindPostActions, hydratePostStates, openComposer, postCardHtml } from "./components.js";
+import { fetchVideoPage, getFollowingIds, watchVideoFeed } from "../data.js";
+import { emptyState, toast } from "../ui.js";
+import { bindVideoActions, hydrateVideoStates, videoCardHtml } from "./components.js";
 
-export function homeView(ctx) {
+export function homeView(ctx, { focusVideoId = null } = {}) {
   let mode = ctx.state.feedMode || "foryou";
   let unsubscribe = null;
   let lastDocs = [];
   let loadingMore = false;
   let followingIds = [];
   let destroyed = false;
+  let observer = null;
 
   const html = `
-    <div class="view-head">
-      <h1>Home</h1>
-      <button class="icon-btn" type="button" data-act="refresh" aria-label="Refresh feed">⟳</button>
+    <div class="video-feed-head">
+      <div class="feed-tabs">
+        <button class="feed-tab ${mode === "foryou" ? "is-active" : ""}" data-mode="foryou">For You</button>
+        <button class="feed-tab ${mode === "following" ? "is-active" : ""}" data-mode="following">Following</button>
+      </div>
+      <button class="icon-btn" type="button" data-act="refresh" aria-label="Refresh">⟳</button>
     </div>
 
-    <div class="composer-prompt">
-      ${ctx.state.profile ? avatar(ctx.state.profile, "md") : avatar({ username: "guest" }, "md")}
-      <button class="composer-prompt-input" type="button" data-act="compose">
-        ${esc(ctx.state.profile ? "What's happening?" : "Sign in to post")}
-      </button>
-      <button class="btn btn-primary btn-sm" type="button" data-act="compose">Post</button>
+    <div class="video-feed" id="video-feed" aria-live="polite">
+      <div class="loader-row"><span class="spinner"></span> Loading videos…</div>
     </div>
 
-    <div class="tabs" role="tablist">
-      <button class="tab ${mode === "foryou" ? "is-active" : ""}" role="tab" type="button" data-mode="foryou" aria-selected="${mode === "foryou"}">For you</button>
-      <button class="tab ${mode === "following" ? "is-active" : ""}" role="tab" type="button" data-mode="following" aria-selected="${mode === "following"}">Following</button>
-    </div>
+    <div class="feed-foot" id="feed-foot"></div>
+  `;
 
-    <div class="feed" id="feed" aria-live="polite">${skeletonPosts(3)}</div>
+  function renderVideos(root, videos) {
+    const feed = root.querySelector("#video-feed");
+    if (!feed) return;
 
-    <div class="feed-foot" id="feed-foot"></div>`;
-
-  function renderFeed(root, posts) {
-    const feed = root.querySelector("#feed");
-    clear(feed);
-
-    if (!posts.length) {
+    if (!videos.length) {
       feed.innerHTML =
         mode === "following"
-          ? emptyState(
-              "🛰️",
-              "Your following feed is quiet",
-              "Follow a few people and their posts will land here.",
-              '<a class="btn btn-primary btn-sm" href="#/explore">Find people to follow</a>'
-            )
-          : emptyState(
-              "✍️",
-              "No posts yet",
-              "Be the first to say something — your post will show up here instantly.",
-              '<button class="btn btn-primary btn-sm" type="button" data-act="compose">Write the first post</button>'
-            );
+          ? emptyState("🛰️", "Your following feed is quiet", "Follow creators and their videos will appear here.", '<a class="btn btn-primary btn-sm" href="#/discover">Find creators</a>')
+          : emptyState("🎬", "No videos yet", "Be the first to post a vertical video — it will show up here instantly.", '<a class="btn btn-primary btn-sm" href="#/create">Create video</a>');
+      root.querySelector("#feed-foot").innerHTML = "";
       return;
     }
 
-    const me = ctx.state.profile;
-    const frag = document.createElement("div");
-    frag.innerHTML = posts.map((post) => postCardHtml(post)).join("");
-    feed.appendChild(frag);
-    posts.forEach((post) => ctx.postCache.set(post.id, post));
+    // If focusVideoId, bring it to top
+    let ordered = videos;
+    if (focusVideoId) {
+      const idx = videos.findIndex((v) => v.id === focusVideoId);
+      if (idx > 0) {
+        const focused = videos[idx];
+        ordered = [focused, ...videos.slice(0, idx), ...videos.slice(idx + 1)];
+      }
+    }
 
-    hydratePostStates(feed, me?.uid);
+    feed.innerHTML = ordered.map((v) => videoCardHtml(v)).join("");
+    ordered.forEach((v) => ctx.videoCache.set(v.id, v));
+    hydrateVideoStates(feed, ctx.state.profile?.uid);
+    setupIntersection(feed);
     root.querySelector("#feed-foot").innerHTML =
-      posts.length >= 20
-        ? '<button class="btn btn-ghost btn-block" type="button" data-act="more">Load more posts</button>'
+      ordered.length >= 6
+        ? '<button class="btn btn-ghost btn-block" type="button" data-act="more">Load more videos</button>'
         : `<p class="feed-end">You're all caught up 🎉</p>`;
+  }
+
+  function setupIntersection(feed) {
+    if (observer) observer.disconnect();
+    const vids = feed.querySelectorAll("video");
+    if (!vids.length) return;
+
+    observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          const video = entry.target;
+          const card = video.closest(".video-card");
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.7) {
+            // pause others
+            feed.querySelectorAll("video").forEach((v) => {
+              if (v !== video) {
+                v.pause();
+                v.closest(".video-card")?.classList.remove("is-playing");
+              }
+            });
+            video.play().catch(() => {});
+            card?.classList.add("is-playing");
+            // progress
+            const progress = card?.querySelector(".video-progress span");
+            if (progress) {
+              video.ontimeupdate = () => {
+                if (video.duration) {
+                  progress.style.width = `${(video.currentTime / video.duration) * 100}%`;
+                }
+              };
+            }
+          } else {
+            video.pause();
+            card?.classList.remove("is-playing");
+          }
+        });
+      },
+      { threshold: [0, 0.5, 0.7, 1] }
+    );
+
+    vids.forEach((v) => observer.observe(v));
   }
 
   async function start(root) {
     if (unsubscribe) unsubscribe();
-    const feed = root.querySelector("#feed");
-    clear(feed);
-    feed.innerHTML = skeletonPosts(3);
+    const feed = root.querySelector("#video-feed");
+    feed.innerHTML = `<div class="loader-row"><span class="spinner"></span> Loading videos…</div>`;
 
     if (mode === "following") {
       if (!ctx.state.profile) {
-        feed.innerHTML = emptyState(
-          "🔒",
-          "Log in to see your following feed",
-          "Create a free account to follow people and build a personal timeline.",
-          '<button class="btn btn-primary btn-sm" type="button" data-act="login">Log in</button>'
-        );
+        feed.innerHTML = emptyState("🔒", "Log in to see following", "Create a free account to follow creators.", '<button class="btn btn-primary btn-sm" type="button" data-act="login">Log in</button>');
         return;
       }
       followingIds = await getFollowingIds(ctx.state.profile.uid).catch(() => []);
       if (!followingIds.length) {
-        feed.innerHTML = emptyState(
-          "🛰️",
-          "You aren't following anyone yet",
-          "Follow a few accounts to build a personal timeline.",
-          '<a class="btn btn-primary btn-sm" href="#/explore">Find people to follow</a>'
-        );
+        feed.innerHTML = emptyState("🛰️", "You aren't following anyone yet", "Follow creators to build your feed.", '<a class="btn btn-primary btn-sm" href="#/discover">Find creators</a>');
         return;
       }
     }
 
     if (destroyed) return;
-    unsubscribe = watchFeed({
-      authors: mode === "following" ? followingIds : null,
-      onData: (posts, docs) => {
+    unsubscribe = watchVideoFeed({
+      mode,
+      uid: ctx.state.profile?.uid,
+      followingIds,
+      onData: (videos, docs) => {
         lastDocs = docs || [];
-        renderFeed(root, posts);
+        renderVideos(root, videos);
       },
     });
   }
 
   return {
     html,
-    title: "Home",
+    title: mode === "following" ? "Following" : "For You",
     mount(root) {
-      bindPostActions(root, ctx);
-      bindZoom(root);
+      bindVideoActions(root, ctx);
 
       root.addEventListener("click", async (event) => {
         const trigger = event.target.closest("[data-act],[data-mode]");
@@ -122,19 +145,16 @@ export function homeView(ctx) {
         if (trigger.dataset.mode) {
           mode = trigger.dataset.mode;
           ctx.state.feedMode = mode;
-          root.querySelectorAll(".tab").forEach((tab) => {
-            const active = tab.dataset.mode === mode;
-            tab.classList.toggle("is-active", active);
-            tab.setAttribute("aria-selected", String(active));
+          localStorage.setItem("xacheus_feedMode", mode);
+          root.querySelectorAll(".feed-tab").forEach((tab) => {
+            tab.classList.toggle("is-active", tab.dataset.mode === mode);
           });
+          // also sync topbar tabs
+          document.querySelectorAll(".top-tab").forEach((t) => t.classList.toggle("is-active", t.dataset.feed === mode));
           start(root);
           return;
         }
 
-        if (trigger.dataset.act === "compose") {
-          if (!ctx.state.profile) return ctx.requireAuth();
-          return openComposer(ctx, { onPosted: () => start(root) });
-        }
         if (trigger.dataset.act === "login") return ctx.requireAuth();
         if (trigger.dataset.act === "refresh") return start(root);
 
@@ -144,27 +164,30 @@ export function homeView(ctx) {
           trigger.disabled = true;
           trigger.textContent = "Loading…";
           try {
-            const { items, docs } = await fetchFeedPage({
-              authors: mode === "following" ? followingIds : null,
+            const { items, docs } = await fetchVideoPage({
+              mode,
+              uid: ctx.state.profile?.uid,
+              followingIds,
               afterDoc: lastDocs[lastDocs.length - 1],
             });
-            const feed = root.querySelector("#feed");
+            const feed = root.querySelector("#video-feed");
             if (items.length) {
               const frag = document.createElement("div");
-              frag.innerHTML = items.map((post) => postCardHtml(post)).join("");
+              frag.innerHTML = items.map((v) => videoCardHtml(v)).join("");
               feed.appendChild(frag);
-              items.forEach((post) => ctx.postCache.set(post.id, post));
-              await hydratePostStates(frag, ctx.state.profile?.uid);
+              items.forEach((v) => ctx.videoCache.set(v.id, v));
+              await hydrateVideoStates(frag, ctx.state.profile?.uid);
+              setupIntersection(feed);
               lastDocs = docs;
             }
             trigger.disabled = false;
-            trigger.textContent = "Load more posts";
+            trigger.textContent = "Load more videos";
             if (!items.length) toast("That's everything for now", "info", 2000);
-          } catch (error) {
-            console.warn("[xacheus] load more", error);
-            toast("Could not load more posts.", "error");
+          } catch (e) {
+            console.warn("[xacheus] load more", e);
+            toast("Could not load more videos", "error");
             trigger.disabled = false;
-            trigger.textContent = "Load more posts";
+            trigger.textContent = "Load more videos";
           } finally {
             loadingMore = false;
           }
@@ -176,6 +199,9 @@ export function homeView(ctx) {
     destroy() {
       destroyed = true;
       if (unsubscribe) unsubscribe();
+      if (observer) observer.disconnect();
+      // pause all videos
+      document.querySelectorAll(".video-player").forEach((v) => v.pause());
     },
   };
 }

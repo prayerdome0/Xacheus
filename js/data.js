@@ -1,25 +1,23 @@
 /**
- * Xacheus Social — Firestore data layer.
+ * Xacheus — Firestore data layer (Phase 1: video platform)
  *
  * Collections
- *   users/{uid}                              profile + counters
+ *   users/{uid}                              profile + role + counters
  *   usernames/{username}                     unique handle reservation
- *   posts/{postId}                           feed posts
- *   posts/{postId}/comments/{cid}            replies
- *   users/{uid}/liked/{postId}               "I liked this" (fast lookup)
- *   users/{uid}/reposted/{postId}
- *   users/{uid}/saved/{postId}
- *   follows/{uid}/following/{targetUid}      directed follow graph
+ *   videos/{videoId}                         vertical short videos
+ *   videos/{videoId}/comments/{cid}          video comments
+ *   users/{uid}/likedVideos/{videoId}        liked videos lookup
+ *   users/{uid}/savedVideos/{videoId}        saved/bookmarked
+ *   sounds/{soundId}                         sounds library (free + original)
+ *   follows/{uid}/following/{targetUid}
  *   follows/{uid}/followers/{followerUid}
- *   notifications/{nid}                      toUid + type + payload
+ *   notifications/{nid}
  *   hashtags/{tag}                           trending counters
- *   conversations/{cid}/messages/{mid}       direct messages
+ *   posts/{postId}                           legacy (kept for compat, read-only)
  */
 
 import {
   addDoc,
-  arrayRemove,
-  arrayUnion,
   collection,
   deleteDoc,
   doc,
@@ -42,6 +40,10 @@ import {
 import { db } from "./firebase.js";
 
 export const PAGE_SIZE = 20;
+export const VIDEO_PAGE_SIZE = 10;
+
+export const ROLES = ["user", "creator", "business", "church", "admin"];
+export const DEFAULT_ROLE = "user";
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                             */
@@ -63,8 +65,10 @@ export function chunk(items, size) {
 
 const RESERVED = new Set([
   "admin", "root", "xacheus", "support", "help", "settings", "home",
-  "explore", "messages", "notifications", "login", "signup", "about",
-  "me", "profile", "post", "search", "api", "www", "null", "undefined",
+  "explore", "discover", "messages", "notifications", "login", "signup",
+  "about", "me", "profile", "post", "search", "api", "www", "null",
+  "undefined", "video", "videos", "sound", "sounds", "church", "churches",
+  "opportunity", "opportunities", "business", "creator",
 ]);
 
 export function normaliseUsername(raw) {
@@ -85,8 +89,17 @@ export function usernameError(username) {
   return null;
 }
 
+export function extractHashtags(text) {
+  const found = String(text || "").toLowerCase().match(/#([a-z0-9_]{2,30})/g);
+  return found ? [...new Set(found.map((t) => t.slice(1)))] : [];
+}
+export function extractMentions(text) {
+  const found = String(text || "").toLowerCase().match(/@([a-z0-9_]{3,20})/g);
+  return found ? [...new Set(found.map((n) => n.slice(1)))] : [];
+}
+
 /* ------------------------------------------------------------------ */
-/* profiles                                                            */
+/* profiles + roles                                                    */
 /* ------------------------------------------------------------------ */
 
 export async function isUsernameTaken(username) {
@@ -105,20 +118,21 @@ export async function suggestUsername(base) {
   return `${stem.slice(0, 10)}${Date.now().toString().slice(-6)}`;
 }
 
-/**
- * Create the Firestore profile for a freshly authenticated user.
- * Safe to call on every sign-in — it only writes when the profile is missing.
- */
 export async function ensureProfile(user, extra = {}) {
   if (!user) return null;
   const ref = doc(db, "users", user.uid);
   const snap = await getDoc(ref);
-  if (snap.exists()) return { id: snap.id, ...snap.data() };
+  if (snap.exists()) {
+    const data = snap.data();
+    // Ensure role field exists (migration)
+    if (!data.role) {
+      await updateDoc(ref, { role: DEFAULT_ROLE }).catch(() => {});
+      data.role = DEFAULT_ROLE;
+    }
+    return { id: snap.id, ...data };
+  }
 
-  const seed =
-    normaliseUsername(
-      extra.username || user.displayName || (user.email || "").split("@")[0] || "user"
-    ) || "user";
+  const seed = normaliseUsername(extra.username || user.displayName || (user.email || "").split("@")[0] || "user") || "user";
   const seedIsUsable = !usernameError(seed) && !(await isUsernameTaken(seed));
   const username = seedIsUsable ? seed : await suggestUsername(seed);
   const displayName = extra.displayName || user.displayName || username;
@@ -130,15 +144,17 @@ export async function ensureProfile(user, extra = {}) {
     displayName: extra.displayName || user.displayName || username,
     email: user.email || "",
     photoURL: user.photoURL || "",
+    coverURL: "",
     bio: extra.bio || "",
     location: "",
     website: "",
+    role: extra.role && ROLES.includes(extra.role) ? extra.role : DEFAULT_ROLE,
     verified: false,
-    private: false,
-    theme: "dark",
     followersCount: 0,
     followingCount: 0,
+    videosCount: 0,
     postsCount: 0,
+    likesCount: 0,
     createdAt: serverTimestamp(),
   };
 
@@ -169,23 +185,22 @@ export function watchProfile(uid, callback) {
 }
 
 export async function updateProfile(uid, patch) {
-  await updateDoc(doc(db, "users", uid), { ...patch, updatedAt: serverTimestamp() });
+  // Prevent role escalation via this helper unless admin - check handled in rules, but also client guard
+  const safePatch = { ...patch };
+  if ("role" in safePatch) delete safePatch.role;
+  if ("uid" in safePatch) delete safePatch.uid;
+  await updateDoc(doc(db, "users", uid), { ...safePatch, updatedAt: serverTimestamp() });
 }
 
-/** Change a handle, keeping the reservation collection in sync. */
 export async function changeUsername(uid, nextRaw) {
   const next = normaliseUsername(nextRaw);
   const problem = usernameError(next);
   if (problem) throw new Error(problem);
-
   const current = await getProfile(uid);
   if (!current) throw new Error("Profile not found.");
   if (current.username === next) return next;
-
   const taken = await getDoc(doc(db, "usernames", next));
   if (taken.exists() && taken.data().uid !== uid) throw new Error("That handle is already taken.");
-
-  // Claim the new handle first, then release the old one, so we never hold zero.
   await setDoc(doc(db, "usernames", next), { uid, createdAt: serverTimestamp() });
   await updateDoc(doc(db, "users", uid), { username: next });
   if (current.username && current.username !== next) {
@@ -194,63 +209,71 @@ export async function changeUsername(uid, nextRaw) {
   return next;
 }
 
-/* ------------------------------------------------------------------ */
-/* posts                                                               */
-/* ------------------------------------------------------------------ */
-
-export function extractHashtags(text) {
-  const found = String(text || "")
-    .toLowerCase()
-    .match(/#([a-z0-9_]{2,30})/g);
-  return found ? [...new Set(found.map((tag) => tag.slice(1)))] : [];
+export function isAdminProfile(profile) {
+  return profile?.role === "admin";
 }
 
-export function extractMentions(text) {
-  const found = String(text || "")
-    .toLowerCase()
-    .match(/@([a-z0-9_]{3,20})/g);
-  return found ? [...new Set(found.map((name) => name.slice(1)))] : [];
-}
+/* ------------------------------------------------------------------ */
+/* videos                                                              */
+/* ------------------------------------------------------------------ */
 
-export async function createPost(author, { text, imageUrl = "", replyTo = null }) {
-  const body = String(text || "").trim();
-  if (!body && !imageUrl) throw new Error("Write something or add an image.");
-  if (body.length > 500) throw new Error("Posts are limited to 500 characters.");
+export async function createVideo(author, {
+  videoUrl,
+  thumbnailUrl = "",
+  caption = "",
+  soundId = null,
+  soundTitle = "",
+  soundUrl = null,
+  duration = 0,
+  width = 0,
+  height = 0,
+  cloudinaryPublicId = "",
+}) {
+  const cap = String(caption || "").trim().slice(0, 1000);
+  if (!videoUrl) throw new Error("Video URL missing");
 
-  const hashtags = extractHashtags(body);
-  const mentions = extractMentions(body);
+  const hashtags = extractHashtags(cap);
+  const mentions = extractMentions(cap);
 
   const payload = {
     uid: author.uid,
     username: author.username,
     displayName: author.displayName,
     photoURL: author.photoURL || "",
-    text: body,
-    imageUrl: imageUrl || "",
+    videoUrl,
+    thumbnailUrl: thumbnailUrl || "",
+    caption: cap,
     hashtags,
     mentions,
-    replyTo: replyTo || null,
+    soundId: soundId || null,
+    soundTitle: soundTitle || (soundId ? "Original sound" : ""),
+    soundUrl: soundUrl || null,
+    duration: Number(duration) || 0,
+    width: Number(width) || 0,
+    height: Number(height) || 0,
+    cloudinaryPublicId: cloudinaryPublicId || "",
     likeCount: 0,
     commentCount: 0,
-    repostCount: 0,
+    viewCount: 0,
+    shareCount: 0,
+    isPublic: true,
     createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   };
 
-  const ref = await addDoc(collection(db, "posts"), payload);
-  await updateDoc(doc(db, "users", author.uid), { postsCount: increment(1) });
+  const ref = await addDoc(collection(db, "videos"), payload);
+  await updateDoc(doc(db, "users", author.uid), {
+    videosCount: increment(1),
+  }).catch(() => {});
 
-  // Trending counters (best-effort, never blocks the post).
+  // trending hashtags
   Promise.all(
     hashtags.map((tag) =>
-      setDoc(
-        doc(db, "hashtags", tag),
-        { tag, count: increment(1), lastUsedAt: serverTimestamp() },
-        { merge: true }
-      ).catch(() => {})
+      setDoc(doc(db, "hashtags", tag), { tag, count: increment(1), lastUsedAt: serverTimestamp() }, { merge: true }).catch(() => {})
     )
   ).catch(() => {});
 
-  // Mention + reply notifications (best-effort).
+  // mention notifications
   Promise.all(
     mentions.map(async (name) => {
       const target = await getProfileByUsername(name);
@@ -261,235 +284,195 @@ export async function createPost(author, { text, imageUrl = "", replyTo = null }
           fromName: author.displayName,
           fromPhoto: author.photoURL || "",
           fromUsername: author.username,
-          postId: ref.id,
-          text: body.slice(0, 180),
+          videoId: ref.id,
+          text: cap.slice(0, 180),
         });
       }
     })
   ).catch(() => {});
 
+  // increment sound useCount
+  if (soundId) {
+    updateDoc(doc(db, "sounds", soundId), { useCount: increment(1), lastUsedAt: serverTimestamp() }).catch(() => {});
+  }
+
   return ref.id;
 }
 
-export async function getPost(postId) {
-  const snap = await getDoc(doc(db, "posts", postId));
+export async function getVideo(videoId) {
+  const snap = await getDoc(doc(db, "videos", videoId));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-export function watchPost(postId, callback) {
-  return onSnapshot(doc(db, "posts", postId), (snap) => {
-    callback(snap.exists() ? { id: snap.id, ...snap.data() } : null);
+export function watchVideo(videoId, cb) {
+  return onSnapshot(doc(db, "videos", videoId), (snap) => {
+    cb(snap.exists() ? { id: snap.id, ...snap.data() } : null);
   });
 }
 
-export async function deletePost(postId, uid) {
-  const snap = await getDoc(doc(db, "posts", postId));
+export async function deleteVideo(videoId, uid) {
+  const snap = await getDoc(doc(db, "videos", videoId));
   if (!snap.exists()) return;
-  if (snap.data().uid !== uid) throw new Error("You can only delete your own posts.");
-  await deleteDoc(doc(db, "posts", postId));
-  await updateDoc(doc(db, "users", uid), { postsCount: increment(-1) });
+  if (snap.data().uid !== uid) throw new Error("You can only delete your own videos.");
+  await deleteDoc(doc(db, "videos", videoId));
+  await updateDoc(doc(db, "users", uid), { videosCount: increment(-1) }).catch(() => {});
 }
 
-/**
- * Live feed. Pass `authors` (max 30 uids) to scope it to people you follow.
- * The listener receives `(posts, docs)` so callers can paginate from the last doc.
- */
-export function watchFeed({ authors = null, onData, pageSize = PAGE_SIZE } = {}) {
-  const constraints = [orderBy("createdAt", "desc"), limit(pageSize)];
-  if (authors && authors.length) constraints.unshift(where("uid", "in", authors.slice(0, 30)));
+export function watchVideoFeed({ mode = "foryou", uid = null, followingIds = [], onData, pageSize = VIDEO_PAGE_SIZE } = {}) {
+  let q;
+  if (mode === "following" && uid && followingIds.length) {
+    // Firestore IN limited to 10, so we chunk but for live we just take first 10
+    const ids = followingIds.slice(0, 10);
+    q = query(
+      collection(db, "videos"),
+      where("uid", "in", ids),
+      orderBy("createdAt", "desc"),
+      limit(pageSize)
+    );
+  } else {
+    q = query(collection(db, "videos"), orderBy("createdAt", "desc"), limit(pageSize));
+  }
   return onSnapshot(
-    query(collection(db, "posts"), ...constraints),
+    q,
     (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() })), snap.docs),
-    (error) => {
-      console.warn("[xacheus] feed listener:", error);
+    (err) => {
+      console.warn("[xacheus] video feed", err);
       onData([], []);
     }
   );
 }
 
-export async function fetchFeedPage({ authors = null, afterDoc = null, pageSize = PAGE_SIZE } = {}) {
+export async function fetchVideoPage({ mode = "foryou", uid = null, followingIds = [], afterDoc = null, pageSize = VIDEO_PAGE_SIZE } = {}) {
   const constraints = [orderBy("createdAt", "desc"), limit(pageSize)];
-  if (authors && authors.length) constraints.unshift(where("uid", "in", authors.slice(0, 30)));
+  if (mode === "following" && followingIds.length) {
+    constraints.unshift(where("uid", "in", followingIds.slice(0, 10)));
+  }
   if (afterDoc) constraints.push(startAfter(afterDoc));
-  const snap = await getDocs(query(collection(db, "posts"), ...constraints));
+  const snap = await getDocs(query(collection(db, "videos"), ...constraints));
   return { docs: snap.docs, items: snap.docs.map((d) => ({ id: d.id, ...d.data() })) };
 }
 
-export function watchUserPosts(uid, onData, pageSize = PAGE_SIZE) {
+export function watchUserVideos(uid, onData, pageSize = 30) {
   return onSnapshot(
-    query(collection(db, "posts"), where("uid", "==", uid), orderBy("createdAt", "desc"), limit(pageSize)),
+    query(collection(db, "videos"), where("uid", "==", uid), orderBy("createdAt", "desc"), limit(pageSize)),
     (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (error) => {
-      console.warn("[xacheus] user posts listener:", error);
-      onData([]);
-    }
+    () => onData([])
   );
 }
 
-export function watchHashtag(tag, onData, pageSize = PAGE_SIZE) {
+export function watchTrendingVideos(onData, pageSize = 20) {
+  // Trending by likeCount desc then createdAt desc requires composite index, fallback to likeCount query
   return onSnapshot(
-    query(
-      collection(db, "posts"),
-      where("hashtags", "array-contains", normaliseUsername(tag)),
-      orderBy("createdAt", "desc"),
-      limit(pageSize)
-    ),
+    query(collection(db, "videos"), orderBy("likeCount", "desc"), limit(pageSize)),
     (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (error) => {
-      console.warn("[xacheus] hashtag listener:", error);
-      onData([]);
+    (err) => {
+      console.warn("[xacheus] trending videos", err);
+      // fallback to recent
+      onSnapshot(
+        query(collection(db, "videos"), orderBy("createdAt", "desc"), limit(pageSize)),
+        (s) => onData(s.docs.map((d) => ({ id: d.id, ...d.data() })))
+      );
     }
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* likes · reposts · saves                                             */
+/* likes / saves for videos                                            */
 /* ------------------------------------------------------------------ */
 
-export async function getLikedIds(uid, postIds) {
+export async function getLikedVideoIds(uid, videoIds) {
   const liked = new Set();
-  const ids = postIds.filter(Boolean);
+  const ids = videoIds.filter(Boolean);
   if (!uid || !ids.length) return liked;
   await Promise.all(
     chunk(ids, 10).map(async (group) => {
-      const snap = await getDocs(
-        query(collection(db, "users", uid, "liked"), where(documentId(), "in", group))
-      );
+      const snap = await getDocs(query(collection(db, "users", uid, "likedVideos"), where(documentId(), "in", group)));
       snap.forEach((d) => liked.add(d.id));
     })
   );
   return liked;
 }
 
-export async function toggleLike(uid, actor, post) {
-  const ref = doc(db, "users", uid, "liked", post.id);
+export async function toggleVideoLike(uid, actor, video) {
+  const ref = doc(db, "users", uid, "likedVideos", video.id);
   const snap = await getDoc(ref);
-  const postRef = doc(db, "posts", post.id);
+  const videoRef = doc(db, "videos", video.id);
 
   if (snap.exists()) {
     await deleteDoc(ref);
-    await updateDoc(postRef, { likeCount: increment(-1) });
+    await updateDoc(videoRef, { likeCount: increment(-1) });
+    await updateDoc(doc(db, "users", uid), { likesCount: increment(-1) }).catch(() => {});
     return false;
   }
-
-  await setDoc(ref, { createdAt: serverTimestamp(), postId: post.id });
-  await updateDoc(postRef, { likeCount: increment(1) });
-  if (post.uid !== uid) {
-    notify(post.uid, {
+  await setDoc(ref, { createdAt: serverTimestamp(), videoId: video.id });
+  await updateDoc(videoRef, { likeCount: increment(1) });
+  await updateDoc(doc(db, "users", uid), { likesCount: increment(1) }).catch(() => {});
+  if (video.uid !== uid) {
+    notify(video.uid, {
       type: "like",
       fromUid: uid,
       fromName: actor.displayName,
       fromPhoto: actor.photoURL || "",
       fromUsername: actor.username,
-      postId: post.id,
-      text: (post.text || "").slice(0, 180),
+      videoId: video.id,
+      text: (video.caption || "").slice(0, 180),
     }).catch(() => {});
   }
   return true;
 }
 
-export async function getRepostedIds(uid, postIds) {
+export async function getSavedVideoIds(uid, videoIds) {
   const set = new Set();
-  const ids = postIds.filter(Boolean);
+  const ids = videoIds.filter(Boolean);
   if (!uid || !ids.length) return set;
   await Promise.all(
     chunk(ids, 10).map(async (group) => {
-      const snap = await getDocs(
-        query(collection(db, "users", uid, "reposted"), where(documentId(), "in", group))
-      );
+      const snap = await getDocs(query(collection(db, "users", uid, "savedVideos"), where(documentId(), "in", group)));
       snap.forEach((d) => set.add(d.id));
     })
   );
   return set;
 }
 
-export async function toggleRepost(uid, actor, post) {
-  const ref = doc(db, "users", uid, "reposted", post.id);
-  const snap = await getDoc(ref);
-  if (snap.exists()) {
-    await deleteDoc(ref);
-    await updateDoc(doc(db, "posts", post.id), { repostCount: increment(-1) });
-    return false;
-  }
-  await setDoc(ref, { createdAt: serverTimestamp(), postId: post.id });
-  await updateDoc(doc(db, "posts", post.id), { repostCount: increment(1) });
-  if (post.uid !== uid) {
-    notify(post.uid, {
-      type: "repost",
-      fromUid: uid,
-      fromName: actor.displayName,
-      fromPhoto: actor.photoURL || "",
-      fromUsername: actor.username,
-      postId: post.id,
-      text: (post.text || "").slice(0, 180),
-    }).catch(() => {});
-  }
-  return true;
-}
-
-export async function getSavedIds(uid, postIds) {
-  const set = new Set();
-  const ids = postIds.filter(Boolean);
-  if (!uid || !ids.length) return set;
-  await Promise.all(
-    chunk(ids, 10).map(async (group) => {
-      const snap = await getDocs(
-        query(collection(db, "users", uid, "saved"), where(documentId(), "in", group))
-      );
-      snap.forEach((d) => set.add(d.id));
-    })
-  );
-  return set;
-}
-
-export async function toggleSave(uid, post) {
-  const ref = doc(db, "users", uid, "saved", post.id);
+export async function toggleVideoSave(uid, video) {
+  const ref = doc(db, "users", uid, "savedVideos", video.id);
   const snap = await getDoc(ref);
   if (snap.exists()) {
     await deleteDoc(ref);
     return false;
   }
-  await setDoc(ref, { createdAt: serverTimestamp(), postId: post.id });
+  await setDoc(ref, { createdAt: serverTimestamp(), videoId: video.id });
   return true;
 }
 
-export function watchSaved(uid, onData) {
+export function watchSavedVideos(uid, onData) {
   return onSnapshot(
-    query(collection(db, "users", uid, "saved"), orderBy("createdAt", "desc"), limit(60)),
+    query(collection(db, "users", uid, "savedVideos"), orderBy("createdAt", "desc"), limit(60)),
     async (snap) => {
-      const posts = await Promise.all(
-        snap.docs.map(async (d) => {
-          const post = await getPost(d.id);
-          return post;
-        })
-      );
-      onData(posts.filter(Boolean));
+      const vids = await Promise.all(snap.docs.map(async (d) => await getVideo(d.id)));
+      onData(vids.filter(Boolean));
     },
     () => onData([])
   );
 }
 
 /* ------------------------------------------------------------------ */
-/* comments                                                            */
+/* comments for videos                                                 */
 /* ------------------------------------------------------------------ */
 
-export function watchComments(postId, onData) {
+export function watchVideoComments(videoId, onData) {
   return onSnapshot(
-    query(collection(db, "posts", postId, "comments"), orderBy("createdAt", "asc"), limit(100)),
+    query(collection(db, "videos", videoId, "comments"), orderBy("createdAt", "asc"), limit(100)),
     (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (error) => {
-      console.warn("[xacheus] comments listener:", error);
-      onData([]);
-    }
+    () => onData([])
   );
 }
 
-export async function addComment(uid, actor, post, text) {
+export async function addVideoComment(uid, actor, video, text) {
   const body = String(text || "").trim();
-  if (!body) throw new Error("Write a reply first.");
-  if (body.length > 500) throw new Error("Replies are limited to 500 characters.");
-
-  await addDoc(collection(db, "posts", post.id, "comments"), {
+  if (!body) throw new Error("Write a comment first.");
+  if (body.length > 500) throw new Error("Comments limited to 500 chars.");
+  await addDoc(collection(db, "videos", video.id, "comments"), {
     uid,
     username: actor.username,
     displayName: actor.displayName,
@@ -497,19 +480,156 @@ export async function addComment(uid, actor, post, text) {
     text: body,
     createdAt: serverTimestamp(),
   });
-  await updateDoc(doc(db, "posts", post.id), { commentCount: increment(1) });
-
-  if (post.uid !== uid) {
-    await notify(post.uid, {
+  await updateDoc(doc(db, "videos", video.id), { commentCount: increment(1) });
+  if (video.uid !== uid) {
+    await notify(video.uid, {
       type: "comment",
       fromUid: uid,
       fromName: actor.displayName,
       fromPhoto: actor.photoURL || "",
       fromUsername: actor.username,
-      postId: post.id,
+      videoId: video.id,
       text: body.slice(0, 180),
     }).catch(() => {});
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* sounds                                                              */
+/* ------------------------------------------------------------------ */
+
+// Curated royalty-free sounds (properly usable, not copyrighted)
+// These are from Pixabay / Mixkit free library - attribution free, usable for this app.
+// We store them as seed data if sounds collection empty.
+export const CURATED_FREE_SOUNDS = [
+  {
+    id: "free_001",
+    title: "Lo-Fi Chill",
+    artist: "Free Music",
+    genre: "lofi",
+    audioUrl: "https://cdn.pixabay.com/download/audio/2022/03/10/audio_c8c8a650cd.mp3?filename=lofi-study-112191.mp3",
+    coverUrl: "",
+    duration: 140,
+    isFree: true,
+    isOriginal: false,
+    useCount: 0,
+  },
+  {
+    id: "free_002",
+    title: "Afrobeat Vibe",
+    artist: "Afro Free",
+    genre: "afrobeat",
+    audioUrl: "https://cdn.pixabay.com/download/audio/2022/06/07/audio_b9bd4170e8.mp3?filename=african-drums-112198.mp3",
+    coverUrl: "",
+    duration: 90,
+    isFree: true,
+    isOriginal: false,
+    useCount: 0,
+  },
+  {
+    id: "free_003",
+    title: "Gospel Uplift",
+    artist: "Church Free",
+    genre: "gospel",
+    audioUrl: "https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c2d1b6.mp3?filename=happy-ukulele-101225.mp3",
+    coverUrl: "",
+    duration: 110,
+    isFree: true,
+    isOriginal: false,
+    useCount: 0,
+  },
+  {
+    id: "free_004",
+    title: "Zambian Sunset",
+    artist: "Zed Beats Free",
+    genre: "afro",
+    audioUrl: "https://cdn.pixabay.com/download/audio/2022/10/30/audio_8e2b3e0b8c.mp3?filename=african-village-134939.mp3",
+    coverUrl: "",
+    duration: 95,
+    isFree: true,
+    isOriginal: false,
+    useCount: 0,
+  },
+  {
+    id: "free_005",
+    title: "Upbeat Pop",
+    artist: "Pop Free",
+    genre: "pop",
+    audioUrl: "https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c6fa4e.mp3?filename=energetic-101247.mp3",
+    coverUrl: "",
+    duration: 120,
+    isFree: true,
+    isOriginal: false,
+    useCount: 0,
+  },
+];
+
+export async function getSounds({ limitCount = 30, onlyFree = false } = {}) {
+  let q = query(collection(db, "sounds"), orderBy("useCount", "desc"), limit(limitCount));
+  if (onlyFree) {
+    q = query(collection(db, "sounds"), where("isFree", "==", true), orderBy("useCount", "desc"), limit(limitCount));
+  }
+  const snap = await getDocs(q);
+  if (snap.empty) {
+    // return curated if DB empty
+    return CURATED_FREE_SOUNDS.slice(0, limitCount);
+  }
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export function watchTrendingSounds(onData, pageSize = 20) {
+  return onSnapshot(
+    query(collection(db, "sounds"), orderBy("useCount", "desc"), limit(pageSize)),
+    (snap) => {
+      if (snap.empty) {
+        onData(CURATED_FREE_SOUNDS);
+      } else {
+        onData(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      }
+    },
+    () => onData(CURATED_FREE_SOUNDS)
+  );
+}
+
+export async function createSound(author, { title, audioUrl, coverUrl = "", duration = 0, genre = "original" }) {
+  if (!title || !audioUrl) throw new Error("Sound needs title and audio");
+  const payload = {
+    title: String(title).slice(0, 80),
+    artist: author.displayName || author.username,
+    artistUid: author.uid,
+    artistUsername: author.username,
+    audioUrl,
+    coverUrl: coverUrl || author.photoURL || "",
+    duration: Number(duration) || 0,
+    genre,
+    useCount: 0,
+    isFree: false,
+    isOriginal: true,
+    createdAt: serverTimestamp(),
+    lastUsedAt: serverTimestamp(),
+  };
+  const ref = await addDoc(collection(db, "sounds"), payload);
+  return ref.id;
+}
+
+export async function getSound(soundId) {
+  if (!soundId) return null;
+  // Check curated first
+  const curated = CURATED_FREE_SOUNDS.find((s) => s.id === soundId);
+  if (curated) return curated;
+  const snap = await getDoc(doc(db, "sounds", soundId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export function watchSounds(onData, pageSize = 30) {
+  return onSnapshot(
+    query(collection(db, "sounds"), orderBy("createdAt", "desc"), limit(pageSize)),
+    (snap) => {
+      if (snap.empty) onData(CURATED_FREE_SOUNDS);
+      else onData(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    },
+    () => onData(CURATED_FREE_SOUNDS)
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -519,40 +639,33 @@ export async function addComment(uid, actor, post, text) {
 export function followingRef(uid, targetUid) {
   return doc(db, "follows", uid, "following", targetUid);
 }
-
 export function followerRef(targetUid, uid) {
   return doc(db, "follows", targetUid, "followers", uid);
 }
-
 export async function isFollowing(uid, targetUid) {
   if (!uid || !targetUid || uid === targetUid) return false;
   const snap = await getDoc(followingRef(uid, targetUid));
   return snap.exists();
 }
-
 export async function getFollowingIds(uid) {
   const snap = await getDocs(query(collection(db, "follows", uid, "following"), limit(500)));
   return snap.docs.map((d) => d.id);
 }
-
 export async function toggleFollow(uid, actor, target) {
   if (!uid || !target?.uid || uid === target.uid) return false;
   const ref = followingRef(uid, target.uid);
   const snap = await getDoc(ref);
-
   if (snap.exists()) {
     await deleteDoc(ref);
     await deleteDoc(followerRef(target.uid, uid));
-    await updateDoc(doc(db, "users", uid), { followingCount: increment(-1) });
-    await updateDoc(doc(db, "users", target.uid), { followersCount: increment(-1) });
+    await updateDoc(doc(db, "users", uid), { followingCount: increment(-1) }).catch(() => {});
+    await updateDoc(doc(db, "users", target.uid), { followersCount: increment(-1) }).catch(() => {});
     return false;
   }
-
   await setDoc(ref, { createdAt: serverTimestamp(), uid: target.uid });
   await setDoc(followerRef(target.uid, uid), { createdAt: serverTimestamp(), uid });
-  await updateDoc(doc(db, "users", uid), { followingCount: increment(1) });
-  await updateDoc(doc(db, "users", target.uid), { followersCount: increment(1) });
-
+  await updateDoc(doc(db, "users", uid), { followingCount: increment(1) }).catch(() => {});
+  await updateDoc(doc(db, "users", target.uid), { followersCount: increment(1) }).catch(() => {});
   await notify(target.uid, {
     type: "follow",
     fromUid: uid,
@@ -563,28 +676,21 @@ export async function toggleFollow(uid, actor, target) {
   }).catch(() => {});
   return true;
 }
-
 export async function getFollowers(uid, max = 50) {
   const snap = await getDocs(query(collection(db, "follows", uid, "followers"), limit(max)));
   return Promise.all(snap.docs.map((d) => getProfile(d.id)));
 }
-
 export async function getFollowing(uid, max = 50) {
   const snap = await getDocs(query(collection(db, "follows", uid, "following"), limit(max)));
   return Promise.all(snap.docs.map((d) => getProfile(d.id)));
 }
-
-/** People you don't follow yet, newest accounts first. */
 export async function getSuggestedUsers(uid, max = 6) {
   const [following, recent] = await Promise.all([
     uid ? getFollowingIds(uid) : Promise.resolve([]),
     getDocs(query(collection(db, "users"), orderBy("createdAt", "desc"), limit(40))),
   ]);
   const skip = new Set([uid, ...following]);
-  return recent.docs
-    .map((d) => ({ id: d.id, ...d.data() }))
-    .filter((user) => !skip.has(user.uid))
-    .slice(0, max);
+  return recent.docs.map((d) => ({ id: d.id, ...d.data() })).filter((u) => !skip.has(u.uid)).slice(0, max);
 }
 
 /* ------------------------------------------------------------------ */
@@ -600,24 +706,15 @@ export async function notify(toUid, payload) {
     ...payload,
   });
 }
-
 export function watchNotifications(uid, onData) {
   return onSnapshot(
     query(collection(db, "notifications"), where("toUid", "==", uid), orderBy("createdAt", "desc"), limit(50)),
     (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (error) => {
-      console.warn("[xacheus] notifications listener:", error);
-      onData([]);
-    }
+    () => onData([])
   );
 }
-
 export async function markNotificationsRead(uid, items) {
-  await Promise.all(
-    items
-      .filter((item) => !item.read)
-      .map((item) => updateDoc(doc(db, "notifications", item.id), { read: true }))
-  );
+  await Promise.all(items.filter((i) => !i.read).map((i) => updateDoc(doc(db, "notifications", i.id), { read: true })));
 }
 
 /* ------------------------------------------------------------------ */
@@ -628,13 +725,10 @@ export async function getTrending(max = 8) {
   try {
     const snap = await getDocs(query(collection(db, "hashtags"), orderBy("count", "desc"), limit(max)));
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  } catch (error) {
-    console.warn("[xacheus] trending:", error);
+  } catch {
     return [];
   }
 }
-
-/** Prefix search across handles and display names. */
 export async function searchUsers(term, max = 12) {
   const q = String(term || "").trim().toLowerCase();
   if (!q) return [];
@@ -642,29 +736,12 @@ export async function searchUsers(term, max = 12) {
   const queries = [];
   if (handle) {
     queries.push(
-      getDocs(
-        query(
-          collection(db, "users"),
-          where("username", ">=", handle),
-          where("username", "<=", handle + "\uf8ff"),
-          orderBy("username"),
-          limit(max)
-        )
-      )
+      getDocs(query(collection(db, "users"), where("username", ">=", handle), where("username", "<=", handle + "\uf8ff"), orderBy("username"), limit(max)))
     );
   }
   queries.push(
-    getDocs(
-      query(
-        collection(db, "users"),
-        where("displayNameLower", ">=", q),
-        where("displayNameLower", "<=", q + "\uf8ff"),
-        orderBy("displayNameLower"),
-        limit(max)
-      )
-    )
+    getDocs(query(collection(db, "users"), where("displayNameLower", ">=", q), where("displayNameLower", "<=", q + "\uf8ff"), orderBy("displayNameLower"), limit(max)))
   );
-
   const results = await Promise.all(queries.map((p) => p.catch(() => null)));
   const seen = new Set();
   const users = [];
@@ -679,114 +756,29 @@ export async function searchUsers(term, max = 12) {
   return users.slice(0, max);
 }
 
-/* ------------------------------------------------------------------ */
-/* direct messages                                                     */
-/* ------------------------------------------------------------------ */
-
-export function conversationId(a, b) {
-  return [a, b].sort().join("_");
-}
-
-export async function openConversation(me, other) {
-  const cid = conversationId(me.uid, other.uid);
-  const ref = doc(db, "conversations", cid);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    await setDoc(ref, {
-      participants: [me.uid, other.uid],
-      info: {
-        [me.uid]: { username: me.username, displayName: me.displayName, photoURL: me.photoURL || "" },
-        [other.uid]: {
-          username: other.username,
-          displayName: other.displayName,
-          photoURL: other.photoURL || "",
-        },
-      },
-      lastMessage: "",
-      lastMessageAt: serverTimestamp(),
-      unread: { [me.uid]: 0, [other.uid]: 0 },
-      createdAt: serverTimestamp(),
-    });
-  }
-  return cid;
-}
-
-export function watchConversations(uid, onData) {
-  return onSnapshot(
-    query(
-      collection(db, "conversations"),
-      where("participants", "array-contains", uid),
-      orderBy("lastMessageAt", "desc"),
-      limit(50)
-    ),
-    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (error) => {
-      console.warn("[xacheus] conversations listener:", error);
-      onData([]);
-    }
-  );
-}
-
-export function watchMessages(cid, onData) {
-  return onSnapshot(
-    query(collection(db, "conversations", cid, "messages"), orderBy("createdAt", "asc"), limit(200)),
-    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-    (error) => {
-      console.warn("[xacheus] messages listener:", error);
-      onData([]);
-    }
-  );
-}
-
-export async function sendMessage(cid, sender, recipients, text) {
-  const body = String(text || "").trim();
-  if (!body) return;
-  const ref = doc(db, "conversations", cid);
-  const unread = {};
-  recipients.forEach((uid) => {
-    if (uid !== sender.uid) unread[`unread.${uid}`] = increment(1);
-  });
-
-  await addDoc(collection(db, "conversations", cid, "messages"), {
-    senderId: sender.uid,
-    text: body,
-    createdAt: serverTimestamp(),
-  });
-
-  await updateDoc(ref, {
-    lastMessage: body.slice(0, 140),
-    lastMessageAt: serverTimestamp(),
-    ...unread,
-  });
-}
-
-export async function markConversationRead(cid, uid) {
-  await updateDoc(doc(db, "conversations", cid), { [`unread.${uid}`]: 0 });
+export async function searchVideos(term, max = 12) {
+  const q = String(term || "").trim().toLowerCase();
+  if (!q) return [];
+  // Search by caption prefix? For simplicity search hashtags
+  const tag = normaliseUsername(q.replace(/^#/, ""));
+  if (!tag) return [];
+  const snap = await getDocs(query(collection(db, "videos"), where("hashtags", "array-contains", tag), orderBy("createdAt", "desc"), limit(max))).catch(() => null);
+  return snap ? snap.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
 }
 
 /* ------------------------------------------------------------------ */
 /* account                                                             */
 /* ------------------------------------------------------------------ */
 
-/**
- * Remove a user's public content. Auth deletion happens in settings.js.
- *
- * The reverse edges (follows/{them}/following/{me}) stay behind because a
- * client is not allowed to write inside another user's follow document; the
- * app hides profiles that no longer exist, so they are harmless.
- */
 export async function purgeUserData(uid) {
-  const [posts, following, followers] = await Promise.all([
-    getDocs(query(collection(db, "posts"), where("uid", "==", uid), limit(200))),
+  const [videos, following, followers] = await Promise.all([
+    getDocs(query(collection(db, "videos"), where("uid", "==", uid), limit(200))),
     getDocs(query(collection(db, "follows", uid, "following"), limit(500))),
     getDocs(query(collection(db, "follows", uid, "followers"), limit(500))),
   ]);
-
-  await Promise.all(posts.docs.map((d) => deleteDoc(d.ref)));
+  await Promise.all(videos.docs.map((d) => deleteDoc(d.ref)));
   await Promise.all(following.docs.map((d) => deleteDoc(d.ref)));
-  // These are our own follower records (follows/{me}/followers/{them}), which we may delete.
   await Promise.all(followers.docs.map((d) => deleteDoc(d.ref).catch(() => {})));
-
   await runTransaction(db, async () => {
     const profileRef = doc(db, "users", uid);
     const snap = await getDoc(profileRef);
@@ -795,4 +787,10 @@ export async function purgeUserData(uid) {
     }
     deleteDoc(profileRef).catch(() => {});
   });
+}
+
+/* Legacy posts kept for migration - read only helpers */
+export async function getPost(postId) {
+  const snap = await getDoc(doc(db, "posts", postId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }

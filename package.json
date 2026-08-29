@@ -2,7 +2,7 @@
   "name": "xacheus-social",
   "version": "1.0.0",
   "private": true,
-  "description": "Xacheus Social — a real-time social app built on Firebase Auth and Firestore.",
+  "description": "Xacheus — Zambia's short vertical video platform. Phase 1: real auth, profiles with roles, video feed, Cloudinary, free sounds. No fake videos.",
   "type": "module",
   "scripts": {
     "dev": "python3 -m http.server 5173 --bind 0.0.0.0",

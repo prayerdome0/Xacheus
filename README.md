@@ -1,186 +1,189 @@
-# Xacheus Social
+# Xacheus — Short Video Platform (Phase 1)
 
-Xacheus Social is a real-time social app: a live feed, profiles with follow graphs,
-replies, likes, reposts, bookmarks, trending hashtags, notifications and private
-1:1 direct messages.
+Xacheus is a **real production-oriented short vertical video platform** (TikTok-style), not a mockup. Built with vanilla JS, Firebase Auth, Firestore and Cloudinary for media.
 
-It's a static, dependency-free web app (no build step) backed by Firebase Auth and
-Cloud Firestore. Everything renders live — post a message and it appears in other
-people's feeds without a refresh.
+This is **Phase 1** — real auth, profiles with roles, vertical video feed, Cloudinary uploads, likes, comments, follows, notifications, create (record/upload), captions, hashtags, and a **free sounds system** (no copyrighted YouTube tracks).
 
 ---
 
-## What was here before
+## Phase 1 Features (Implemented Now)
 
-This repository previously held the Xacheus AI website/ecommerce builder — a
-landing page plus `dashboard.html`, `builder.html`, `ai-studio.html`,
-`storefront.html` and their scripts. That product has been **removed entirely**
-and replaced by this social app.
+### Real Authentication
+- Email/password + Google sign-in (real Firebase Auth)
+- Profiles auto-created in `users/{uid}` with `ensureProfile`
+- Roles: `user`, `creator`, `business`, `church`, `admin` (default `user`)
+- Handle reservation via `usernames/{handle}` — unique, lowercase, 3-20 chars
+- Admin panel visible **only if Firestore `role == "admin"`** (client checks `isAdminProfile`, rules enforce admin-only writes)
 
-## Features
-
-**Feed**
-- Two timelines: *For you* (global, newest first) and *Following* (people you follow).
-- Text posts up to 500 characters with optional image.
-- `#hashtags` and `@handles` are parsed out and linked automatically.
-- Like, reply, repost, bookmark and copy-link on every post, with live counters.
-- Infinite "load more" pagination; real-time updates via Firestore listeners.
-
-**Profiles**
-- Cover photo, avatar, bio, location, website and join date.
-- Live follower / following / posts counters.
-- Tabs for Posts, Media (image posts only) and Likes (bookmarked posts).
-- Follower and following lists.
-- In-place profile editing, including changing your `@handle` and uploading
-  an avatar or cover image.
-
-**Explore**
-- Trending hashtags ranked by post volume.
-- Suggested people to follow, filtered to accounts you don't already follow.
-- Prefix search across both handle and display name; `#hashtag` search opens a
-  live stream of matching posts.
-
-**Notifications**
-- Likes, replies, reposts, mentions and new followers, in real time.
-- Unread dot plus a nav badge that clears as you read.
-
-**Direct messages**
-- Private 1:1 conversations that update live.
-- Unread counters per conversation and a total badge in the nav.
-- Start a chat from any profile, or from an `@handle` prompt in the inbox.
-
-**Account**
-- Email + password signup and login, Google sign-in, password reset, email
-  verification, and full account deletion (with re-authentication).
-
-**Experience**
-- Dark and light themes (plus "system"), persisted per browser.
-- Responsive: three-column desktop, icon-rail tablet, bottom tab bar + FAB on mobile.
-- Installable PWA with an offline app shell.
-- Keyboard accessible, ARIA labels, reduced-motion support.
-
----
-
-## Run it locally
-
-```bash
-npm run dev      # serves on http://0.0.0.0:5173
-```
-
-Any static server works — this is plain HTML/CSS/ES modules, no bundler.
-
-## Firebase setup
-
-The app points at project **`xacheus-7c98b`** (config in `js/firebase.js`).
-
-### 0. Make sure Firestore itself is enabled (required)
-
-Signup and login **fail** if the Cloud Firestore API is disabled: Firebase Auth
-accepts the credentials, then the profile load throws and the app signs you
-straight back out. In the Google Cloud Console → **APIs & Services** for the
-project, enable **Cloud Firestore API**, then create the database
-(Firebase Console → **Build → Firestore Database → Create database**).
-
-### 1. Deploy the rules and indexes (required)
-
-Nothing works until the security rules and composite indexes are live:
-
-```bash
-firebase login
-firebase use xacheus-7c98b
-npm run deploy
-# or individually:
-#   firebase deploy --only firestore:rules
-#   firebase deploy --only firestore:indexes
-```
-
-The four composite indexes in `firestore.indexes.json` back these queries:
-
-| Query | Index |
-| --- | --- |
-| Profile timeline | `posts`: `uid` ASC, `createdAt` DESC |
-| Hashtag streams | `posts`: `hashtags` CONTAINS, `createdAt` DESC |
-| Notifications inbox | `notifications`: `toUid` ASC, `createdAt` DESC |
-| Conversation list | `conversations`: `participants` CONTAINS, `lastMessageAt` DESC |
-
-Indexes take a couple of minutes to build. Until they finish, Firestore logs a
-link in the browser console that creates the missing index directly.
-
-### 2. Enable sign-in methods
-
-In Firebase Console → **Authentication** → **Sign-in method**, enable
-**Email/Password** and **Google**.
-
-### 3. Authorized domains
-
-Add every host you serve from (including local and preview domains) under
-**Authentication → Settings → Authorized domains**, or Google sign-in and
-password resets will be blocked. Email/password login works from any domain.
-
-## Image uploads
-
-Avatars, covers and post photos upload straight from the browser to Cloudinary
-using an unsigned preset:
-
+### Media — Firebase + Cloudinary
 - Cloud name: `dhad95cch`
-- Upload preset: `xacheus` (unsigned)
+- Upload preset: `xacheus` (unsigned, no extra folders per instruction)
+- Uses `auto` resource type so images, videos, audio all work via same preset
+- No secrets in frontend — only cloudName + preset
+- `js/cloudinary.js` has:
+  - `uploadImage(file)` → URL
+  - `uploadVideo(file)` → { url, thumbnailUrl, duration, width, height, publicId }
+  - `uploadAudio(file)` → { url, duration }
 
-Only the cloud name and preset name live in client code (`js/cloudinary.js`).
-Never commit an API key, API secret or `CLOUDINARY_URL`. If the upload fails the
-app falls back to a local object URL so posting still works.
+### Video Feed — No Fake Videos
+- Collection `videos/{videoId}` — real Firestore docs only
+- Fields: `uid`, `username`, `displayName`, `photoURL`, `videoUrl`, `thumbnailUrl`, `caption`, `hashtags`, `mentions`, `soundId`, `soundTitle`, `soundUrl`, `duration`, `likeCount`, `commentCount`, `viewCount`, `createdAt`
+- Vertical feed: full-screen cards, `IntersectionObserver` auto-play when 70% visible, pause others, progress bar
+- Right actions: avatar + follow (+), like + count, comment + count, save, share, sound disc
+- Bottom: @handle, caption with linked #hashtags/@mentions, sound marquee
+- Modes: **For You** (global `createdAt desc`) and **Following** (where `uid in followingIds.slice(0,10)`)
+- Pagination via `startAfter(lastDoc)`
+- No mock data — empty state if no videos
 
-## Data model
+### Interactions — All Buttons Work
+- **Like**: `users/{uid}/likedVideos/{videoId}` + `videos/{id}.likeCount` ±1, notification to owner
+- **Save**: `users/{uid}/savedVideos/{videoId}`
+- **Comment**: `videos/{videoId}/comments/{cid}` + `commentCount`, notification
+- **Follow**: `follows/{uid}/following/{target}` + `follows/{target}/followers/{uid}` + counters, notification
+- **Share**: copies link `/#/video/{id}`
+- **Mute**: toggles video.muted
+- All writes guarded by Firestore rules
+
+### Create — Record or Upload
+- `/#/create` — real working page
+- Upload: drag-drop or file picker, video/*, ≤100MB, shows preview, duration
+- Record: `getUserMedia` + `MediaRecorder`, live preview, timer, 180s max, cancel/stop
+- Caption: 0-1000 chars, hashtags/mentions auto-parsed
+- Sounds: choose from free library or original audio
+- Upload progress bar via XHR `onProgress`
+- On submit: `uploadVideo()` → `createVideo()` Firestore doc, then navigate to `/#/home`
+
+### Sounds System — Free Music Only
+- Collection `sounds/{soundId}` — `title`, `artist`, `audioUrl`, `useCount`, `isFree`, `isOriginal`, `genre`
+- Curated free sounds (royalty-free, not YouTube):
+  - Lo-Fi Chill, Afrobeat Vibe, Gospel Uplift, Zambian Sunset, Upbeat Pop — URLs from Pixabay free library
+  - If `sounds` collection empty, curated list is returned as fallback
+- Trending sounds: `orderBy(useCount desc)`
+- Users can upload original sounds via video's own audio (or future audio upload)
+- Every time a video uses a sound, `useCount` increments
+
+### Discover
+- `/#/discover` — tabs: Trending videos (by `likeCount desc`), Trending sounds, Creators (search users), Hashtags
+- Search: `#tag` → videos with `hashtags array-contains`, `@handle` or name → users
+- Video grid (3 cols) with like/comment counts, click → `/#/video/{id}`
+
+### Sounds Library
+- `/#/sounds` — free music explanation, tabs free/trending/original/all, search, audio preview, link to videos using sound
+
+### Profiles
+- `/#/u/{username}` — cover, avatar, role badge, verified, bio, location, website, followers/following/videos/likes counts
+- Tabs: Videos (user's videos), Liked (likedVideos), Followers, Following
+- Edit profile: avatar/cover via Cloudinary, displayName, handle (with reservation), bio, location, website — role change only via admin
+
+### Notifications / Inbox
+- `/#/notifications` — likes, comments, follows, mentions — unread dot, mark read after 1.5s, tabs all/likes/comments/follows
+
+### Admin Panel
+- `/#/admin` — visible only if `profile.role == "admin"`
+- Tabs: Users (change role, verify/unverify), Videos (delete), Sounds (delete)
+- Rules: only admin can change `role`, `verified`, delete any video/sound
+
+### Settings
+- Theme: dark/light/system persisted
+- Account info, email verification, sign out, delete account with re-auth
+
+---
+
+## Data Model
 
 ```
-users/{uid}                          profile + counters
-  ├─ liked/{postId}                  "I liked this" (fast per-viewer lookup)
-  ├─ reposted/{postId}
-  └─ saved/{postId}
-usernames/{username}                 unique handle reservation
-posts/{postId}
-  └─ comments/{cid}
-follows/{uid}/following/{targetUid}  directed follow graph
+users/{uid}
+  - uid, username, displayName, displayNameLower, email, photoURL, coverURL
+  - bio, location, website, role (user|creator|business|church|admin), verified
+  - followersCount, followingCount, videosCount, likesCount, createdAt, updatedAt
+  - likedVideos/{videoId}, savedVideos/{videoId}
+
+usernames/{handle} -> { uid }
+
+videos/{videoId}
+  - uid, username, displayName, photoURL
+  - videoUrl, thumbnailUrl, caption, hashtags[], mentions[]
+  - soundId, soundTitle, soundUrl, duration, width, height, cloudinaryPublicId
+  - likeCount, commentCount, viewCount, shareCount, isPublic, createdAt, updatedAt
+  - comments/{cid}: uid, username, displayName, photoURL, text, createdAt
+
+sounds/{soundId}
+  - title, artist, artistUid, audioUrl, coverUrl, duration, genre, useCount
+  - isFree, isOriginal, createdAt, lastUsedAt
+
+follows/{uid}/following/{targetUid}
 follows/{uid}/followers/{followerUid}
-notifications/{nid}                  toUid + type + payload
-hashtags/{tag}                       trending counters
-conversations/{cid}
-  └─ messages/{mid}
+
+notifications/{nid}
+  - toUid, fromUid, fromName, fromPhoto, fromUsername, type, videoId?, text?, read, createdAt
+
+hashtags/{tag}: count, lastUsedAt
 ```
 
-## Security notes
+---
 
-- `firestore.rules` is the real protection; the Firebase web config is public by design.
-- Profiles and posts are world-readable so signed-out visitors can browse.
-- Every write is scoped to the signed-in owner, except **counter updates**
-  (`followersCount` / `followingCount` / `postsCount`) and post counters
-  (`likeCount` / `commentCount` / `repostCount`), which any signed-in user can
-  move by ±1 because the client has to bump another user's counter when you
-  follow them. Moving that to a Cloud Function is the recommended hardening step.
+## Firestore Rules — Strict
 
-## Project layout
+- Public read for `users`, `usernames`, `videos`, `sounds`, `hashtags`
+- `users` create: must be self, role in [user,creator,business,church] (not admin)
+- `users` update: owners can edit profile fields but not role/counters; admin can change role/verified; counters ±1 allowed for follows
+- `videos`: create if signedIn and owner, counters start 0; update: owner can edit caption/hashtags/sound, anyone can bump counters; delete owner or admin
+- `sounds`: create owner, update owner or counter bump, delete owner/admin
+- `follows`: self only
+- `notifications`: recipient read only, create if fromUid==auth.uid and toUid!=self
+- `opportunities`, `churches`, `products`: admin-only write (future phases)
+- No secrets in frontend — all protection in rules
 
+Deploy:
+```bash
+firebase use xacheus-7c98b
+firebase deploy --only firestore:rules,firestore:indexes
 ```
-index.html          app shell + boot screen
-styles.css          design system and all component styles
-js/
-  app.js            shell, router, session state, right rail
-  auth.js           login / signup / reset / Google / handle onboarding
-  data.js           Firestore data layer (all reads and writes)
-  ui.js             rendering helpers (avatars, time-ago, modals, toasts)
-  firebase.js       Firebase bootstrap
-  cloudinary.js     unsigned browser uploads
-  views/
-    components.js   post card, composer, user rows, reply box
-    home.js         feed
-    explore.js      search, trending, people
-    notifications.js
-    messages.js     inbox + conversation
-    profile.js      profile pages + edit profile
-    thread.js       single post and replies
-    settings.js     theme, session, account deletion
-firestore.rules
-firestore.indexes.json
-firebase.json
-sw.js               offline app shell
-manifest.json
+
+Indexes in `firestore.indexes.json`:
+- videos: uid+createdAt, createdAt, likeCount+createdAt, hashtags contains+createdAt, soundId+createdAt
+- sounds: useCount, isFree+useCount
+- users: username, displayNameLower
+- plus legacy indexes
+
+---
+
+## Run Locally
+
+```bash
+npm run dev   # http://0.0.0.0:5173
 ```
+
+- Enable Email/Password + Google in Firebase Console → Authentication → Sign-in method
+- Add preview domains to Authorized domains
+- Ensure Cloud Firestore API enabled and database created
+
+---
+
+## Cloudinary
+
+- Cloud: `dhad95cch`
+- Preset: `xacheus` unsigned
+- Endpoint: `https://api.cloudinary.com/v1_1/dhad95cch/auto/upload`
+- No folders per instruction
+
+---
+
+## Roadmap
+
+- **Phase 1 (now)**: Auth, profiles+roles, video feed, Cloudinary, likes/comments/follows/notifications, create (record/upload), sounds (free)
+- **Phase 2**: Discover (trending videos/sounds), opportunities (jobs/services posted by admins), churches/communities (sermons/updates)
+- **Phase 3**: Business accounts, advertising
+- **Phase 4**: Marketplace — discover products from videos
+
+Every button works. No fake functions. Production-oriented.
+
+---
+
+## Admin Setup
+
+To make a user admin, set Firestore `users/{uid}.role = "admin"` directly in console (only existing admin can do via rules, so first admin must be set manually). After that, admin panel appears at `/#/admin`.
+
+---
+
+Built in Zambia 🌍

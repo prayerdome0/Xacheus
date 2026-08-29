@@ -1,12 +1,9 @@
 /**
- * Xacheus Social — service worker.
- *
- * Caches the app shell for instant loads. Everything Firebase (auth, Firestore,
- * gstatic SDK) and all uploads are always fetched from the network so real-time
- * data is never served stale.
+ * Xacheus — service worker (Phase 1: video platform)
+ * Caches app shell, never caches Firebase or Cloudinary.
  */
 
-const CACHE_NAME = "xacheus-social-v1";
+const CACHE_NAME = "xacheus-video-v2";
 const SHELL = [
   "./",
   "./index.html",
@@ -19,12 +16,13 @@ const SHELL = [
   "./js/cloudinary.js",
   "./js/views/components.js",
   "./js/views/home.js",
-  "./js/views/explore.js",
-  "./js/views/notifications.js",
-  "./js/views/messages.js",
+  "./js/views/discover.js",
+  "./js/views/create.js",
+  "./js/views/sounds.js",
   "./js/views/profile.js",
-  "./js/views/thread.js",
+  "./js/views/notifications.js",
   "./js/views/settings.js",
+  "./js/views/admin.js",
   "./assets/icon.svg",
 ];
 
@@ -39,58 +37,43 @@ const NEVER_CACHE = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches
-      .open(CACHE_NAME)
-      .then((cache) => cache.addAll(SHELL))
-      .catch(() => null)
+    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)).catch(() => null)
   );
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim())
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))).then(() => self.clients.claim())
   );
 });
 
 self.addEventListener("fetch", (event) => {
-  const request = event.request;
-  if (request.method !== "GET") return;
+  const req = event.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  if (url.origin !== location.origin || NEVER_CACHE.some((h) => url.hostname.includes(h))) return;
 
-  const url = new URL(request.url);
-  if (url.origin !== location.origin || NEVER_CACHE.some((host) => url.hostname.includes(host))) {
-    return; // let the browser handle it normally
-  }
-
-  // Navigations: network first so a fresh deploy is picked up, offline falls back to cache.
-  if (request.mode === "navigate") {
+  if (req.mode === "navigate") {
     event.respondWith(
-      fetch(request)
-        .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy));
-          return response;
-        })
-        .catch(() => caches.match("./index.html").then((hit) => hit || caches.match("./")))
+      fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE_NAME).then((c) => c.put("./index.html", copy));
+        return res;
+      }).catch(() => caches.match("./index.html").then((hit) => hit || caches.match("./")))
     );
     return;
   }
 
-  // Static assets: cache first, update in the background.
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const network = fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
+    caches.match(req).then((cached) => {
+      const network = fetch(req).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((c) => c.put(req, copy));
+        }
+        return res;
+      }).catch(() => cached);
       return cached || network;
     })
   );
