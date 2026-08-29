@@ -8,7 +8,8 @@
  *   videos/{videoId}/comments/{cid}          video comments
  *   users/{uid}/likedVideos/{videoId}        liked videos lookup
  *   users/{uid}/savedVideos/{videoId}        saved/bookmarked
- *   sounds/{soundId}                         sounds library (free + original)
+ *   sounds/{soundId}                         sounds/songs library (free + original)
+ *   users/{uid}/favoriteSounds/{soundId}     saved sounds
  *   follows/{uid}/following/{targetUid}
  *   follows/{uid}/followers/{followerUid}
  *   notifications/{nid}
@@ -17,7 +18,9 @@
  *   conversations/{cid}/messages/{mid}      chat messages
  *   lives/{liveId}                           live broadcasts (status live/ended)
  *   lives/{liveId}/segments/{sid}           ordered video segments (seq)
- *   lives/{liveId}/chat/{mid}               live chat messages
+ *   lives/{liveId}/chat/{mid}               live chat messages (text/sticker/gift)
+ *   lives/{liveId}/gifts/{gid}              paid gifts sent during stream
+ *   lives/{liveId}/reactions/{rid}          floating emoji reactions
  *   posts/{postId}                           removed (legacy reads dropped)
  */
 
@@ -403,10 +406,8 @@ export async function createVideo(author, {
     })
   ).catch(() => {});
 
-  // increment sound useCount
-  if (soundId) {
-    updateDoc(doc(db, "sounds", soundId), { useCount: increment(1), lastUsedAt: serverTimestamp() }).catch(() => {});
-  }
+  // increment sound useCount (skips curated free_* ids)
+  if (soundId) bumpSoundUse(soundId).catch(() => {});
 
   return ref.id;
 }
@@ -607,141 +608,582 @@ export async function addVideoComment(uid, actor, video, text) {
 }
 
 /* ------------------------------------------------------------------ */
-/* sounds                                                              */
+/* sounds & songs                                                      */
 /* ------------------------------------------------------------------ */
 
-// Curated royalty-free sounds (properly usable, not copyrighted)
-// These are from Pixabay / Mixkit free library - attribution free, usable for this app.
-// We store them as seed data if sounds collection empty.
+/**
+ * Curated royalty-free catalogue (always available offline of Firestore).
+ * Sources: Mixkit free music + SoundHelix demos — attribution-free for app use.
+ * No copyrighted YouTube rips.
+ */
+export const SOUND_GENRES = Object.freeze([
+  "all",
+  "lofi",
+  "afrobeat",
+  "gospel",
+  "afro",
+  "pop",
+  "hiphop",
+  "ambient",
+  "cinematic",
+  "dance",
+  "acoustic",
+  "jazz",
+  "electronic",
+  "original",
+]);
+
 export const CURATED_FREE_SOUNDS = [
   {
     id: "free_001",
     title: "Lo-Fi Chill",
-    artist: "Free Music",
+    artist: "Mixkit Free",
     genre: "lofi",
-    audioUrl: "https://cdn.pixabay.com/download/audio/2022/03/10/audio_c8c8a650cd.mp3?filename=lofi-study-112191.mp3",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3",
     coverUrl: "",
-    duration: 140,
+    duration: 95,
+    bpm: 118,
     isFree: true,
     isOriginal: false,
-    useCount: 0,
+    useCount: 42,
   },
   {
     id: "free_002",
-    title: "Afrobeat Vibe",
-    artist: "Afro Free",
+    title: "Afrobeat Drive",
+    artist: "Mixkit Free",
     genre: "afrobeat",
-    audioUrl: "https://cdn.pixabay.com/download/audio/2022/06/07/audio_b9bd4170e8.mp3?filename=african-drums-112198.mp3",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-hip-hop-02-738.mp3",
     coverUrl: "",
-    duration: 90,
+    duration: 88,
+    bpm: 96,
     isFree: true,
     isOriginal: false,
-    useCount: 0,
+    useCount: 38,
   },
   {
     id: "free_003",
-    title: "Gospel Uplift",
-    artist: "Church Free",
+    title: "Gospel Light",
+    artist: "Mixkit Free",
     genre: "gospel",
-    audioUrl: "https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c2d1b6.mp3?filename=happy-ukulele-101225.mp3",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-spirit-in-the-woods-piano-ambient-68.mp3",
     coverUrl: "",
     duration: 110,
+    bpm: 72,
     isFree: true,
     isOriginal: false,
-    useCount: 0,
+    useCount: 55,
   },
   {
     id: "free_004",
     title: "Zambian Sunset",
     artist: "Zed Beats Free",
     genre: "afro",
-    audioUrl: "https://cdn.pixabay.com/download/audio/2022/10/30/audio_8e2b3e0b8c.mp3?filename=african-village-134939.mp3",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-serene-view-443.mp3",
     coverUrl: "",
-    duration: 95,
+    duration: 100,
+    bpm: 90,
     isFree: true,
     isOriginal: false,
-    useCount: 0,
+    useCount: 29,
   },
   {
     id: "free_005",
-    title: "Upbeat Pop",
-    artist: "Pop Free",
+    title: "Upbeat Pop Energy",
+    artist: "Mixkit Free",
     genre: "pop",
-    audioUrl: "https://cdn.pixabay.com/download/audio/2021/08/04/audio_0625c6fa4e.mp3?filename=energetic-101247.mp3",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-driving-ambition-32.mp3",
     coverUrl: "",
-    duration: 120,
+    duration: 92,
+    bpm: 124,
     isFree: true,
     isOriginal: false,
-    useCount: 0,
+    useCount: 61,
+  },
+  {
+    id: "free_006",
+    title: "Night Ride",
+    artist: "SoundHelix",
+    genre: "electronic",
+    audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+    coverUrl: "",
+    duration: 372,
+    bpm: 128,
+    isFree: true,
+    isOriginal: false,
+    useCount: 17,
+  },
+  {
+    id: "free_007",
+    title: "Deep Focus",
+    artist: "SoundHelix",
+    genre: "ambient",
+    audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
+    coverUrl: "",
+    duration: 372,
+    bpm: 80,
+    isFree: true,
+    isOriginal: false,
+    useCount: 22,
+  },
+  {
+    id: "free_008",
+    title: "City Lights",
+    artist: "Mixkit Free",
+    genre: "lofi",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-dreaming-big-31.mp3",
+    coverUrl: "",
+    duration: 98,
+    bpm: 85,
+    isFree: true,
+    isOriginal: false,
+    useCount: 33,
+  },
+  {
+    id: "free_009",
+    title: "Dance Floor",
+    artist: "Mixkit Free",
+    genre: "dance",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-hazy-after-hours-132.mp3",
+    coverUrl: "",
+    duration: 105,
+    bpm: 122,
+    isFree: true,
+    isOriginal: false,
+    useCount: 44,
+  },
+  {
+    id: "free_010",
+    title: "Soft Acoustic",
+    artist: "Mixkit Free",
+    genre: "acoustic",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-a-very-happy-christmas-897.mp3",
+    coverUrl: "",
+    duration: 90,
+    bpm: 100,
+    isFree: true,
+    isOriginal: false,
+    useCount: 19,
+  },
+  {
+    id: "free_011",
+    title: "Cinematic Rise",
+    artist: "Mixkit Free",
+    genre: "cinematic",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-valley-sunset-127.mp3",
+    coverUrl: "",
+    duration: 115,
+    bpm: 70,
+    isFree: true,
+    isOriginal: false,
+    useCount: 27,
+  },
+  {
+    id: "free_012",
+    title: "Hip-Hop Bounce",
+    artist: "Mixkit Free",
+    genre: "hiphop",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-life-is-a-dream-837.mp3",
+    coverUrl: "",
+    duration: 94,
+    bpm: 92,
+    isFree: true,
+    isOriginal: false,
+    useCount: 48,
+  },
+  {
+    id: "free_013",
+    title: "Jazz Lounge",
+    artist: "SoundHelix",
+    genre: "jazz",
+    audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
+    coverUrl: "",
+    duration: 360,
+    bpm: 110,
+    isFree: true,
+    isOriginal: false,
+    useCount: 14,
+  },
+  {
+    id: "free_014",
+    title: "Sunday Praise",
+    artist: "Mixkit Free",
+    genre: "gospel",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-beautiful-dream-493.mp3",
+    coverUrl: "",
+    duration: 108,
+    bpm: 78,
+    isFree: true,
+    isOriginal: false,
+    useCount: 36,
+  },
+  {
+    id: "free_015",
+    title: "Lusaka Nights",
+    artist: "Zed Beats Free",
+    genre: "afrobeat",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-cat-walk-863.mp3",
+    coverUrl: "",
+    duration: 96,
+    bpm: 108,
+    isFree: true,
+    isOriginal: false,
+    useCount: 31,
+  },
+  {
+    id: "free_016",
+    title: "Electro Pulse",
+    artist: "SoundHelix",
+    genre: "electronic",
+    audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3",
+    coverUrl: "",
+    duration: 340,
+    bpm: 130,
+    isFree: true,
+    isOriginal: false,
+    useCount: 21,
+  },
+  {
+    id: "free_017",
+    title: "Warm Morning",
+    artist: "Mixkit Free",
+    genre: "ambient",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-sleepy-cat-135.mp3",
+    coverUrl: "",
+    duration: 102,
+    bpm: 68,
+    isFree: true,
+    isOriginal: false,
+    useCount: 25,
+  },
+  {
+    id: "free_018",
+    title: "Party Starter",
+    artist: "Mixkit Free",
+    genre: "dance",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-games-worldbeat-466.mp3",
+    coverUrl: "",
+    duration: 88,
+    bpm: 126,
+    isFree: true,
+    isOriginal: false,
+    useCount: 40,
+  },
+  {
+    id: "free_019",
+    title: "Street Flow",
+    artist: "Mixkit Free",
+    genre: "hiphop",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-raising-me-higher-34.mp3",
+    coverUrl: "",
+    duration: 99,
+    bpm: 94,
+    isFree: true,
+    isOriginal: false,
+    useCount: 35,
+  },
+  {
+    id: "free_020",
+    title: "Golden Hour",
+    artist: "Mixkit Free",
+    genre: "cinematic",
+    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-sun-and-his-daughter-580.mp3",
+    coverUrl: "",
+    duration: 112,
+    bpm: 75,
+    isFree: true,
+    isOriginal: false,
+    useCount: 28,
   },
 ];
 
-export async function getSounds({ limitCount = 30, onlyFree = false } = {}) {
-  let q = query(collection(db, "sounds"), orderBy("useCount", "desc"), limit(limitCount));
-  if (onlyFree) {
-    q = query(collection(db, "sounds"), where("isFree", "==", true), orderBy("useCount", "desc"), limit(limitCount));
-  }
-  const snap = await getDocs(q);
-  if (snap.empty) {
-    // return curated if DB empty
-    return CURATED_FREE_SOUNDS.slice(0, limitCount);
-  }
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+const CURATED_BY_ID = Object.fromEntries(CURATED_FREE_SOUNDS.map((s) => [s.id, s]));
+
+function isCuratedId(id) {
+  return Boolean(id && String(id).startsWith("free_"));
 }
 
-export function watchTrendingSounds(onData, pageSize = 20) {
+function mergeSounds(dbList = [], { includeCurated = true, genre = "", onlyFree = false, onlyOriginal = false } = {}) {
+  const map = new Map();
+  if (includeCurated) {
+    CURATED_FREE_SOUNDS.forEach((s) => map.set(s.id, { ...s }));
+  }
+  dbList.forEach((s) => {
+    if (!s?.id) return;
+    // DB wins over curated for same id; otherwise add.
+    map.set(s.id, { ...s });
+  });
+  let list = [...map.values()];
+  if (onlyFree) list = list.filter((s) => s.isFree);
+  if (onlyOriginal) list = list.filter((s) => s.isOriginal);
+  if (genre && genre !== "all") {
+    const g = genre.toLowerCase();
+    list = list.filter((s) => String(s.genre || "").toLowerCase() === g);
+  }
+  list.sort((a, b) => (b.useCount || 0) - (a.useCount || 0) || String(a.title).localeCompare(String(b.title)));
+  return list;
+}
+
+function matchSoundQuery(sound, term) {
+  const q = String(term || "").trim().toLowerCase();
+  if (!q) return true;
+  const hay = [sound.title, sound.artist, sound.artistUsername, sound.genre, sound.id]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return hay.includes(q) || q.split(/\s+/).every((t) => hay.includes(t));
+}
+
+/** List sounds — merges Firestore + curated free catalogue. */
+export async function getSounds({
+  limitCount = 40,
+  onlyFree = false,
+  onlyOriginal = false,
+  genre = "",
+  includeCurated = true,
+} = {}) {
+  let dbList = [];
+  try {
+    let q = query(collection(db, "sounds"), orderBy("useCount", "desc"), limit(Math.max(limitCount, 40)));
+    if (onlyFree) {
+      q = query(
+        collection(db, "sounds"),
+        where("isFree", "==", true),
+        orderBy("useCount", "desc"),
+        limit(Math.max(limitCount, 40))
+      );
+    } else if (onlyOriginal) {
+      q = query(
+        collection(db, "sounds"),
+        where("isOriginal", "==", true),
+        orderBy("useCount", "desc"),
+        limit(Math.max(limitCount, 40))
+      );
+    }
+    const snap = await getDocs(q);
+    dbList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (error) {
+    // Fallback without composite index / order.
+    try {
+      const snap = await getDocs(query(collection(db, "sounds"), limit(80)));
+      dbList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    } catch {
+      dbList = [];
+    }
+  }
+  return mergeSounds(dbList, { includeCurated, genre, onlyFree, onlyOriginal }).slice(0, limitCount);
+}
+
+/** Live trending list (useCount desc) with curated fallback. */
+export function watchTrendingSounds(onData, pageSize = 30) {
   return onSnapshot(
     query(collection(db, "sounds"), orderBy("useCount", "desc"), limit(pageSize)),
     (snap) => {
-      if (snap.empty) {
-        onData(CURATED_FREE_SOUNDS);
-      } else {
-        onData(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      }
+      const dbList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      onData(mergeSounds(dbList).slice(0, pageSize));
     },
-    () => onData(CURATED_FREE_SOUNDS)
+    () => onData(mergeSounds([]).slice(0, pageSize))
   );
 }
 
-export async function createSound(author, { title, audioUrl, coverUrl = "", duration = 0, genre = "original" }) {
-  if (!title || !audioUrl) throw new Error("Sound needs title and audio");
+/** Newest originals + free catalogue. */
+export function watchSounds(onData, pageSize = 40) {
+  return onSnapshot(
+    query(collection(db, "sounds"), orderBy("createdAt", "desc"), limit(pageSize)),
+    (snap) => {
+      const dbList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      onData(mergeSounds(dbList).slice(0, pageSize + CURATED_FREE_SOUNDS.length));
+    },
+    () => onData(mergeSounds([]))
+  );
+}
+
+/** Publish an original sound (Cloudinary audio URL already uploaded). */
+export async function createSound(author, {
+  title,
+  audioUrl,
+  coverUrl = "",
+  duration = 0,
+  genre = "original",
+  isFree = false,
+  bpm = 0,
+}) {
+  if (!author?.uid) throw new Error("Sign in to upload a sound.");
+  if (!title || !audioUrl) throw new Error("Sound needs a title and audio file.");
+  if (String(audioUrl).startsWith("blob:")) throw new Error("Audio upload incomplete — try again.");
+  const g = String(genre || "original").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 24) || "original";
   const payload = {
-    title: String(title).slice(0, 80),
-    artist: author.displayName || author.username,
+    title: String(title).trim().slice(0, 80),
+    artist: author.displayName || author.username || "Artist",
     artistUid: author.uid,
-    artistUsername: author.username,
+    artistUsername: author.username || "",
     audioUrl,
     coverUrl: coverUrl || author.photoURL || "",
     duration: Number(duration) || 0,
-    genre,
+    bpm: Number(bpm) || 0,
+    genre: g,
     useCount: 0,
-    isFree: false,
+    favoriteCount: 0,
+    isFree: Boolean(isFree),
     isOriginal: true,
     createdAt: serverTimestamp(),
     lastUsedAt: serverTimestamp(),
   };
   const ref = await addDoc(collection(db, "sounds"), payload);
-  return ref.id;
+  return { id: ref.id, ...payload };
 }
 
+/** Single sound by id (curated or Firestore). */
 export async function getSound(soundId) {
   if (!soundId) return null;
-  // Check curated first
-  const curated = CURATED_FREE_SOUNDS.find((s) => s.id === soundId);
-  if (curated) return curated;
-  const snap = await getDoc(doc(db, "sounds", soundId));
-  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+  if (CURATED_BY_ID[soundId]) return { ...CURATED_BY_ID[soundId] };
+  try {
+    const snap = await getDoc(doc(db, "sounds", soundId));
+    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+  } catch {
+    return null;
+  }
 }
 
-export function watchSounds(onData, pageSize = 30) {
+/** Search free + DB catalogue by title / artist / genre. */
+export async function searchSounds(term, { limitCount = 40, genre = "" } = {}) {
+  const all = await getSounds({ limitCount: 120, genre, includeCurated: true });
+  const q = String(term || "").trim();
+  if (!q) return all.slice(0, limitCount);
+  return all.filter((s) => matchSoundQuery(s, q)).slice(0, limitCount);
+}
+
+/** Sounds for a genre chip. */
+export async function getSoundsByGenre(genre, limitCount = 40) {
+  return getSounds({ limitCount, genre: genre === "all" ? "" : genre, includeCurated: true });
+}
+
+/** Distinct genres present in catalogue. */
+export function getSoundGenres() {
+  const set = new Set(SOUND_GENRES.filter((g) => g !== "all" && g !== "original"));
+  CURATED_FREE_SOUNDS.forEach((s) => {
+    if (s.genre) set.add(String(s.genre).toLowerCase());
+  });
+  return ["all", ...[...set].sort(), "original"];
+}
+
+/** Videos that used a given soundId. */
+export async function getVideosBySound(soundId, max = 30) {
+  if (!soundId) return [];
+  try {
+    const snap = await getDocs(
+      query(collection(db, "videos"), where("soundId", "==", soundId), orderBy("createdAt", "desc"), limit(max))
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch {
+    // Index may not exist yet — unordered fallback.
+    try {
+      const snap = await getDocs(query(collection(db, "videos"), where("soundId", "==", soundId), limit(max)));
+      return snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
+    } catch {
+      return [];
+    }
+  }
+}
+
+/** Bump useCount when a video is posted with this sound. */
+export async function bumpSoundUse(soundId) {
+  if (!soundId || isCuratedId(soundId)) return; // curated stays client-side
+  await updateDoc(doc(db, "sounds", soundId), {
+    useCount: increment(1),
+    lastUsedAt: serverTimestamp(),
+  }).catch(() => {});
+}
+
+/** Soft-delete own original sound (or admin). */
+export async function deleteSound(soundId, uid, { asAdmin = false } = {}) {
+  if (!soundId || isCuratedId(soundId)) throw new Error("Built-in free sounds can't be deleted.");
+  const snap = await getDoc(doc(db, "sounds", soundId));
+  if (!snap.exists()) return;
+  const data = snap.data();
+  if (!asAdmin && data.artistUid !== uid) throw new Error("You can only delete your own sounds.");
+  await deleteDoc(doc(db, "sounds", soundId));
+}
+
+/* ---- favorites ---- */
+
+export async function isSoundFavorited(uid, soundId) {
+  if (!uid || !soundId) return false;
+  const snap = await getDoc(doc(db, "users", uid, "favoriteSounds", soundId));
+  return snap.exists();
+}
+
+export async function getFavoriteSoundIds(uid) {
+  if (!uid) return new Set();
+  const snap = await getDocs(query(collection(db, "users", uid, "favoriteSounds"), limit(200)));
+  return new Set(snap.docs.map((d) => d.id));
+}
+
+export async function toggleSoundFavorite(uid, sound) {
+  if (!uid || !sound?.id) throw new Error("Sign in to save sounds.");
+  const ref = doc(db, "users", uid, "favoriteSounds", sound.id);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    await deleteDoc(ref);
+    if (!isCuratedId(sound.id)) {
+      await updateDoc(doc(db, "sounds", sound.id), { favoriteCount: increment(-1) }).catch(() => {});
+    }
+    return false;
+  }
+  await setDoc(ref, {
+    soundId: sound.id,
+    title: sound.title || "",
+    artist: sound.artist || "",
+    audioUrl: sound.audioUrl || "",
+    genre: sound.genre || "",
+    createdAt: serverTimestamp(),
+  });
+  if (!isCuratedId(sound.id)) {
+    await updateDoc(doc(db, "sounds", sound.id), { favoriteCount: increment(1) }).catch(() => {});
+  }
+  return true;
+}
+
+export function watchFavoriteSounds(uid, onData) {
+  if (!uid) return () => onData([]);
   return onSnapshot(
-    query(collection(db, "sounds"), orderBy("createdAt", "desc"), limit(pageSize)),
-    (snap) => {
-      if (snap.empty) onData(CURATED_FREE_SOUNDS);
-      else onData(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    query(collection(db, "users", uid, "favoriteSounds"), orderBy("createdAt", "desc"), limit(100)),
+    async (snap) => {
+      const ids = snap.docs.map((d) => d.id);
+      const sounds = await Promise.all(ids.map((id) => getSound(id)));
+      onData(sounds.filter(Boolean));
     },
-    () => onData(CURATED_FREE_SOUNDS)
+    () => onData([])
   );
+}
+
+/** Artist's original uploads. */
+export async function getUserSounds(uid, max = 40) {
+  if (!uid) return [];
+  try {
+    const snap = await getDocs(
+      query(collection(db, "sounds"), where("artistUid", "==", uid), orderBy("createdAt", "desc"), limit(max))
+    );
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch {
+    try {
+      const snap = await getDocs(query(collection(db, "sounds"), where("artistUid", "==", uid), limit(max)));
+      return snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
+    } catch {
+      return [];
+    }
+  }
+}
+
+/** Format mm:ss for sound rows. */
+export function formatSoundDuration(sec) {
+  const n = Math.max(0, Math.floor(Number(sec) || 0));
+  const m = Math.floor(n / 60);
+  const s = n % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1065,6 +1507,11 @@ export async function createLive(author, title = "") {
     latestSeq: 0,
     segmentCount: 0,
     thumbnailUrl: "",
+    giftCount: 0,
+    giftCoins: 0,
+    likeCount: 0,
+    shareCount: 0,
+    pinnedChatId: null,
     startedAt: serverTimestamp(),
     lastPingAt: serverTimestamp(),
     endedAt: null,
@@ -1193,6 +1640,243 @@ export async function sendLiveChat(liveId, actor, text) {
     displayName: actor.displayName || "",
     photoURL: actor.photoURL || "",
     text: body.slice(0, 300),
+    kind: "text",
     createdAt: serverTimestamp(),
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* live gifts, stickers, reactions                                     */
+/* ------------------------------------------------------------------ */
+
+/** Coin-priced gifts viewers can send during a live stream. */
+export const LIVE_GIFTS = Object.freeze([
+  { id: "rose",      emoji: "🌹", label: "Rose",      coins: 1,   anim: "float" },
+  { id: "heart",     emoji: "💖", label: "Heart",     coins: 5,   anim: "float" },
+  { id: "fire",      emoji: "🔥", label: "Fire",      coins: 10,  anim: "burst" },
+  { id: "star",      emoji: "⭐", label: "Star",      coins: 20,  anim: "burst" },
+  { id: "diamond",   emoji: "💎", label: "Diamond",   coins: 50,  anim: "rain" },
+  { id: "crown",     emoji: "👑", label: "Crown",     coins: 100, anim: "rain" },
+  { id: "lion",      emoji: "🦁", label: "Lion",      coins: 200, anim: "rain" },
+  { id: "rocket",    emoji: "🚀", label: "Rocket",    coins: 500, anim: "burst" },
+  { id: "trophy",    emoji: "🏆", label: "Trophy",    coins: 1000, anim: "rain" },
+  { id: "universe",  emoji: "🌌", label: "Universe",  coins: 2500, anim: "rain" },
+]);
+
+/** Stickers that drop into live chat (free). */
+export const LIVE_STICKERS = Object.freeze([
+  { id: "wave",     emoji: "👋", label: "Wave" },
+  { id: "clap",     emoji: "👏", label: "Clap" },
+  { id: "love",     emoji: "😍", label: "Love" },
+  { id: "lol",      emoji: "😂", label: "LOL" },
+  { id: "pray",     emoji: "🙏", label: "Pray" },
+  { id: "fire_s",   emoji: "🔥", label: "Fire" },
+  { id: "party",    emoji: "🎉", label: "Party" },
+  { id: "muscle",   emoji: "💪", label: "Strong" },
+  { id: "think",    emoji: "🤔", label: "Hmm" },
+  { id: "cry",      emoji: "😢", label: "Sad" },
+  { id: "mindblown",emoji: "🤯", label: "Mind blown" },
+  { id: "zambia",   emoji: "🇿🇲", label: "Zambia" },
+  { id: "gospel",   emoji: "✝️", label: "Gospel" },
+  { id: "music",    emoji: "🎵", label: "Music" },
+  { id: "camera",   emoji: "📸", label: "Camera" },
+  { id: "mic",      emoji: "🎤", label: "Mic" },
+]);
+
+/** Quick floating reactions (free, high-frequency). */
+export const LIVE_REACTIONS = Object.freeze([
+  { id: "heart_r", emoji: "❤️" },
+  { id: "fire_r",  emoji: "🔥" },
+  { id: "clap_r",  emoji: "👏" },
+  { id: "wow_r",   emoji: "😮" },
+  { id: "laugh_r", emoji: "😂" },
+  { id: "pray_r",  emoji: "🙏" },
+]);
+
+export function getGiftById(id) {
+  return LIVE_GIFTS.find((g) => g.id === id) || null;
+}
+
+export function getStickerById(id) {
+  return LIVE_STICKERS.find((s) => s.id === id) || null;
+}
+
+/**
+ * Send a paid gift during a live stream.
+ * Writes to lives/{id}/gifts and bumps giftCoins / giftCount on the live doc.
+ * Also posts a chat system line so everyone sees it in the chat feed.
+ */
+export async function sendLiveGift(liveId, actor, giftId) {
+  if (!liveId || !actor?.uid) throw new Error("Sign in to send a gift.");
+  const gift = getGiftById(giftId);
+  if (!gift) throw new Error("Unknown gift.");
+
+  const payload = {
+    uid: actor.uid,
+    username: actor.username || "",
+    displayName: actor.displayName || "",
+    photoURL: actor.photoURL || "",
+    giftId: gift.id,
+    emoji: gift.emoji,
+    label: gift.label,
+    coins: gift.coins,
+    anim: gift.anim || "float",
+    createdAt: serverTimestamp(),
+  };
+
+  await addDoc(collection(db, "lives", liveId, "gifts"), payload);
+  // Counters only — lastPingAt is host-only per rules.
+  await updateDoc(doc(db, "lives", liveId), {
+    giftCount: increment(1),
+    giftCoins: increment(gift.coins),
+  }).catch(() => {});
+
+  // Mirror into chat so the stream feed shows the gift.
+  await addDoc(collection(db, "lives", liveId, "chat"), {
+    uid: actor.uid,
+    username: actor.username || "",
+    displayName: actor.displayName || "",
+    photoURL: actor.photoURL || "",
+    text: `sent ${gift.emoji} ${gift.label}`,
+    kind: "gift",
+    giftId: gift.id,
+    giftEmoji: gift.emoji,
+    giftLabel: gift.label,
+    giftCoins: gift.coins,
+    createdAt: serverTimestamp(),
+  }).catch(() => {});
+
+  // Notify the broadcaster (best-effort).
+  try {
+    const live = await getLive(liveId);
+    if (live?.uid && live.uid !== actor.uid) {
+      await notify(live.uid, {
+        type: "gift",
+        fromUid: actor.uid,
+        fromName: actor.displayName,
+        fromPhoto: actor.photoURL || "",
+        fromUsername: actor.username,
+        liveId,
+        text: `${gift.emoji} ${gift.label} (${gift.coins} coins)`,
+      });
+    }
+  } catch {}
+
+  return gift;
+}
+
+/** Free sticker into live chat. */
+export async function sendLiveSticker(liveId, actor, stickerId) {
+  if (!liveId || !actor?.uid) throw new Error("Sign in to send a sticker.");
+  const sticker = getStickerById(stickerId);
+  if (!sticker) throw new Error("Unknown sticker.");
+  await addDoc(collection(db, "lives", liveId, "chat"), {
+    uid: actor.uid,
+    username: actor.username || "",
+    displayName: actor.displayName || "",
+    photoURL: actor.photoURL || "",
+    text: sticker.emoji,
+    kind: "sticker",
+    stickerId: sticker.id,
+    stickerEmoji: sticker.emoji,
+    stickerLabel: sticker.label,
+    createdAt: serverTimestamp(),
+  });
+  return sticker;
+}
+
+/** High-frequency floating reaction (no chat spam). */
+export async function sendLiveReaction(liveId, actor, reactionId) {
+  if (!liveId || !actor?.uid) throw new Error("Sign in to react.");
+  const reaction = LIVE_REACTIONS.find((r) => r.id === reactionId) || LIVE_REACTIONS[0];
+  await addDoc(collection(db, "lives", liveId, "reactions"), {
+    uid: actor.uid,
+    username: actor.username || "",
+    emoji: reaction.emoji,
+    reactionId: reaction.id,
+    createdAt: serverTimestamp(),
+  });
+  return reaction;
+}
+
+/** Live gift feed (newest first, capped). */
+export function watchLiveGifts(liveId, onData) {
+  if (!liveId) return () => {};
+  return onSnapshot(
+    query(collection(db, "lives", liveId, "gifts"), orderBy("createdAt", "desc"), limit(40)),
+    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    () => onData([])
+  );
+}
+
+/** Live reactions stream for floating animation. */
+export function watchLiveReactions(liveId, onData) {
+  if (!liveId) return () => {};
+  return onSnapshot(
+    query(collection(db, "lives", liveId, "reactions"), orderBy("createdAt", "desc"), limit(30)),
+    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    () => onData([])
+  );
+}
+
+/** Top gifters for a stream (client-side aggregate of recent gifts). */
+export async function getLiveTopGifters(liveId, max = 10) {
+  if (!liveId) return [];
+  try {
+    const snap = await getDocs(
+      query(collection(db, "lives", liveId, "gifts"), orderBy("createdAt", "desc"), limit(200))
+    );
+    const byUid = new Map();
+    snap.docs.forEach((d) => {
+      const g = d.data();
+      const cur = byUid.get(g.uid) || {
+        uid: g.uid,
+        username: g.username,
+        displayName: g.displayName,
+        photoURL: g.photoURL,
+        coins: 0,
+        count: 0,
+      };
+      cur.coins += Number(g.coins) || 0;
+      cur.count += 1;
+      byUid.set(g.uid, cur);
+    });
+    return [...byUid.values()].sort((a, b) => b.coins - a.coins).slice(0, max);
+  } catch {
+    return [];
+  }
+}
+
+/** Soft-like a live (bump likeCount). One bump per call — client throttles. */
+export async function bumpLiveLike(liveId) {
+  if (!liveId) return;
+  await updateDoc(doc(db, "lives", liveId), { likeCount: increment(1) }).catch(() => {});
+}
+
+/** Broadcaster can pin a chat message id for highlight. */
+export async function pinLiveChat(liveId, messageId, expectedUid) {
+  if (!liveId) return;
+  const snap = await getDoc(doc(db, "lives", liveId)).catch(() => null);
+  if (!snap?.exists() || snap.data().uid !== expectedUid) return;
+  await updateDoc(doc(db, "lives", liveId), {
+    pinnedChatId: messageId || null,
+    updatedAt: serverTimestamp(),
+  }).catch(() => {});
+}
+
+/** Share counter for lives. */
+export async function bumpLiveShare(liveId) {
+  if (!liveId) return;
+  await updateDoc(doc(db, "lives", liveId), { shareCount: increment(1) }).catch(() => {});
+}
+
+/** Update stream title while live (host only). */
+export async function updateLiveTitle(liveId, title, expectedUid) {
+  if (!liveId) return;
+  const snap = await getDoc(doc(db, "lives", liveId)).catch(() => null);
+  if (!snap?.exists() || snap.data().uid !== expectedUid) return;
+  await updateDoc(doc(db, "lives", liveId), {
+    title: String(title || "").trim().slice(0, 120),
+    updatedAt: serverTimestamp(),
+  }).catch(() => {});
 }

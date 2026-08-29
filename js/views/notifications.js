@@ -10,6 +10,7 @@ const ICONS = {
   mention: "✳️",
   repost: "🔁",
   message: "✉️",
+  gift: "🎁",
 };
 
 const COPY = {
@@ -19,6 +20,7 @@ const COPY = {
   mention: "mentioned you in a video",
   repost: "reposted your video",
   message: "sent you a message",
+  gift: "sent you a gift on live",
 };
 
 export function notificationsView(ctx) {
@@ -35,6 +37,7 @@ export function notificationsView(ctx) {
       <button class="tab" data-tab="likes">Likes</button>
       <button class="tab" data-tab="comments">Comments</button>
       <button class="tab" data-tab="follows">Follows</button>
+      <button class="tab" data-tab="gifts">Gifts</button>
     </div>
     <div class="notif-list" id="notif-list" aria-live="polite">
       <div class="loader-row"><span class="spinner"></span> Loading…</div>
@@ -50,7 +53,7 @@ export function notificationsView(ctx) {
 
     let filtered = items;
     if (currentTab !== "all") {
-      const map = { likes: "like", comments: "comment", follows: "follow" };
+      const map = { likes: "like", comments: "comment", follows: "follow", gifts: "gift" };
       filtered = items.filter((i) => i.type === map[currentTab]);
     }
 
@@ -58,7 +61,7 @@ export function notificationsView(ctx) {
       list.innerHTML = emptyState(
         "🔔",
         currentTab === "all" ? "Nothing here yet" : `No ${currentTab} yet`,
-        "When someone likes, comments, follows or mentions you, it shows up here."
+        "When someone likes, comments, follows, gifts or mentions you, it shows up here."
       );
       return;
     }
@@ -87,8 +90,10 @@ export function notificationsView(ctx) {
   }
 
   function notificationHref(item) {
+    if (item.type === "gift" && item.liveId) return `#/live/${item.liveId}`;
     if (item.type === "follow" || item.type === "message") return `#/u/${item.fromUsername || item.fromUid}`;
     if (item.videoId) return `#/video/${item.videoId}`;
+    if (item.liveId) return `#/live/${item.liveId}`;
     if (item.postId) return `#/video/${item.postId}`;
     return `#/u/${item.fromUsername || item.fromUid}`;
   }

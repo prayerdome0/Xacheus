@@ -71,6 +71,9 @@ service cloud.firestore {
       match /savedVideos/{videoId} {
         allow read, write: if isSelf(uid);
       }
+      match /favoriteSounds/{soundId} {
+        allow read, write: if isSelf(uid);
+      }
       // legacy liked/saved for posts
       match /liked/{postId} {
         allow read, write: if isSelf(uid);
@@ -146,16 +149,18 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.artistUid == request.auth.uid
         && shortText(request.resource.data.title, 80)
-        && request.resource.data.audioUrl is string;
+        && request.resource.data.audioUrl is string
+        && request.resource.data.audioUrl.size() > 0
+        && request.resource.data.useCount == 0;
 
-      // Owner or admin can edit, anyone can bump useCount
+      // Owner or admin can edit; anyone signed in can bump counters
       allow update: if signedIn()
         && (
           (resource.data.artistUid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['title','coverUrl','genre','updatedAt']))
+                 .hasOnly(['title','coverUrl','genre','bpm','isFree','updatedAt']))
           || request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['useCount','lastUsedAt'])
+               .hasOnly(['useCount','lastUsedAt','favoriteCount'])
           || isAdmin()
         );
 
@@ -185,7 +190,7 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.fromUid == request.auth.uid
         && request.resource.data.toUid != request.auth.uid
-        && request.resource.data.type in ['like','comment','follow','mention','repost','message']
+        && request.resource.data.type in ['like','comment','follow','mention','repost','message','gift']
         && request.resource.data.read == false;
       allow update: if signedIn()
         && resource.data.toUid == request.auth.uid
@@ -246,13 +251,14 @@ service cloud.firestore {
         && request.resource.data.latestSeq == 0
         && request.resource.data.segmentCount == 0;
 
-      // Broadcaster controls stream state; anyone signed in may bump viewerCount only.
+      // Broadcaster controls stream state; signed-in viewers may bump counters only.
       allow update: if signedIn()
         && (
           (resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['status','latestSeq','segmentCount','lastPingAt','endedAt','thumbnailUrl','title','updatedAt']))
-          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewerCount'])
+                 .hasOnly(['status','latestSeq','segmentCount','lastPingAt','endedAt','thumbnailUrl','title','updatedAt','pinnedChatId']))
+          || request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['viewerCount','giftCount','giftCoins','likeCount','shareCount'])
         );
 
       allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
@@ -281,6 +287,30 @@ service cloud.firestore {
               || get(/databases/$(database)/documents/lives/$(liveId)).data.uid == request.auth.uid
               || isAdmin());
         allow update: if false;
+      }
+
+      // Paid gifts — anyone signed in can send; immutable once written.
+      match /gifts/{gid} {
+        allow read: if true;
+        allow create: if signedIn()
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.giftId is string
+          && request.resource.data.coins is number
+          && request.resource.data.coins > 0
+          && request.resource.data.coins <= 10000
+          && request.resource.data.emoji is string
+          && request.resource.data.label is string;
+        allow update, delete: if false;
+      }
+
+      // Floating reactions — high frequency, free, immutable.
+      match /reactions/{rid} {
+        allow read: if true;
+        allow create: if signedIn()
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.emoji is string
+          && request.resource.data.emoji.size() <= 8;
+        allow update, delete: if false;
       }
     }
 

@@ -1,24 +1,158 @@
-/** Xacheus — Live streaming (client-only: camera → Cloudinary segments → Firestore). */
+/** Xacheus — Live streaming with gifts, stickers & real-time chat. */
 
 import {
+  LIVE_GIFTS,
+  LIVE_REACTIONS,
   LIVE_SEGMENT_MS,
   LIVE_STALE_MS,
+  LIVE_STICKERS,
   addLiveSegment,
+  bumpLiveLike,
+  bumpLiveShare,
   bumpLiveViewers,
   createLive,
   endLive,
   fetchLiveSegments,
+  getGiftById,
   getLive,
+  getLiveTopGifters,
   pingLive,
   sendLiveChat,
+  sendLiveGift,
+  sendLiveReaction,
+  sendLiveSticker,
   setLiveThumbnail,
   watchActiveLives,
   watchLive,
   watchLiveChat,
+  watchLiveGifts,
+  watchLiveReactions,
 } from "../data.js";
 import { uploadImage, uploadVideo } from "../cloudinary.js";
-import { avatar, clear, emptyState, esc, formatCount, timeAgo, toast } from "../ui.js";
+import { avatar, clear, emptyState, esc, formatCount, timeAgo, toast, copyText } from "../ui.js";
 import { liveThumb } from "./components.js";
+
+/* ------------------------------------------------------------------ */
+/* shared helpers                                                      */
+/* ------------------------------------------------------------------ */
+
+function chatRowHtml(m) {
+  const kind = m.kind || "text";
+  if (kind === "gift") {
+    return `
+      <div class="live-chat-row is-gift">
+        ${avatar({ username: m.username, displayName: m.displayName, photoURL: m.photoURL }, "xs")}
+        <p>
+          <strong>${esc(m.displayName || m.username || "viewer")}</strong>
+          <span class="gift-chip">${esc(m.giftEmoji || "🎁")} ${esc(m.giftLabel || "Gift")}${m.giftCoins ? ` · ${m.giftCoins}` : ""}</span>
+        </p>
+      </div>`;
+  }
+  if (kind === "sticker") {
+    return `
+      <div class="live-chat-row is-sticker">
+        ${avatar({ username: m.username, displayName: m.displayName, photoURL: m.photoURL }, "xs")}
+        <p>
+          <strong>${esc(m.displayName || m.username || "viewer")}</strong>
+          <span class="sticker-bubble">${esc(m.stickerEmoji || m.text || "✨")}</span>
+        </p>
+      </div>`;
+  }
+  return `
+    <div class="live-chat-row">
+      ${avatar({ username: m.username, displayName: m.displayName, photoURL: m.photoURL }, "xs")}
+      <p><strong>${esc(m.displayName || m.username || "viewer")}</strong> ${esc(m.text)}</p>
+    </div>`;
+}
+
+function renderChatList(host, messages, emptyCopy) {
+  if (!host) return;
+  const nearBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 140 || !host.dataset.init;
+  clear(host);
+  host.innerHTML = messages.length
+    ? messages.map(chatRowHtml).join("")
+    : `<div class="live-chat-empty">${esc(emptyCopy || "Be first to say hello 👋")}</div>`;
+  host.dataset.init = "1";
+  if (nearBottom) host.scrollTop = host.scrollHeight;
+}
+
+function giftPickerHtml() {
+  return `
+    <div class="gift-picker" id="gift-picker" hidden>
+      <header class="gift-picker-head">
+        <strong>Send a gift</strong>
+        <button class="icon-btn" type="button" data-act="close-gifts" aria-label="Close">✕</button>
+      </header>
+      <div class="gift-grid">
+        ${LIVE_GIFTS.map(
+          (g) => `
+          <button class="gift-item" type="button" data-gift="${esc(g.id)}" title="${esc(g.label)}">
+            <span class="gift-emoji">${g.emoji}</span>
+            <span class="gift-label">${esc(g.label)}</span>
+            <span class="gift-coins">🪙 ${g.coins}</span>
+          </button>`
+        ).join("")}
+      </div>
+    </div>`;
+}
+
+function stickerPickerHtml() {
+  return `
+    <div class="sticker-picker" id="sticker-picker" hidden>
+      <div class="sticker-grid">
+        ${LIVE_STICKERS.map(
+          (s) => `
+          <button class="sticker-item" type="button" data-sticker="${esc(s.id)}" title="${esc(s.label)}" aria-label="${esc(s.label)}">
+            ${s.emoji}
+          </button>`
+        ).join("")}
+      </div>
+    </div>`;
+}
+
+function reactionBarHtml() {
+  return `
+    <div class="reaction-bar" id="reaction-bar">
+      ${LIVE_REACTIONS.map(
+        (r) => `<button class="reaction-btn" type="button" data-reaction="${esc(r.id)}" aria-label="React ${r.emoji}">${r.emoji}</button>`
+      ).join("")}
+    </div>`;
+}
+
+/** Spawn a floating emoji over the player. */
+function spawnFloatEmoji(container, emoji, { big = false, x } = {}) {
+  if (!container) return;
+  const el = document.createElement("span");
+  el.className = `float-emoji${big ? " is-big" : ""}`;
+  el.textContent = emoji;
+  const left = typeof x === "number" ? x : 10 + Math.random() * 70;
+  el.style.left = `${left}%`;
+  el.style.setProperty("--drift", `${(Math.random() * 40 - 20).toFixed(1)}px`);
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 2800);
+}
+
+/** Full-screen gift celebration overlay. */
+function playGiftAnim(container, gift) {
+  if (!container || !gift) return;
+  const layer = container.querySelector(".gift-fx") || (() => {
+    const n = document.createElement("div");
+    n.className = "gift-fx";
+    container.appendChild(n);
+    return n;
+  })();
+
+  const banner = document.createElement("div");
+  banner.className = `gift-banner anim-${gift.anim || "float"}`;
+  banner.innerHTML = `<span class="gift-banner-emoji">${gift.emoji}</span><span class="gift-banner-label">${esc(gift.label)}</span>`;
+  layer.appendChild(banner);
+
+  const count = gift.anim === "rain" ? 18 : gift.anim === "burst" ? 10 : 4;
+  for (let i = 0; i < count; i += 1) {
+    setTimeout(() => spawnFloatEmoji(layer, gift.emoji, { big: gift.coins >= 100, x: Math.random() * 90 }), i * 60);
+  }
+  setTimeout(() => banner.remove(), 3200);
+}
 
 /* ------------------------------------------------------------------ */
 /* live list                                                           */
@@ -43,7 +177,6 @@ export function liveListView(ctx) {
     const grid = root.querySelector("#live-grid");
     if (!grid || destroyed) return;
 
-    // Hide stale streams (broadcaster vanished without ending).
     const now = Date.now();
     const active = lives.filter((l) => {
       const ping = l.lastPingAt?.toMillis ? l.lastPingAt.toMillis() : l.lastPingAt || 0;
@@ -57,7 +190,7 @@ export function liveListView(ctx) {
       grid.innerHTML = emptyState(
         "📡",
         "No one is live right now",
-        "Be the first — go live from your camera and followers can watch and chat instantly.",
+        "Be the first — go live from your camera. Viewers can watch, chat, react and send gifts.",
         ctx.state.profile
           ? '<button class="btn btn-primary btn-sm" type="button" data-act="go-empty">Start broadcasting</button>'
           : '<button class="btn btn-primary btn-sm" type="button" data-act="login">Log in to go live</button>'
@@ -72,6 +205,7 @@ export function liveListView(ctx) {
         <span class="live-thumb">
           ${liveThumb(live)}
           <span class="live-badge"><span class="live-dot"></span>LIVE</span>
+          ${live.giftCoins ? `<span class="live-gift-badge">🎁 ${formatCount(live.giftCoins)}</span>` : ""}
         </span>
         <span class="live-card-body">
           <strong>${esc(live.title || `${live.displayName || live.username} is live`)}</strong>
@@ -79,6 +213,7 @@ export function liveListView(ctx) {
             ${avatar({ username: live.username, displayName: live.displayName, photoURL: live.photoURL }, "xs")}
             <em>@${esc(live.username || "user")}</em>
             <span>👁 ${formatCount(live.viewerCount || 0)}</span>
+            ${live.likeCount ? `<span>❤️ ${formatCount(live.likeCount)}</span>` : ""}
             <span>· ${timeAgo(live.startedAt)}</span>
           </span>
         </span>
@@ -138,7 +273,16 @@ export function liveBroadcastView(ctx) {
   let startedAtMs = 0;
   let chatUnsub = null;
   let liveUnsub = null;
+  let giftsUnsub = null;
+  let reactionsUnsub = null;
   let viewerCount = 0;
+  let giftCoins = 0;
+  let giftCount = 0;
+  let likeCount = 0;
+  let seenGiftIds = new Set();
+  let seenReactionIds = new Set();
+  let giftsPrimed = false;
+  let reactionsPrimed = false;
 
   const html = `
     <div class="view-head">
@@ -155,7 +299,7 @@ export function liveBroadcastView(ctx) {
           <span>Title <em>(optional)</em></span>
           <input type="text" id="live-title" maxlength="120" placeholder="What's happening? e.g. Sunday service live 🙏" autocomplete="off" />
         </label>
-        <p class="field-hint">Your camera broadcasts in ~4s chunks. Viewers watch with a 5–15s delay and can chat live.</p>
+        <p class="field-hint">You're live in ~4s chunks. Viewers watch with a short delay, chat, react and send gifts in real time.</p>
         <button class="btn btn-primary btn-block" type="submit" id="start-btn" disabled>
           <span class="live-dot"></span> Go live now
         </button>
@@ -163,20 +307,24 @@ export function liveBroadcastView(ctx) {
     </div>
 
     <div class="broadcast-live-ui" id="broadcast-live-ui" hidden>
-      <div class="broadcast-preview-box is-on-air">
+      <div class="broadcast-preview-box is-on-air" id="broadcast-stage">
         <video id="broadcast-preview2" autoplay muted playsinline></video>
         <span class="live-badge"><span class="live-dot"></span>LIVE</span>
         <span class="broadcast-clock" id="broadcast-clock">00:00</span>
+        <div class="gift-fx" aria-hidden="true"></div>
       </div>
       <div class="broadcast-stats">
         <span>👁 <strong id="stat-viewers">0</strong> watching</span>
-        <span>📦 <strong id="stat-segments">0</strong> chunks sent</span>
+        <span>❤️ <strong id="stat-likes">0</strong></span>
+        <span>🎁 <strong id="stat-gifts">0</strong> · 🪙 <strong id="stat-coins">0</strong></span>
+        <span>📦 <strong id="stat-segments">0</strong> chunks</span>
       </div>
       <div class="live-chat" id="broadcast-chat"></div>
       <form class="chat-form" id="broadcast-chat-form">
         <input type="text" id="broadcast-chat-input" placeholder="Say something to your viewers…" maxlength="300" autocomplete="off" aria-label="Chat" />
         <button class="btn btn-outline btn-sm" type="submit">Send</button>
       </form>
+      <div class="live-top-gifters" id="top-gifters" hidden></div>
       <button class="btn btn-danger btn-block" type="button" id="end-btn">End stream</button>
     </div>`;
 
@@ -189,10 +337,15 @@ export function liveBroadcastView(ctx) {
   }
 
   function updateStats() {
-    const v = document.querySelector("#stat-viewers");
-    const s = document.querySelector("#stat-segments");
-    if (v) v.textContent = formatCount(viewerCount);
-    if (s) s.textContent = String(uploaded);
+    const set = (id, v) => {
+      const el = document.querySelector(id);
+      if (el) el.textContent = typeof v === "number" ? formatCount(v) : String(v);
+    };
+    set("#stat-viewers", viewerCount);
+    set("#stat-likes", likeCount);
+    set("#stat-gifts", giftCount);
+    set("#stat-coins", giftCoins);
+    set("#stat-segments", uploaded);
   }
 
   function drainQueue() {
@@ -206,7 +359,7 @@ export function liveBroadcastView(ctx) {
           try {
             const file = new File([item.blob], `seg-${item.seq}.webm`, { type: item.blob.type || "video/webm" });
             const res = await uploadVideo(file);
-            if (!res?.url) throw new Error("No URL from Cloudinary");
+            if (!res?.url) throw new Error("No URL from upload");
             await addLiveSegment(liveId, { seq: item.seq, url: res.url, duration: item.duration });
             uploaded += 1;
             ok = true;
@@ -287,6 +440,33 @@ export function liveBroadcastView(ctx) {
     }, 1000);
   }
 
+  async function refreshTopGifters() {
+    if (!liveId) return;
+    const list = await getLiveTopGifters(liveId, 5).catch(() => []);
+    const host = document.querySelector("#top-gifters");
+    if (!host) return;
+    if (!list.length) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    host.innerHTML = `
+      <h3 class="top-gifters-title">Top gifters</h3>
+      <div class="top-gifters-list">
+        ${list
+          .map(
+            (g, i) => `
+          <a class="top-gifter" href="#/u/${esc(g.username || "")}">
+            <span class="rank">#${i + 1}</span>
+            ${avatar(g, "xs")}
+            <span class="name">${esc(g.displayName || g.username)}</span>
+            <span class="coins">🪙 ${formatCount(g.coins)}</span>
+          </a>`
+          )
+          .join("")}
+      </div>`;
+  }
+
   async function startBroadcast(titleText) {
     const me = ctx.state.profile;
     if (!me) return ctx.requireAuth();
@@ -316,6 +496,10 @@ export function liveBroadcastView(ctx) {
     seq = 0;
     uploaded = 0;
     dropped = 0;
+    seenGiftIds = new Set();
+    seenReactionIds = new Set();
+    giftsPrimed = false;
+    reactionsPrimed = false;
 
     document.querySelector("#broadcast-setup").hidden = true;
     document.querySelector("#broadcast-live-ui").hidden = false;
@@ -329,6 +513,9 @@ export function liveBroadcastView(ctx) {
 
     liveUnsub = watchLive(liveId, (live) => {
       viewerCount = live?.viewerCount || 0;
+      giftCoins = live?.giftCoins || 0;
+      giftCount = live?.giftCount || 0;
+      likeCount = live?.likeCount || 0;
       updateStats();
       if (!live && !destroyed) {
         toast("Stream not found — it may have been ended.", "error");
@@ -337,23 +524,39 @@ export function liveBroadcastView(ctx) {
     });
 
     chatUnsub = watchLiveChat(liveId, (messages) => {
-      const host = document.querySelector("#broadcast-chat");
-      if (!host) return;
-      const nearBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 120 || !host.dataset.init;
-      clear(host);
-      host.innerHTML = messages.length
-        ? messages
-            .map(
-              (m) => `
-          <div class="live-chat-row">
-            ${avatar({ username: m.username, displayName: m.displayName, photoURL: m.photoURL }, "xs")}
-            <p><strong>${esc(m.displayName || m.username || "viewer")}</strong> ${esc(m.text)}</p>
-          </div>`
-            )
-            .join("")
-        : `<div class="live-chat-empty">No chat yet — viewers will appear here 💬</div>`;
-      host.dataset.init = "1";
-      if (nearBottom) host.scrollTop = host.scrollHeight;
+      renderChatList(document.querySelector("#broadcast-chat"), messages, "No chat yet — viewers will appear here 💬");
+    });
+
+    const stage = document.querySelector("#broadcast-stage");
+    giftsUnsub = watchLiveGifts(liveId, (gifts) => {
+      if (!giftsPrimed) {
+        gifts.forEach((g) => seenGiftIds.add(g.id));
+        giftsPrimed = true;
+        refreshTopGifters();
+        return;
+      }
+      gifts.forEach((g) => {
+        if (seenGiftIds.has(g.id)) return;
+        seenGiftIds.add(g.id);
+        const gift = getGiftById(g.giftId) || { emoji: g.emoji, label: g.label, coins: g.coins, anim: g.anim };
+        playGiftAnim(stage, gift);
+        toast(`${g.displayName || g.username} sent ${g.emoji} ${g.label}`, "success", 2500);
+      });
+      refreshTopGifters();
+    });
+
+    reactionsUnsub = watchLiveReactions(liveId, (reactions) => {
+      const fx = stage?.querySelector(".gift-fx") || stage;
+      if (!reactionsPrimed) {
+        reactions.forEach((r) => seenReactionIds.add(r.id));
+        reactionsPrimed = true;
+        return;
+      }
+      reactions.forEach((r) => {
+        if (seenReactionIds.has(r.id)) return;
+        seenReactionIds.add(r.id);
+        spawnFloatEmoji(fx, r.emoji || "❤️");
+      });
     });
 
     window.addEventListener("beforeunload", beforeUnloadEnd);
@@ -372,8 +575,12 @@ export function liveBroadcastView(ctx) {
     window.removeEventListener("beforeunload", beforeUnloadEnd);
     liveUnsub?.();
     chatUnsub?.();
+    giftsUnsub?.();
+    reactionsUnsub?.();
     liveUnsub = null;
     chatUnsub = null;
+    giftsUnsub = null;
+    reactionsUnsub = null;
 
     try {
       if (recorder?.state === "recording") recorder.stop();
@@ -420,7 +627,6 @@ export function liveBroadcastView(ctx) {
         return;
       }
 
-      // Warm up the camera immediately so the preview is ready.
       (async () => {
         try {
           stream = await navigator.mediaDevices.getUserMedia({
@@ -480,6 +686,8 @@ export function liveWatchView(ctx, { liveId }) {
   let destroyed = false;
   let unsubLive = null;
   let unsubChat = null;
+  let unsubGifts = null;
+  let unsubReactions = null;
   let pollTimer = null;
   let video = null;
 
@@ -491,22 +699,42 @@ export function liveWatchView(ctx, { liveId }) {
   let replayMode = false;
   let joined = false;
   let viewers = 0;
+  let giftCoins = 0;
+  let giftCount = 0;
+  let likeCount = 0;
+  let hostProfile = null;
+  let seenGiftIds = new Set();
+  let seenReactionIds = new Set();
+  let giftsPrimed = false;
+  let reactionsPrimed = false;
+  let lastLikeTap = 0;
 
   const html = `
     <div class="live-watch" id="live-watch">
-      <div class="live-player-box">
+      <div class="live-player-box" id="live-stage">
         <span class="live-loading" id="live-loading"><span class="spinner"></span> Connecting to the stream…</span>
         <video id="live-player" autoplay playsinline muted></video>
         <button class="live-unmute" id="live-unmute" type="button">🔇 Tap for sound</button>
         <span class="live-badge"><span class="live-dot"></span>LIVE</span>
+        <div class="gift-fx" aria-hidden="true"></div>
+        ${reactionBarHtml()}
       </div>
       <aside class="live-side">
         <div class="live-info" id="live-info"></div>
+        <div class="live-actions-row">
+          <button class="btn btn-outline btn-sm" type="button" data-act="like-live">❤️ Like</button>
+          <button class="btn btn-outline btn-sm" type="button" data-act="share-live">↗ Share</button>
+          <button class="btn btn-primary btn-sm" type="button" data-act="open-gifts">🎁 Gift</button>
+          <button class="btn btn-outline btn-sm" type="button" data-act="open-stickers">✨ Stickers</button>
+        </div>
+        ${giftPickerHtml()}
+        ${stickerPickerHtml()}
         <div class="live-chat" id="live-chat"></div>
         <form class="chat-form" id="live-chat-form">
           <input type="text" id="live-chat-input" placeholder="Say something…" maxlength="300" autocomplete="off" aria-label="Live chat" />
           <button class="btn btn-outline btn-sm" type="submit">Send</button>
         </form>
+        <div class="live-top-gifters" id="watch-top-gifters" hidden></div>
       </aside>
     </div>`;
 
@@ -515,11 +743,16 @@ export function liveWatchView(ctx, { liveId }) {
     if (!info) return;
     const chip = info.querySelector("[data-viewers]");
     if (chip) chip.textContent = `👁 ${formatCount(viewers)} watching`;
+    const gifts = info.querySelector("[data-gifts]");
+    if (gifts) gifts.textContent = giftCoins ? `🎁 ${formatCount(giftCoins)} coins` : "";
+    const likes = info.querySelector("[data-likes]");
+    if (likes) likes.textContent = likeCount ? `❤️ ${formatCount(likeCount)}` : "";
   }
 
   function renderInfo(live) {
     const host = document.querySelector("#live-info");
     if (!host || !live) return;
+    hostProfile = live;
     host.innerHTML = `
       <a class="live-host" href="#/u/${esc(live.username || "")}">
         ${avatar({ username: live.username, displayName: live.displayName, photoURL: live.photoURL }, "sm")}
@@ -531,19 +764,49 @@ export function liveWatchView(ctx, { liveId }) {
       ${live.title ? `<p class="live-title">${esc(live.title)}</p>` : ""}
       <div class="live-meta-row">
         <span data-viewers>👁 ${formatCount(live.viewerCount || 0)} watching</span>
+        <span data-likes>${live.likeCount ? `❤️ ${formatCount(live.likeCount)}` : ""}</span>
+        <span data-gifts>${live.giftCoins ? `🎁 ${formatCount(live.giftCoins)} coins` : ""}</span>
         <a class="link" href="#/live">All live</a>
+      </div>`;
+  }
+
+  async function refreshTopGifters() {
+    const list = await getLiveTopGifters(liveId, 5).catch(() => []);
+    const host = document.querySelector("#watch-top-gifters");
+    if (!host) return;
+    if (!list.length) {
+      host.hidden = true;
+      return;
+    }
+    host.hidden = false;
+    host.innerHTML = `
+      <h3 class="top-gifters-title">Top gifters</h3>
+      <div class="top-gifters-list">
+        ${list
+          .map(
+            (g, i) => `
+          <a class="top-gifter" href="#/u/${esc(g.username || "")}">
+            <span class="rank">#${i + 1}</span>
+            ${avatar(g, "xs")}
+            <span class="name">${esc(g.displayName || g.username)}</span>
+            <span class="coins">🪙 ${formatCount(g.coins)}</span>
+          </a>`
+          )
+          .join("")}
       </div>`;
   }
 
   function showEnded() {
     if (ended) return;
     ended = true;
-    document.querySelector(".live-watch .live-badge")?.remove();
+    document.querySelector("#live-watch .live-badge")?.remove();
     const box = document.querySelector(".live-player-box");
     if (box && !box.querySelector(".live-ended")) {
       const note = document.createElement("div");
       note.className = "live-ended";
-      note.innerHTML = `<p>${replayMode ? "End of replay" : "Stream ended"}</p><a class="btn btn-primary btn-sm" href="#/live">Find another live</a>`;
+      note.innerHTML = `<p>${replayMode ? "End of replay" : "Stream ended"}</p>
+        ${giftCoins ? `<p class="live-ended-gifts">🎁 ${formatCount(giftCoins)} coins received</p>` : ""}
+        <a class="btn btn-primary btn-sm" href="#/live">Find another live</a>`;
       box.appendChild(note);
     }
   }
@@ -554,7 +817,6 @@ export function liveWatchView(ctx, { liveId }) {
       if (ended || replayMode) showEnded();
       return;
     }
-    // If the broadcaster outpaced us, jump near the latest to avoid drift.
     if (queue.length > 5) queue = queue.slice(-2);
     const seg = queue.shift();
     playingSeq = seg.seq;
@@ -576,15 +838,30 @@ export function liveWatchView(ctx, { liveId }) {
       });
       if (video && !video.src && queue.length) playNext();
     } catch {
-      /* transient — retry on next tick */
+      /* transient */
     }
   }
 
   function startPlayback(initialLatest) {
-    // Join one segment behind live for smooth start.
     queuedThrough = Math.max(0, initialLatest - 1);
     loadMore();
     pollTimer = setInterval(loadMore, 2500);
+  }
+
+  function togglePicker(id, show) {
+    const el = document.querySelector(id);
+    if (!el) return;
+    const next = typeof show === "boolean" ? show : el.hidden;
+    el.hidden = !next;
+    // close the other
+    if (id === "#gift-picker" && next) {
+      const s = document.querySelector("#sticker-picker");
+      if (s) s.hidden = true;
+    }
+    if (id === "#sticker-picker" && next) {
+      const g = document.querySelector("#gift-picker");
+      if (g) g.hidden = true;
+    }
   }
 
   return {
@@ -593,6 +870,7 @@ export function liveWatchView(ctx, { liveId }) {
     mount(root) {
       video = root.querySelector("#live-player");
       const unmuteBtn = root.querySelector("#live-unmute");
+      const stage = root.querySelector("#live-stage");
 
       unmuteBtn.addEventListener("click", () => {
         video.muted = !video.muted;
@@ -600,11 +878,26 @@ export function liveWatchView(ctx, { liveId }) {
       });
       video.addEventListener("ended", playNext);
       video.addEventListener("error", () => {
-        if (video.src) playNext(); // skip a bad segment
+        if (video.src) playNext();
+      });
+
+      // Double-tap player to like + heart float
+      let lastTap = 0;
+      stage.addEventListener("click", (event) => {
+        if (event.target.closest("button,a,input,.reaction-bar,.gift-picker,.sticker-picker")) return;
+        const now = Date.now();
+        if (now - lastTap < 320) {
+          if (!ctx.state.profile) return ctx.requireAuth();
+          if (now - lastLikeTap < 400) return;
+          lastLikeTap = now;
+          bumpLiveLike(liveId);
+          spawnFloatEmoji(stage.querySelector(".gift-fx"), "❤️", { big: true, x: 40 + Math.random() * 20 });
+        }
+        lastTap = now;
       });
 
       if (!ctx.state.profile) {
-        root.querySelector("#live-chat-form").innerHTML = `<p class="field-hint">Log in to join the chat.</p>`;
+        root.querySelector("#live-chat-form").innerHTML = `<p class="field-hint">Log in to chat, gift and react.</p>`;
       }
 
       (async () => {
@@ -619,19 +912,35 @@ export function liveWatchView(ctx, { liveId }) {
         renderInfo(live);
         latestSeq = live.latestSeq || 0;
         viewers = live.viewerCount || 0;
+        giftCoins = live.giftCoins || 0;
+        giftCount = live.giftCount || 0;
+        likeCount = live.likeCount || 0;
 
         if (live.status !== "live") {
           replayMode = true;
           document.querySelector("#live-watch .live-badge")?.remove();
+          root.querySelector(".live-actions-row")?.remove();
+          root.querySelector("#gift-picker")?.remove();
+          root.querySelector("#sticker-picker")?.remove();
+          root.querySelector("#reaction-bar")?.remove();
           const loadingNote = document.querySelector("#live-loading");
           if (loadingNote) loadingNote.innerHTML = "This broadcast is over — playing the replay…";
           if (!latestSeq) {
             clear(root);
-            root.innerHTML = emptyState("📼", "This stream is over", `${live.displayName || live.username || "They"} didn't publish any moments from this broadcast.`, '<a class="btn btn-primary btn-sm" href="#/live">Back to Live</a>');
+            root.innerHTML = emptyState(
+              "📼",
+              "This stream is over",
+              `${live.displayName || live.username || "They"} didn't publish any moments from this broadcast.`,
+              '<a class="btn btn-primary btn-sm" href="#/live">Back to Live</a>'
+            );
             return;
           }
-          // Replay what was published.
           startPlayback(latestSeq + 1);
+          // Still show gift totals + chat history for the replay.
+          unsubChat = watchLiveChat(liveId, (messages) => {
+            renderChatList(document.querySelector("#live-chat"), messages, "No chat from this stream.");
+          });
+          refreshTopGifters();
         } else {
           startPlayback(latestSeq);
           joined = true;
@@ -641,33 +950,52 @@ export function liveWatchView(ctx, { liveId }) {
             if (!fresh) return showEnded();
             latestSeq = Math.max(latestSeq, fresh.latestSeq || 0);
             viewers = fresh.viewerCount || 0;
+            giftCoins = fresh.giftCoins || 0;
+            giftCount = fresh.giftCount || 0;
+            likeCount = fresh.likeCount || 0;
             updateViewerChip();
             if (fresh.status !== "live" && !queue.length) showEnded();
           });
 
           unsubChat = watchLiveChat(liveId, (messages) => {
-            const host = document.querySelector("#live-chat");
-            if (!host) return;
-            const nearBottom = host.scrollHeight - host.scrollTop - host.clientHeight < 140 || !host.dataset.init;
-            clear(host);
-            host.innerHTML = messages.length
-              ? messages
-                  .map(
-                    (m) => `
-                <div class="live-chat-row">
-                  ${avatar({ username: m.username, displayName: m.displayName, photoURL: m.photoURL }, "xs")}
-                  <p><strong>${esc(m.displayName || m.username || "viewer")}</strong> ${esc(m.text)}</p>
-                </div>`
-                  )
-                  .join("")
-              : `<div class="live-chat-empty">Be first to say hello 👋</div>`;
-            host.dataset.init = "1";
-            if (nearBottom) host.scrollTop = host.scrollHeight;
+            renderChatList(document.querySelector("#live-chat"), messages, "Be first to say hello 👋");
+          });
+
+          unsubGifts = watchLiveGifts(liveId, (gifts) => {
+            if (!giftsPrimed) {
+              gifts.forEach((g) => seenGiftIds.add(g.id));
+              giftsPrimed = true;
+              refreshTopGifters();
+              return;
+            }
+            gifts.forEach((g) => {
+              if (seenGiftIds.has(g.id)) return;
+              seenGiftIds.add(g.id);
+              const gift = getGiftById(g.giftId) || { emoji: g.emoji, label: g.label, coins: g.coins, anim: g.anim };
+              playGiftAnim(stage, gift);
+            });
+            refreshTopGifters();
+          });
+
+          unsubReactions = watchLiveReactions(liveId, (reactions) => {
+            const fx = stage.querySelector(".gift-fx");
+            if (!reactionsPrimed) {
+              reactions.forEach((r) => seenReactionIds.add(r.id));
+              reactionsPrimed = true;
+              return;
+            }
+            reactions.forEach((r) => {
+              if (seenReactionIds.has(r.id)) return;
+              seenReactionIds.add(r.id);
+              // Don't re-animate own reactions already floated locally.
+              if (ctx.state.profile && r.uid === ctx.state.profile.uid) return;
+              spawnFloatEmoji(fx, r.emoji || "❤️");
+            });
           });
         }
       })();
 
-      root.querySelector("#live-chat-form").addEventListener("submit", async (event) => {
+      root.querySelector("#live-chat-form")?.addEventListener("submit", async (event) => {
         event.preventDefault();
         if (!ctx.state.profile) return ctx.requireAuth();
         const input = root.querySelector("#live-chat-input");
@@ -680,11 +1008,88 @@ export function liveWatchView(ctx, { liveId }) {
           toast(error?.message || "Couldn't send that.", "error");
         }
       });
+
+      root.addEventListener("click", async (event) => {
+        const act = event.target.closest("[data-act]")?.dataset.act;
+        const giftId = event.target.closest("[data-gift]")?.dataset.gift;
+        const stickerId = event.target.closest("[data-sticker]")?.dataset.sticker;
+        const reactionId = event.target.closest("[data-reaction]")?.dataset.reaction;
+
+        if (act === "open-gifts") {
+          if (!ctx.state.profile) return ctx.requireAuth();
+          return togglePicker("#gift-picker");
+        }
+        if (act === "close-gifts") return togglePicker("#gift-picker", false);
+        if (act === "open-stickers") {
+          if (!ctx.state.profile) return ctx.requireAuth();
+          return togglePicker("#sticker-picker");
+        }
+        if (act === "like-live") {
+          if (!ctx.state.profile) return ctx.requireAuth();
+          if (Date.now() - lastLikeTap < 400) return;
+          lastLikeTap = Date.now();
+          bumpLiveLike(liveId);
+          spawnFloatEmoji(stage.querySelector(".gift-fx"), "❤️", { big: true });
+          return;
+        }
+        if (act === "share-live") {
+          const shareUrl = `${location.origin}${location.pathname}#/live/${liveId}`;
+          const title = hostProfile?.title || `${hostProfile?.displayName || "Someone"} is live on Xacheus`;
+          if (navigator.share) {
+            navigator
+              .share({ title, url: shareUrl, text: title })
+              .then(() => bumpLiveShare(liveId).catch(() => {}))
+              .catch(() => {});
+          } else {
+            copyText(shareUrl);
+            bumpLiveShare(liveId).catch(() => {});
+          }
+          return;
+        }
+
+        if (giftId) {
+          if (!ctx.state.profile) return ctx.requireAuth();
+          const btn = event.target.closest("[data-gift]");
+          if (btn) btn.disabled = true;
+          try {
+            const gift = await sendLiveGift(liveId, ctx.state.profile, giftId);
+            playGiftAnim(stage, gift);
+            toast(`You sent ${gift.emoji} ${gift.label}`, "success", 2200);
+            togglePicker("#gift-picker", false);
+          } catch (error) {
+            toast(error?.message || "Couldn't send gift.", "error");
+          } finally {
+            if (btn) btn.disabled = false;
+          }
+          return;
+        }
+
+        if (stickerId) {
+          if (!ctx.state.profile) return ctx.requireAuth();
+          try {
+            const sticker = await sendLiveSticker(liveId, ctx.state.profile, stickerId);
+            spawnFloatEmoji(stage.querySelector(".gift-fx"), sticker.emoji, { big: true });
+            togglePicker("#sticker-picker", false);
+          } catch (error) {
+            toast(error?.message || "Couldn't send sticker.", "error");
+          }
+          return;
+        }
+
+        if (reactionId) {
+          if (!ctx.state.profile) return ctx.requireAuth();
+          const reaction = LIVE_REACTIONS.find((r) => r.id === reactionId);
+          if (reaction) spawnFloatEmoji(stage.querySelector(".gift-fx"), reaction.emoji);
+          sendLiveReaction(liveId, ctx.state.profile, reactionId).catch(() => {});
+        }
+      });
     },
     destroy() {
       destroyed = true;
       unsubLive?.();
       unsubChat?.();
+      unsubGifts?.();
+      unsubReactions?.();
       clearInterval(pollTimer);
       if (video) {
         video.pause();
