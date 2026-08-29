@@ -15,8 +15,7 @@ import {
 import {
   initializeFirestore,
   getFirestore,
-  persistentLocalCache,
-  persistentMultipleTabManager,
+  memoryLocalCache,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
@@ -31,6 +30,33 @@ const firebaseConfig = {
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
+
+/**
+ * True when the page was opened with `?lp=1` / `?longpolling=1`, or when a
+ * previous session had to fall back (stored in `xacheus_longPolling`).
+ *
+ * Long-polling is slower than the default WebChannel stream, so it is only
+ * forced on request — everything else lets the SDK auto-detect a blocked
+ * stream and switch on its own.
+ */
+function wantsForcedLongPolling() {
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.get("lp") === "1" || params.get("longpolling") === "1") return true;
+    return localStorage.getItem("xacheus_longPolling") === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function rememberLongPollingFallback() {
+  try {
+    localStorage.setItem("xacheus_longPolling", "1");
+  } catch {
+    /* private mode — ignore */
+  }
+}
+
 /**
  * Firestore transport.
  *
@@ -40,29 +66,56 @@ export const auth = getAuth(firebaseApp);
  * though the device clearly has internet.
  *
  * `experimentalAutoDetectLongPolling` lets the SDK notice a blocked stream and
- * fall back to HTTP long-polling, which fixes that class of failure. We also
- * enable a persistent local cache so a temporary blip serves cached data
- * instead of throwing.
+ * fall back to HTTP long-polling, which fixes that class of failure without
+ * paying the latency cost on networks where streaming works fine.
+ *
+ * The cache is kept in memory: IndexedDB is another thing that can hang or be
+ * unavailable (private windows, blocked storage, multi-tab contention), and a
+ * hang there is indistinguishable from "the app never loads".
+ *
+ * Every step is defensive. This module runs at import time, before anything is
+ * on screen — if it throws, the whole app fails to boot and the user is left
+ * staring at the boot spinner.
  */
 export const db = (() => {
-  // Preview iframes, VPNs and some browsers block Firestore's WebChannel
-  // stream, which surfaces as "client is offline". Force HTTP long-polling
-  // and keep the cache in memory so IndexedDB never poisons the client.
-  const settings = {
-    experimentalForceLongPolling: true,
-    useFetchStreams: false,
-    localCache: memoryLocalCache(),
-  };
-  try {
-    return initializeFirestore(firebaseApp, settings);
-  } catch {
+  const forced = wantsForcedLongPolling();
+
+  const build = (settings) => {
     try {
-      return initializeFirestore(firebaseApp, { experimentalForceLongPolling: true });
+      return initializeFirestore(firebaseApp, settings);
     } catch {
+      try {
+        return initializeFirestore(firebaseApp, {});
+      } catch {
+        return getFirestore(firebaseApp);
+      }
+    }
+  };
+
+  try {
+    if (forced) {
+      return build({
+        experimentalForceLongPolling: true,
+        useFetchStreams: false,
+        localCache: memoryLocalCache(),
+      });
+    }
+
+    return build({
+      experimentalAutoDetectLongPolling: true,
+      localCache: memoryLocalCache(),
+    });
+  } catch {
+    // Last resort: the SDK still works with default settings, it just loses
+    // the blocked-network fallbacks.
+    try {
       return getFirestore(firebaseApp);
+    } catch {
+      return null;
     }
   }
 })();
+
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 
