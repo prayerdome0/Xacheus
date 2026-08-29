@@ -492,6 +492,18 @@ function paintSession() {
 /* boot                                                                */
 /* ------------------------------------------------------------------ */
 
+function finishBoot() {
+  const bootScreen = document.querySelector("#boot");
+  if (!bootScreen || bootScreen.hidden) return;
+
+  // Never make the first paint wait for Firebase/Auth or the right rail. The
+  // shell is usable immediately; those services hydrate it in the background.
+  bootScreen.classList.add("is-done");
+  window.setTimeout(() => {
+    bootScreen.hidden = true;
+  }, 180);
+}
+
 function boot() {
   applyTheme();
   window.matchMedia("(prefers-color-scheme: light)").addEventListener?.("change", () => {
@@ -547,7 +559,10 @@ function boot() {
   });
 
   // Kick off the first paint for guests; signed-in users get a render from onAuthStateChanged.
+  // Do this synchronously so a slow Firebase request cannot hold the app behind
+  // the loading screen.
   render();
+  finishBoot();
 }
 
 /* ------------------------------------------------------------------ */

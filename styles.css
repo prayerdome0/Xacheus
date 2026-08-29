@@ -157,6 +157,14 @@ p {
   place-items: center;
   background: var(--bg);
   z-index: 300;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 180ms ease, visibility 180ms ease;
+}
+.boot.is-done {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 .boot-inner {
   text-align: center;
