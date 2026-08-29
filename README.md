@@ -1,101 +1,178 @@
-# Xacheus
+# Xacheus Social
 
-Xacheus is an AI-powered business, website, and e-commerce platform created by Zacheus Simbaya to help entrepreneurs and organizations build, launch, manage, and grow online.
+Xacheus Social is a real-time social app: a live feed, profiles with follow graphs,
+replies, likes, reposts, bookmarks, trending hashtags, notifications and private
+1:1 direct messages.
 
-## Platform core (current build)
+It's a static, dependency-free web app (no build step) backed by Firebase Auth and
+Cloud Firestore. Everything renders live — post a message and it appears in other
+people's feeds without a refresh.
 
-The main product flow is now a real store-builder workspace rather than a landing-page-only demo:
+---
 
-- `auth.html` — Firebase email/password registration, login, Google sign-in, email verification, and password reset.
-- `dashboard.html` — authenticated Xacheus store admin with Home, Theme editor, Navigation, Products, Collections, Inventory, Orders, Customers, Marketing, and Settings.
-- `dashboard.html?demo=1` — a fully interactive demo workspace for exploring the platform before creating an account.
-- `storefront.html` — storefront renderer for previews and published stores, including responsive layout, real product cards, cart, and WhatsApp checkout hand-off.
-- `store-builder.css` and `storefront.css` — responsive admin and storefront interfaces.
+## What was here before
 
-### Theme editor capabilities
+This repository previously held the Xacheus AI website/ecommerce builder — a
+landing page plus `dashboard.html`, `builder.html`, `ai-studio.html`,
+`storefront.html` and their scripts. That product has been **removed entirely**
+and replaced by this social app.
 
-The theme editor stores a structured page model and renders the same model into the preview and storefront:
+## Features
 
-- Add, remove, edit, enable/disable, and reorder sections.
-- Banner editor with heading, description, image upload or URL, button text/link, and layout.
-- Product grid, image-with-text, testimonials, newsletter, announcement bar, and footer sections.
-- Theme settings for store name, colors, font, spacing, and announcement message.
-- Desktop/mobile preview switcher.
-- Save changes locally immediately and sync them to Firestore when signed in.
-- Publish a copy to `publicStores/{slug}` for the public storefront renderer.
+**Feed**
+- Two timelines: *For you* (global, newest first) and *Following* (people you follow).
+- Text posts up to 500 characters with optional image.
+- `#hashtags` and `@handles` are parsed out and linked automatically.
+- Like, reply, repost, bookmark and copy-link on every post, with live counters.
+- Infinite "load more" pagination; real-time updates via Firestore listeners.
 
-### Store management
+**Profiles**
+- Cover photo, avatar, bio, location, website and join date.
+- Live follower / following / posts counters.
+- Tabs for Posts, Media (image posts only) and Likes (bookmarked posts).
+- Follower and following lists.
+- In-place profile editing, including changing your `@handle` and uploading
+  an avatar or cover image.
 
-- Products with title, AI-assisted description drafting, multi-image Cloudinary uploads, price, compare-at price, inventory, SKU, category, and variants.
-- Collections/categories with names and descriptions.
-- Editable navigation labels and links.
-- Orders, customers, inventory, marketing, payment-provider settings, and custom-domain setup surfaces.
-- Export orders and customers as JSON.
-- Manual payments admin page for WhatsApp checkout setup, including store WhatsApp number, customer instructions, delivery fees, free-delivery threshold, and a preview link.
-- Cart and WhatsApp checkout hand-off on the storefront using the store owner's configured WhatsApp number.
-- Storefront search, category filters, sorting, product detail modal, image gallery, related products, multiple-image product indicators, variant selection, and a manual checkout form that captures customer name, phone, delivery location, and notes before WhatsApp hand-off.
-- Public checkout orders can be saved under `publicStores/{storeSlug}/orders` for store-owner/admin review when Firestore rules are deployed.
-- Orders dashboard supports details, payment/fulfillment status updates, WhatsApp customer replies, printable receipts, local checkout imports, and real dashboard metrics.
-- Customers dashboard derives customer profiles from checkout/order history with WhatsApp follow-up actions.
-- Publishing controls include published/draft state, copy public store link, unpublish, custom domain notes, and delivery settings.
+**Explore**
+- Trending hashtags ranked by post volume.
+- Suggested people to follow, filtered to accounts you don't already follow.
+- Prefix search across both handle and display name; `#hashtag` search opens a
+  live stream of matching posts.
 
-### Cloudinary store image uploads
+**Notifications**
+- Likes, replies, reposts, mentions and new followers, in real time.
+- Unread dot plus a nav badge that clears as you read.
 
-Store product and banner image uploads use a browser-safe unsigned Cloudinary preset:
+**Direct messages**
+- Private 1:1 conversations that update live.
+- Unread counters per conversation and a total badge in the nav.
+- Start a chat from any profile, or from an `@handle` prompt in the inbox.
 
-- Cloud name: `dhad95cch`
-- Upload preset: `website_store`
-- Asset folder configured in Cloudinary: `samples/ecommerce`
+**Account**
+- Email + password signup and login, Google sign-in, password reset, email
+  verification, and full account deletion (with re-authentication).
 
-Only the unsigned preset name and cloud name are included in client code (`cloudinary.js`). Do not expose `CLOUDINARY_URL`, API keys, or API secrets in the browser.
+**Experience**
+- Dark and light themes (plus "system"), persisted per browser.
+- Responsive: three-column desktop, icon-rail tablet, bottom tab bar + FAB on mobile.
+- Installable PWA with an offline app shell.
+- Keyboard accessible, ARIA labels, reduced-motion support.
 
-This is the platform foundation: the structured store data is the source of truth, the theme editor changes that data, and the storefront renderer reads it. Payment providers, domain provisioning, and server-side order processing should be connected to the existing settings surfaces as their production credentials and backend endpoints become available.
+---
 
-## Existing product tools
-
-- `ai-studio.html` — **Xacheus AI Studio**: one unified multimodal workspace on `gen.pollinations.ai` (OpenAI-compatible). Text chat with streaming, image generation, video generation (with image-to-video reference frames via `media.pollinations.ai` uploads), text-to-speech/music and speech-to-text, realtime voice conversations over the OpenAI Realtime WebSocket protocol (PCM16 + echo-safe `<audio>` playback), and embeddings with a cosine-similarity matrix — plus a live model catalog browser. The Pollinations API key is entered in the UI and stored per-browser in localStorage (`xacheus_pollinations_key`); it is never committed to the repo.
-- `builder.html` — AI-style website/store brief generator with free Pollinations AI, preview, copy, SEO, launch checklist, export, and Firebase save.
-- `ai-assistant.html` — business and marketing assistant.
-- `admin.html` — admin dashboard for manual store orders, payment confirmations, leads, and older saved website plans.
-- Public pages for About, Features, Pricing, Contact, Solutions, Blog, Help, FAQ, Terms, and Privacy.
-
-### Pollinations unified API
-
-`ai-config.js` now targets the unified `https://gen.pollinations.ai` gateway for text and images whenever a key is saved (OpenAI-compatible `POST /v1/chat/completions`, `GET /image/{prompt}`), falling back to the legacy keyless Pollinations endpoints when no key is present. Get a key at [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys). Keep secret `sk_` keys out of client-side bundles in production — for public apps use Connect User Wallets (BYOP).
-
-## Firebase setup required
-
-In Firebase Console for project `xacheus`, enable:
-
-1. Authentication → Sign-in method → Email/Password
-2. Optional: Authentication → Google provider
-3. Firestore Database
-4. Publish `firestore.rules`
-
-Important collections and paths:
-
-- `users/{uid}`
-- `users/{uid}/store/main` — structured store, theme, catalog, navigation, order, and customer state
-- `users/{uid}/blueprints`
-- `users/{uid}/paymentConfirmations`
-- `publicStores/{storeSlug}` — published storefront copy
-- `publicStores/{storeSlug}/orders/{orderId}` — public manual WhatsApp checkout orders for store-owner/admin review
-- `contact_messages`
-- `payment_confirmations`
-- collection group `orders` — admin can review manual WhatsApp checkout orders across stores
-
-The admin email remains `zacheussimbaya@gmail.com`. Firebase client configuration is in `firebase.js`; do not put server secrets in the browser.
-
-### Store image uploads
-
-Store product and banner images upload directly from the browser to Cloudinary using the unsigned `website_store` preset on cloud `dhad95cch`. The preset owns the `samples/ecommerce` asset folder, so no Cloudinary API secret is exposed in the app. Public upload settings live in `cloudinary.js`; keep the preset unsigned only for the intended image formats and size limits.
-
-## Run locally
+## Run it locally
 
 ```bash
-npm run dev
+npm run dev      # serves on http://0.0.0.0:5173
 ```
 
-Then open <http://localhost:5173>. To preview the builder without signing in, use <http://localhost:5173/dashboard.html?demo=1>.
+Any static server works — this is plain HTML/CSS/ES modules, no bundler.
 
-No install step is required because this is a static HTML/CSS/JavaScript site served by Python.
+## Firebase setup
+
+The app points at project **`xacheus-7c98b`** (config in `js/firebase.js`).
+
+### 1. Deploy the rules and indexes (required)
+
+Nothing works until the security rules and composite indexes are live:
+
+```bash
+firebase login
+firebase use xacheus-7c98b
+npm run deploy
+# or individually:
+#   firebase deploy --only firestore:rules
+#   firebase deploy --only firestore:indexes
+```
+
+The four composite indexes in `firestore.indexes.json` back these queries:
+
+| Query | Index |
+| --- | --- |
+| Profile timeline | `posts`: `uid` ASC, `createdAt` DESC |
+| Hashtag streams | `posts`: `hashtags` CONTAINS, `createdAt` DESC |
+| Notifications inbox | `notifications`: `toUid` ASC, `createdAt` DESC |
+| Conversation list | `conversations`: `participants` CONTAINS, `lastMessageAt` DESC |
+
+Indexes take a couple of minutes to build. Until they finish, Firestore logs a
+link in the browser console that creates the missing index directly.
+
+### 2. Enable sign-in methods
+
+In Firebase Console → **Authentication** → **Sign-in method**, enable
+**Email/Password** and **Google**.
+
+### 3. Authorized domains
+
+Add every host you serve from (including local and preview domains) under
+**Authentication → Settings → Authorized domains**, or Google sign-in and
+password resets will be blocked.
+
+## Image uploads
+
+Avatars, covers and post photos upload straight from the browser to Cloudinary
+using an unsigned preset:
+
+- Cloud name: `dhad95cch`
+- Upload preset: `xacheus` (unsigned)
+
+Only the cloud name and preset name live in client code (`js/cloudinary.js`).
+Never commit an API key, API secret or `CLOUDINARY_URL`. If the upload fails the
+app falls back to a local object URL so posting still works.
+
+## Data model
+
+```
+users/{uid}                          profile + counters
+  ├─ liked/{postId}                  "I liked this" (fast per-viewer lookup)
+  ├─ reposted/{postId}
+  └─ saved/{postId}
+usernames/{username}                 unique handle reservation
+posts/{postId}
+  └─ comments/{cid}
+follows/{uid}/following/{targetUid}  directed follow graph
+follows/{uid}/followers/{followerUid}
+notifications/{nid}                  toUid + type + payload
+hashtags/{tag}                       trending counters
+conversations/{cid}
+  └─ messages/{mid}
+```
+
+## Security notes
+
+- `firestore.rules` is the real protection; the Firebase web config is public by design.
+- Profiles and posts are world-readable so signed-out visitors can browse.
+- Every write is scoped to the signed-in owner, except **counter updates**
+  (`followersCount` / `followingCount` / `postsCount`) and post counters
+  (`likeCount` / `commentCount` / `repostCount`), which any signed-in user can
+  move by ±1 because the client has to bump another user's counter when you
+  follow them. Moving that to a Cloud Function is the recommended hardening step.
+
+## Project layout
+
+```
+index.html          app shell + boot screen
+styles.css          design system and all component styles
+js/
+  app.js            shell, router, session state, right rail
+  auth.js           login / signup / reset / Google / handle onboarding
+  data.js           Firestore data layer (all reads and writes)
+  ui.js             rendering helpers (avatars, time-ago, modals, toasts)
+  firebase.js       Firebase bootstrap
+  cloudinary.js     unsigned browser uploads
+  views/
+    components.js   post card, composer, user rows, reply box
+    home.js         feed
+    explore.js      search, trending, people
+    notifications.js
+    messages.js     inbox + conversation
+    profile.js      profile pages + edit profile
+    thread.js       single post and replies
+    settings.js     theme, session, account deletion
+firestore.rules
+firestore.indexes.json
+firebase.json
+sw.js               offline app shell
+manifest.json
+```

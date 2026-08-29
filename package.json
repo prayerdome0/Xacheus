@@ -1,18 +1,15 @@
 {
-  "name": "xacheus-ai-commerce-builder",
+  "name": "xacheus-social",
   "version": "1.0.0",
-  "description": "AI website and e-commerce builder landing page for world businesses.",
   "private": true,
+  "description": "Xacheus Social — a real-time social app built on Firebase Auth and Firestore.",
+  "type": "module",
   "scripts": {
     "dev": "python3 -m http.server 5173 --bind 0.0.0.0",
-    "start": "python3 -m http.server 5173 --bind 0.0.0.0"
+    "start": "python3 -m http.server 5173 --bind 0.0.0.0",
+    "deploy": "firebase deploy --only firestore:rules,firestore:indexes,hosting"
   },
-  "keywords": [
-    "ai",
-    "website-builder",
-    "ecommerce",
-    "global-business"
-  ],
+  "keywords": ["social", "firebase", "firestore", "realtime", "pwa"],
   "author": "Xacheus",
   "license": "UNLICENSED"
 }
