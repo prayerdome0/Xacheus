@@ -1,6 +1,14 @@
 /** Xacheus — Discover (trending videos, sounds, users) Phase 1 */
 
-import { getTrending, searchUsers, searchVideos, watchTrendingVideos, watchTrendingSounds } from "../data.js";
+import {
+  getTrending,
+  searchUsers,
+  searchVideos,
+  searchSounds,
+  watchTrendingVideos,
+  watchTrendingSounds,
+  formatSoundDuration,
+} from "../data.js";
 import { esc, formatCount, avatar, emptyState } from "../ui.js";
 import { videoCardHtml, bindVideoActions, hydrateVideoStates, userRowHtml, postThumb } from "./components.js";
 
@@ -74,22 +82,21 @@ export function discoverView(ctx, { q = "", tab = "videos" } = {}) {
       });
     } else if (tab === "sounds") {
       content.innerHTML = `<div class="loader-row"><span class="spinner"></span> Loading sounds…</div>`;
+      if (query) {
+        const results = await searchSounds(query, { limitCount: 40 });
+        content.innerHTML =
+          results.map((s) => soundRow(s)).join("") ||
+          emptyState("🔍", "No sounds match", "Try another search or browse the full library.", '<a class="btn btn-primary btn-sm" href="#/sounds">Open sounds</a>');
+        wireSoundRows(content);
+        return;
+      }
       unsubSounds = watchTrendingSounds((sounds) => {
         if (!sounds.length) {
-          content.innerHTML = emptyState("🎵", "No sounds yet", "Upload a video with original sound.", "");
+          content.innerHTML = emptyState("🎵", "No sounds yet", "Upload a free beat or original song.", '<a class="btn btn-primary btn-sm" href="#/sounds">Browse sounds</a>');
           return;
         }
-        let filtered = sounds;
-        if (query) {
-          const qLower = query.toLowerCase();
-          filtered = sounds.filter((s) => s.title.toLowerCase().includes(qLower) || (s.artist || "").toLowerCase().includes(qLower) || (s.genre || "").toLowerCase().includes(qLower));
-        }
-        content.innerHTML = filtered.map((s) => soundRow(s)).join("") || emptyState("🔍", "No sounds match", "Try another search.", "");
-        content.querySelectorAll("[data-act='use-sound']").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            ctx.navigate(`#/discover?q=${encodeURIComponent(btn.dataset.soundTitle || "")}&tab=videos`);
-          });
-        });
+        content.innerHTML = sounds.map((s) => soundRow(s)).join("");
+        wireSoundRows(content);
       });
     } else if (tab === "users") {
       if (!query) {
@@ -146,18 +153,31 @@ export function discoverView(ctx, { q = "", tab = "videos" } = {}) {
 
   function soundRow(sound) {
     return `
-      <div class="sound-row">
-        <div class="sound-row-main">
+      <div class="sound-row" data-sound-id="${esc(sound.id)}">
+        <a class="sound-row-main" href="#/sound/${esc(sound.id)}">
           <span class="sound-cover">🎵</span>
           <span class="sound-meta">
             <strong>${esc(sound.title)}</strong>
-            <em>${esc(sound.artist || "")} · ${esc(sound.genre || "")} · used ${sound.useCount || 0}</em>
+            <em>${esc(sound.artist || "")} · ${esc(sound.genre || "")}${sound.duration ? ` · ${formatSoundDuration(sound.duration)}` : ""} · used ${formatCount(sound.useCount || 0)}</em>
           </span>
-        </div>
+        </a>
         <audio src="${esc(sound.audioUrl)}" controls preload="none"></audio>
-        <button class="btn btn-outline btn-sm" type="button" data-act="use-sound" data-sound-title="${esc(sound.title)}">View videos</button>
+        <div class="sound-actions">
+          <a class="btn btn-outline btn-sm" href="#/sound/${esc(sound.id)}">Open</a>
+          <a class="btn btn-primary btn-sm" href="#/create?sound=${esc(sound.id)}">Use</a>
+        </div>
       </div>
     `;
+  }
+
+  function wireSoundRows(content) {
+    content.querySelectorAll("audio").forEach((audio) => {
+      audio.addEventListener("play", () => {
+        content.querySelectorAll("audio").forEach((a) => {
+          if (a !== audio) a.pause();
+        });
+      });
+    });
   }
 
   return {

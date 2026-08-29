@@ -106,7 +106,7 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
         ${captionHtml ? `<p class="video-caption">${captionHtml}</p>` : ""}
         ${isPhoto
           ? `<span class="video-sound is-static"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg><span class="marquee"><span>Photo post${video.images?.length > 1 ? ` · ${video.images.length} photos` : ""}</span></span></span>`
-          : `<a class="video-sound" href="#/sounds?q=${esc(video.soundId || "")}" data-act="sound">
+          : `<a class="video-sound" href="${video.soundId ? `#/sound/${esc(video.soundId)}` : "#/sounds"}" data-act="sound">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
           <span class="marquee"><span>${soundTitle} — @${esc(video.username)}</span></span>
         </a>`}
@@ -276,7 +276,7 @@ export function bindVideoActions(root, ctx) {
     }
 
     if (act === "sound") {
-      ctx.navigate(`#/sounds?q=${encodeURIComponent(video.soundId || "")}`);
+      ctx.navigate(video.soundId ? `#/sound/${video.soundId}` : "#/sounds");
       return;
     }
   });

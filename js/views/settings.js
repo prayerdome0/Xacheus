@@ -102,7 +102,7 @@ export function settingsView(ctx) {
     </section>
 
     <p class="settings-foot">
-      Xacheus · Phase 1: Video Platform · Built in Zambia 🌍 · <a class="link" href="#/home">Back to feed</a>
+      Xacheus · Built in Zambia 🌍 · <a class="link" href="#/home">Back to feed</a>
     </p>`;
 
   function formatRoleDesc(role) {

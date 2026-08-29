@@ -1,10 +1,18 @@
 /** Xacheus — Create (video upload/record + photo posts) */
 
 import { uploadVideo, uploadAudio, uploadImage } from "../cloudinary.js";
-import { createVideo, createSound, getSounds, CURATED_FREE_SOUNDS } from "../data.js";
+import {
+  createVideo,
+  getSound,
+  getSounds,
+  searchSounds,
+  CURATED_FREE_SOUNDS,
+  getSoundGenres,
+  formatSoundDuration,
+} from "../data.js";
 import { toast, esc, avatar } from "../ui.js";
 
-export function createView(ctx) {
+export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
   let selectedFile = null;
   let selectedSound = null;
   let recordedBlob = null;
@@ -133,12 +141,17 @@ export function createView(ctx) {
             <li>🎵 Use free sounds from library</li>
             <li>#️⃣ Add 2-3 hashtags, not 20</li>
             <li>⏱️ Keep it 15-60s for best reach</li>
+            <li>📡 Or go live for real-time chat & gifts</li>
           </ul>
         </div>
         <div class="panel">
-          <h2 class="panel-title">Cloudinary</h2>
-          <p class="panel-empty">Videos upload directly from browser using unsigned preset <code>xacheus</code> (cloud <code>dhad95cch</code>). No secrets in frontend.</p>
-          <p class="panel-empty">We use <code>auto</code> resource type so video, audio, image all work.</p>
+          <h2 class="panel-title">More ways to post</h2>
+          <ul class="tip-list">
+            <li>🎬 Vertical short videos</li>
+            <li>🖼️ Photo sets (up to 6)</li>
+            <li>📡 Live streams with gifts & stickers</li>
+          </ul>
+          <a class="btn btn-outline btn-sm btn-block" href="#/live/go" style="margin-top:10px">Go live instead</a>
         </div>
       </aside>
     </div>
@@ -288,21 +301,29 @@ export function createView(ctx) {
     updatePostButton();
   }
 
-  function renderSoundsMini() {
+  async function renderSoundsMini() {
     const host = document.querySelector("#sounds-mini");
     if (!host) return;
-    // show 3 curated
-    host.innerHTML = CURATED_FREE_SOUNDS.slice(0, 3).map((s) => `
+    let picks = CURATED_FREE_SOUNDS.slice(0, 6);
+    try {
+      const trending = await getSounds({ limitCount: 8, includeCurated: true });
+      if (trending.length) picks = trending.slice(0, 6);
+    } catch {}
+    host.innerHTML = picks
+      .map(
+        (s) => `
       <button class="sound-chip" type="button" data-sound-id="${esc(s.id)}">
         <span class="chip-icon">🎵</span>
         <span>${esc(s.title)}</span>
-        <em>${esc(s.genre)}</em>
-      </button>
-    `).join("");
+        <em>${esc(s.genre || "")}${s.duration ? ` · ${formatSoundDuration(s.duration)}` : ""}</em>
+      </button>`
+      )
+      .join("");
 
     host.querySelectorAll("[data-sound-id]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const sound = CURATED_FREE_SOUNDS.find((x) => x.id === btn.dataset.soundId);
+      btn.addEventListener("click", async () => {
+        const sound =
+          picks.find((x) => x.id === btn.dataset.soundId) || (await getSound(btn.dataset.soundId));
         if (sound) selectSound(sound);
       });
     });
@@ -316,12 +337,12 @@ export function createView(ctx) {
       <span class="sound-icon">🎵</span>
       <span class="sound-info">
         <strong>${esc(sound.title)}</strong>
-        <em>${esc(sound.artist || "Free Music")} · ${esc(sound.genre || "")}</em>
+        <em>${esc(sound.artist || "Free Music")} · ${esc(sound.genre || "")}${sound.duration ? ` · ${formatSoundDuration(sound.duration)}` : ""}</em>
       </span>
-      <audio src="${esc(sound.audioUrl)}" controls preload="none" style="height:28px;width:120px"></audio>
+      <audio src="${esc(sound.audioUrl)}" controls preload="none" style="height:28px;width:140px"></audio>
     `;
     clearBtn.hidden = false;
-    toast(`Selected sound: ${sound.title}`, "success", 2000);
+    toast(`Selected: ${sound.title}`, "success", 2000);
   }
 
   function clearSound() {
@@ -341,12 +362,26 @@ export function createView(ctx) {
             <button class="icon-btn" type="button" data-act="close-sounds">✕</button>
           </header>
           <div class="modal-body">
+            <form class="discover-search" id="picker-search">
+              <input type="search" id="picker-q" placeholder="Search free songs, artists, genres…" autocomplete="off" />
+              <button class="btn btn-primary btn-sm" type="submit">Search</button>
+            </form>
+            <div class="genre-chips picker-genres">
+              ${getSoundGenres()
+                .slice(0, 10)
+                .map(
+                  (g, i) =>
+                    `<button class="genre-chip ${i === 0 ? "is-active" : ""}" type="button" data-pg="${esc(g)}">${g === "all" ? "All" : esc(g)}</button>`
+                )
+                .join("")}
+            </div>
             <div class="sounds-tabs">
-              <button class="tab is-active" data-tab="free">Free music (royalty-free)</button>
-              <button class="tab" data-tab="trending">Trending sounds</button>
-              <button class="tab" data-tab="original">Original sounds</button>
+              <button class="tab is-active" data-tab="free">Free music</button>
+              <button class="tab" data-tab="trending">Trending</button>
+              <button class="tab" data-tab="original">Originals</button>
             </div>
             <div class="sounds-list" id="sounds-list"><div class="loader-row"><span class="spinner"></span> Loading…</div></div>
+            <p class="field-hint" style="margin-top:10px"><a class="link" href="#/sounds">Browse full library →</a></p>
           </div>
         </div>
       </div>
@@ -354,58 +389,36 @@ export function createView(ctx) {
 
     const list = host.querySelector("#sounds-list");
     let currentTab = "free";
+    let currentGenre = "all";
+    let cache = [];
 
-    async function loadTab(tab) {
-      currentTab = tab;
-      host.querySelectorAll(".sounds-tabs .tab").forEach((t) => t.classList.toggle("is-active", t.dataset.tab === tab));
-      list.innerHTML = `<div class="loader-row"><span class="spinner"></span> Loading…</div>`;
-
-      let sounds = [];
-      if (tab === "free") {
-        sounds = CURATED_FREE_SOUNDS;
-        // also try fetch from DB
-        try {
-          const dbSounds = await getSounds({ onlyFree: true, limitCount: 20 });
-          // merge
-          const ids = new Set(sounds.map((s) => s.id));
-          dbSounds.forEach((s) => { if (!ids.has(s.id)) sounds.push(s); });
-        } catch {}
-      } else {
-        try {
-          sounds = await getSounds({ limitCount: 30 });
-        } catch {
-          sounds = CURATED_FREE_SOUNDS;
-        }
-        if (tab === "trending") {
-          sounds = [...sounds].sort((a, b) => (b.useCount || 0) - (a.useCount || 0));
-        } else if (tab === "original") {
-          sounds = sounds.filter((s) => s.isOriginal);
-        }
-      }
-
+    function paint(sounds) {
+      cache = sounds;
       if (!sounds.length) {
-        list.innerHTML = `<p class="panel-empty">No sounds yet. Be first to upload original sound via video!</p>`;
+        list.innerHTML = `<p class="panel-empty">No sounds match. Try another search or <a class="link" href="#/sounds">upload your own</a>.</p>`;
         return;
       }
-
-      list.innerHTML = sounds.map((s) => `
+      list.innerHTML = sounds
+        .map(
+          (s) => `
         <div class="sound-row" data-sound-id="${esc(s.id)}">
           <div class="sound-row-main">
             <span class="sound-cover">🎵</span>
             <span class="sound-meta">
               <strong>${esc(s.title)}</strong>
-              <em>${esc(s.artist || "")} · ${esc(s.genre || "")} · used ${s.useCount || 0} times</em>
+              <em>${esc(s.artist || "")} · ${esc(s.genre || "")}${s.duration ? ` · ${formatSoundDuration(s.duration)}` : ""} · used ${s.useCount || 0}</em>
             </span>
           </div>
           <audio src="${esc(s.audioUrl)}" controls preload="none"></audio>
           <button class="btn btn-primary btn-sm" type="button" data-act="use-sound">Use</button>
-        </div>
-      `).join("");
+        </div>`
+        )
+        .join("");
 
       list.querySelectorAll("[data-act='use-sound']").forEach((btn) => {
         btn.addEventListener("click", () => {
           const row = btn.closest(".sound-row");
-          const sound = sounds.find((x) => x.id === row.dataset.soundId);
+          const sound = cache.find((x) => x.id === row.dataset.soundId);
           if (sound) {
             selectSound(sound);
             closeSoundsModal();
@@ -414,8 +427,44 @@ export function createView(ctx) {
       });
     }
 
+    async function loadTab(tab, query = "") {
+      currentTab = tab;
+      host.querySelectorAll(".sounds-tabs .tab").forEach((t) => t.classList.toggle("is-active", t.dataset.tab === tab));
+      list.innerHTML = `<div class="loader-row"><span class="spinner"></span> Loading…</div>`;
+
+      let sounds = [];
+      if (query) {
+        sounds = await searchSounds(query, {
+          limitCount: 40,
+          genre: currentGenre === "all" || currentGenre === "original" ? "" : currentGenre,
+        });
+      } else if (tab === "free") {
+        sounds = await getSounds({ onlyFree: true, limitCount: 40, includeCurated: true });
+      } else if (tab === "original") {
+        sounds = await getSounds({ onlyOriginal: true, limitCount: 40, includeCurated: false });
+      } else {
+        sounds = await getSounds({ limitCount: 40, includeCurated: true });
+      }
+      if (currentGenre && currentGenre !== "all") {
+        if (currentGenre === "original") sounds = sounds.filter((s) => s.isOriginal);
+        else sounds = sounds.filter((s) => String(s.genre || "").toLowerCase() === currentGenre);
+      }
+      paint(sounds);
+    }
+
     host.querySelectorAll(".sounds-tabs .tab").forEach((tab) => {
-      tab.addEventListener("click", () => loadTab(tab.dataset.tab));
+      tab.addEventListener("click", () => loadTab(tab.dataset.tab, host.querySelector("#picker-q").value.trim()));
+    });
+    host.querySelectorAll("[data-pg]").forEach((chip) => {
+      chip.addEventListener("click", () => {
+        currentGenre = chip.dataset.pg;
+        host.querySelectorAll("[data-pg]").forEach((c) => c.classList.toggle("is-active", c === chip));
+        loadTab(currentTab, host.querySelector("#picker-q").value.trim());
+      });
+    });
+    host.querySelector("#picker-search").addEventListener("submit", (e) => {
+      e.preventDefault();
+      loadTab(currentTab, host.querySelector("#picker-q").value.trim());
     });
 
     host.querySelector("[data-act='close-sounds']").addEventListener("click", closeSoundsModal);
@@ -436,6 +485,13 @@ export function createView(ctx) {
     title: "Create",
     mount(root) {
       renderSoundsMini();
+
+      // Pre-select sound from #/create?sound=id (from library "Use" buttons)
+      if (initialSoundId) {
+        getSound(initialSoundId).then((s) => {
+          if (s) selectSound(s);
+        });
+      }
 
       const videoInput = root.querySelector("#video-input");
       const dropZone = root.querySelector("#drop-zone");
@@ -567,7 +623,7 @@ export function createView(ctx) {
                 text.textContent = `${overall}%`;
               },
             });
-            if (!url || url.startsWith("blob:")) throw new Error("Photo upload failed — check the Cloudinary preset.");
+            if (!url || url.startsWith("blob:")) throw new Error("Photo upload failed. Please try again.");
             urls.push(url);
           }
 
@@ -631,7 +687,7 @@ export function createView(ctx) {
           ctx.navigate("#/home");
         } catch (err) {
           console.warn("[xacheus] create video", err);
-          toast(err?.message || "Failed to upload video. Check Cloudinary preset.", "error", 6000);
+          toast(err?.message || "Failed to upload video. Please try again.", "error", 6000);
           postBtn.disabled = false;
           postBtn.textContent = "Post video";
           progressBar.hidden = true;

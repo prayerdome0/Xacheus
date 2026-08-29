@@ -22,11 +22,21 @@ import { notificationsView } from "./views/notifications.js";
 import { profileView } from "./views/profile.js";
 import { settingsView } from "./views/settings.js";
 import { adminView } from "./views/admin.js";
-import { soundsView } from "./views/sounds.js";
+import { soundsView, soundDetailView } from "./views/sounds.js";
 import { messagesView, chatView } from "./views/messages.js";
 import { liveListView, liveBroadcastView, liveWatchView } from "./views/live.js";
 
-const NAV = [
+// Mobile tab bar keeps Create dead-centre (5 items). Desktop sidebar
+// shows the fuller set including Live + Messages + Inbox.
+const TAB_NAV = [
+  { href: "#/home", label: "Home", icon: "home", match: ["home", ""] },
+  { href: "#/discover", label: "Discover", icon: "search", match: ["discover", "tag", "search"] },
+  { href: "#/create", label: "Create", icon: "plus", match: ["create"], special: true },
+  { href: "#/live", label: "Live", icon: "live", match: ["live"] },
+  { href: "#/profile", label: "Profile", icon: "user", match: ["profile", "u"] },
+];
+
+const SIDE_NAV = [
   { href: "#/home", label: "Home", icon: "home", match: ["home", ""] },
   { href: "#/discover", label: "Discover", icon: "search", match: ["discover", "tag", "search"] },
   { href: "#/create", label: "Create", icon: "plus", match: ["create"], special: true },
@@ -132,7 +142,10 @@ function buildShell() {
   const isAdmin = isAdminProfile(state.profile);
   const extraNav = isAdmin ? [{ href: "#/admin", label: "Admin", icon: "admin", match: ["admin"] }] : [];
 
-  const allNav = [...NAV, ...extraNav];
+  const sideNav = [...SIDE_NAV, ...extraNav];
+  // Keep Create dead-centre on mobile: Home · Discover · Create · Live · Profile
+  // Messages + Inbox stay reachable from the topbar icons + account menu.
+  const tabNav = [...TAB_NAV];
 
   shell.innerHTML = `
     <header class="topbar">
@@ -148,12 +161,20 @@ function buildShell() {
         </div>
 
         <div class="topbar-right">
+          <a class="icon-btn" href="#/live" aria-label="Live" title="Live">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4"/></svg>
+          </a>
+          <a class="icon-btn" href="#/messages" aria-label="Messages" data-nav-icon="messages">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.4-.25-3.4-.7L4 21l1.7-4.6A8.5 8.5 0 1 1 21 11.5z"/></svg>
+            <span class="nav-badge topbar-badge" data-badge-for="messages" hidden></span>
+          </a>
+          <a class="icon-btn" href="#/notifications" aria-label="Inbox" data-nav-icon="notifications">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3a6 6 0 0 1 6 6v4l2 3H4l2-3V9a6 6 0 0 1 6-6zm-3 15a3 3 0 0 0 6 0z"/></svg>
+            <span class="nav-badge topbar-badge" data-badge-for="notifications" hidden></span>
+          </a>
           <button class="icon-btn theme-toggle" type="button" data-act="theme" aria-label="Toggle theme">
             <span data-theme-icon>☀️</span>
           </button>
-          <a class="icon-btn" href="#/discover" aria-label="Discover">
-            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 4a6 6 0 1 1 0 12 6 6 0 0 1 0-12zm11 17-5.2-5.2"/></svg>
-          </a>
           <button class="topbar-me" type="button" data-act="me" aria-label="Account menu"></button>
         </div>
       </div>
@@ -164,10 +185,9 @@ function buildShell() {
         <a class="brand sidebar-brand" href="#/home" aria-label="Xacheus home">
           <img class="brand-logo" src="assets/icon.svg" alt="Xacheus" />
         </a>
-        ${allNav.map((item) => navItem(item)).join("")}
+        ${sideNav.map((item) => navItem(item)).join("")}
         <div class="sidebar-me" data-role="sidebar-me"></div>
         <div class="sidebar-foot">
-          <p>Phase 1: Video Platform</p>
           <p>Built in Zambia 🌍</p>
         </div>
       </nav>
@@ -184,16 +204,17 @@ function buildShell() {
           <div class="loader-row"><span class="spinner"></span></div>
         </section>
         <section class="panel">
-          <h2 class="panel-title">How Xacheus works</h2>
+          <h2 class="panel-title">On Xacheus</h2>
           <ul class="tip-list">
-            <li>🎬 Real vertical videos via Cloudinary</li>
-            <li>🔒 Strict Firestore rules, no secrets in frontend</li>
-            <li>👤 Roles: user, creator, business, church, admin</li>
-            <li>🎵 Free sounds only — no copyrighted YouTube tracks</li>
+            <li>🎬 Vertical videos & photo posts</li>
+            <li>📡 Go live — gifts, stickers & chat</li>
+            <li>🎵 Free royalty-free sounds</li>
+            <li>👤 Roles for creators, businesses & churches</li>
           </ul>
         </section>
         <p class="rail-foot">
           <a class="link" href="#/discover">Discover</a> ·
+          <a class="link" href="#/live">Live</a> ·
           <a class="link" href="#/sounds">Sounds</a> ·
           <a class="link" href="#/settings">Settings</a>
         </p>
@@ -201,7 +222,7 @@ function buildShell() {
     </div>
 
     <nav class="tabbar tabbar-video" aria-label="Primary mobile">
-      ${allNav.map((item) => navItem(item, { iconOnly: true })).join("")}
+      ${tabNav.map((item) => navItem(item, { iconOnly: true })).join("")}
     </nav>
 
     <div class="account-menu" id="account-menu" hidden></div>`;
@@ -340,9 +361,12 @@ function resolveRoute() {
     case "discover":
       return { view: discoverView(ctx, { tab: params.tab, q: params.q }), key: "discover" };
     case "sounds":
-      return { view: soundsView(ctx, { q: params.q }), key: "sounds" };
+      return { view: soundsView(ctx, { q: params.q, tab: params.tab }), key: "sounds" };
+    case "sound":
+      if (second) return { view: soundDetailView(ctx, { soundId: second }), key: `sound:${second}` };
+      return { view: soundsView(ctx, { q: params.q, tab: params.tab }), key: "sounds" };
     case "create":
-      return { view: createView(ctx), key: "create" };
+      return { view: createView(ctx, { soundId: params.sound || "" }), key: "create" };
     case "tag":
       return { view: discoverView(ctx, { q: `#${second}` }), key: `tag:${second}` };
     case "notifications":
@@ -377,6 +401,7 @@ function resolveRoute() {
 }
 
 const AUTH_ROUTES = new Set(["create", "notifications", "inbox", "messages", "dm", "settings", "admin"]);
+// live/go is handled inside the broadcast view itself (camera + host identity)
 
 function render() {
   const viewHost = document.querySelector("#view");
@@ -432,7 +457,7 @@ function render() {
 }
 
 function markActiveNav(segment) {
-  const seg = segment || "home";
+  const seg = segment === "sound" ? "discover" : segment || "home";
   document.querySelectorAll("[data-nav]").forEach((node) => {
     const matches = node.dataset.nav?.split(",") || [node.dataset.nav];
     const isActive = node.dataset.nav === seg || (seg === "" && node.dataset.nav === "home") || matches.includes(seg);

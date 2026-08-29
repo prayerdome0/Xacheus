@@ -95,6 +95,30 @@
       ]
     },
     {
+      "collectionGroup": "sounds",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "isOriginal", "order": "ASCENDING" },
+        { "fieldPath": "useCount", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sounds",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "artistUid", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "sounds",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "genre", "order": "ASCENDING" },
+        { "fieldPath": "useCount", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "users",
       "queryScope": "COLLECTION",
       "fields": [
