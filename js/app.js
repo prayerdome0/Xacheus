@@ -22,6 +22,7 @@ import { notificationsView } from "./views/notifications.js";
 import { profileView } from "./views/profile.js";
 import { settingsView } from "./views/settings.js";
 import { analyticsView } from "./views/analytics.js";
+import { directoryView } from "./views/community.js";
 import { adminView } from "./views/admin.js";
 import { soundsView, soundDetailView } from "./views/sounds.js";
 import { messagesView, chatView } from "./views/messages.js";
@@ -217,6 +218,8 @@ function buildShell() {
           <a class="link" href="#/discover">Discover</a> ·
           <a class="link" href="#/live">Live</a> ·
           <a class="link" href="#/sounds">Sounds</a> ·
+          <a class="link" href="#/churches">Churches</a> ·
+          <a class="link" href="#/opportunities">Opportunities</a> ·
           <a class="link" href="#/settings">Settings</a>
         </p>
       </aside>
@@ -394,6 +397,10 @@ function resolveRoute() {
       return { view: settingsView(ctx), key: "settings" };
     case "analytics":
       return { view: analyticsView(ctx), key: "analytics" };
+    case "churches":
+      return { view: directoryView(ctx, "churches"), key: "churches" };
+    case "opportunities":
+      return { view: directoryView(ctx, "opportunities"), key: "opportunities" };
     case "admin":
       if (!isAdminProfile(state.profile)) {
         return { view: homeView(ctx), key: "home" };
