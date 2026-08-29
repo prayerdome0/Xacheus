@@ -9,6 +9,7 @@ import {
   getSavedVideoIds,
   isFollowing,
   toggleFollow,
+  reportVideo,
 } from "../data.js";
 import { avatar, esc, formatCount, gradientFor, timeAgo, toast, openModal, confirmDialog, copyText, richText } from "../ui.js";
 import { uploadAudio } from "../cloudinary.js";
@@ -90,6 +91,11 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
         <button class="v-action" type="button" data-act="share">
           <span class="v-icon"><svg viewBox="0 0 24 24"><path d="M12 3v10M12 3l-4 4M12 3l4 4M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/></svg></span>
           <em>Share</em>
+        </button>
+
+        <button class="v-action" type="button" data-act="report" aria-label="Report post">
+          <span class="v-icon"><svg viewBox="0 0 24 24"><path d="M5 21V4m0 0c4-3 7 3 14 0v9c-7 3-10-3-14 0"/></svg></span>
+          <em>Report</em>
         </button>
 
         ${isPhoto ? "" : `
@@ -224,6 +230,24 @@ export function bindVideoActions(root, ctx) {
 
     if (act === "comment") {
       openCommentsModal(ctx, video);
+      return;
+    }
+
+    if (act === "report") {
+      if (!ctx.state.profile) return ctx.requireAuth();
+      const ok = await confirmDialog({
+        title: "Report this post?",
+        body: "Report it for inappropriate content, spam, harassment, copyright or another concern. Our moderation team can review it.",
+        confirmLabel: "Report post",
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        await reportVideo(ctx.state.profile.uid, video, "other");
+        toast("Report submitted. Thank you for helping keep Xacheus safe.", "success", 4000);
+      } catch (error) {
+        toast(error?.message || "Could not submit report", "error");
+      }
       return;
     }
 

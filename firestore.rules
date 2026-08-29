@@ -199,6 +199,22 @@ service cloud.firestore {
     }
 
     /* ---------------------------------------------------------------- */
+    /* moderation reports                                                */
+    /* ---------------------------------------------------------------- */
+    match /reports/{reportId} {
+      allow read: if isAdmin() || (signedIn() && resource.data.reporterUid == request.auth.uid);
+      allow create: if signedIn()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.targetType in ['video','comment','user','live']
+        && request.resource.data.targetId is string
+        && request.resource.data.reason in ['inappropriate','spam','harassment','copyright','other']
+        && request.resource.data.status == 'open';
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','adminNote','updatedAt']);
+      allow delete: if isAdmin() || (signedIn() && resource.data.reporterUid == request.auth.uid);
+    }
+
+    /* ---------------------------------------------------------------- */
     /* hashtags + legacy posts (read)                                    */
     /* ---------------------------------------------------------------- */
     match /hashtags/{tag} {

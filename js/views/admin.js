@@ -16,6 +16,7 @@ export function adminView(ctx) {
       <button class="tab is-active" data-tab="users">Users</button>
       <button class="tab" data-tab="videos">Videos</button>
       <button class="tab" data-tab="sounds">Sounds</button>
+      <button class="tab" data-tab="reports">Reports</button>
     </div>
 
     <div class="admin-content" id="admin-content">
@@ -134,6 +135,29 @@ export function adminView(ctx) {
     }
   }
 
+  async function loadReports() {
+    const content = document.querySelector("#admin-content");
+    content.innerHTML = `<div class="loader-row"><span class="spinner"></span> Loading reports…</div>`;
+    try {
+      const snap = await getDocs(query(collection(db, "reports"), orderBy("createdAt", "desc"), limit(50)));
+      const reports = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      content.innerHTML = `<div class="panel"><h2 class="panel-title">${reports.length} recent reports</h2><div class="admin-list">
+        ${reports.length ? reports.map((r) => `<div class="admin-row" data-report-id="${esc(r.id)}">
+          <div><strong>${esc(r.targetType)} · ${esc(r.reason)}</strong><br/><small>Target: ${esc(r.targetId)} · Status: ${esc(r.status || "open")}</small></div>
+          <button class="btn btn-outline btn-sm" data-act="resolve-report" data-report-id="${esc(r.id)}">Resolve</button>
+        </div>`).join("") : `<p class="panel-empty">No reports yet.</p>`}
+      </div></div>`;
+      content.querySelectorAll("[data-act='resolve-report']").forEach((btn) => btn.addEventListener("click", async () => {
+        try {
+          await updateDoc(doc(db, "reports", btn.dataset.reportId), { status: "resolved" });
+          btn.textContent = "Resolved";
+          btn.disabled = true;
+          toast("Report resolved", "success");
+        } catch (e) { toast(e?.message || "Could not resolve report", "error"); }
+      }));
+    } catch (e) { content.innerHTML = `<p class="panel-empty">Failed to load reports: ${esc(e?.message || "")}</p>`; }
+  }
+
   async function loadSounds() {
     const content = document.querySelector("#admin-content");
     content.innerHTML = `<div class="loader-row"><span class="spinner"></span> Loading sounds…</div>`;
@@ -188,6 +212,7 @@ export function adminView(ctx) {
           if (currentTab === "users") loadUsers();
           else if (currentTab === "videos") loadVideos();
           else if (currentTab === "sounds") loadSounds();
+          else if (currentTab === "reports") loadReports();
         });
       });
       loadUsers();

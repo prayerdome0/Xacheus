@@ -581,6 +581,22 @@ export function watchVideoComments(videoId, onData) {
   );
 }
 
+export async function reportVideo(uid, video, reason = "inappropriate") {
+  if (!uid || !video?.id) throw new Error("Sign in to report content.");
+  const allowed = ["inappropriate", "spam", "harassment", "copyright", "other"];
+  const safeReason = allowed.includes(reason) ? reason : "other";
+  await addDoc(collection(db, "reports"), {
+    reporterUid: uid,
+    targetType: "video",
+    targetId: video.id,
+    targetUid: video.uid || "",
+    reason: safeReason,
+    status: "open",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
 export async function addVideoComment(uid, actor, video, text) {
   const body = String(text || "").trim();
   if (!body) throw new Error("Write a comment first.");
