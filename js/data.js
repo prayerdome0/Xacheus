@@ -13,7 +13,12 @@
  *   follows/{uid}/followers/{followerUid}
  *   notifications/{nid}
  *   hashtags/{tag}                           trending counters
- *   posts/{postId}                           legacy (kept for compat, read-only)
+ *   conversations/{cid}                      1:1 direct messages (participants[2])
+ *   conversations/{cid}/messages/{mid}      chat messages
+ *   lives/{liveId}                           live broadcasts (status live/ended)
+ *   lives/{liveId}/segments/{sid}           ordered video segments (seq)
+ *   lives/{liveId}/chat/{mid}               live chat messages
+ *   posts/{postId}                           removed (legacy reads dropped)
  */
 
 import {
@@ -315,6 +320,8 @@ export function isAdminProfile(profile) {
 
 export async function createVideo(author, {
   videoUrl,
+  images = [],
+  mediaType = "video",
   thumbnailUrl = "",
   caption = "",
   soundId = null,
@@ -326,7 +333,14 @@ export async function createVideo(author, {
   cloudinaryPublicId = "",
 }) {
   const cap = String(caption || "").trim().slice(0, 1000);
-  if (!videoUrl) throw new Error("Video URL missing");
+
+  const isPhoto = mediaType === "photo";
+  const photos = isPhoto ? (Array.isArray(images) ? images.filter((u) => u && !String(u).startsWith("blob:")).slice(0, 6) : []) : [];
+  if (isPhoto) {
+    if (!photos.length) throw new Error("Add at least one photo.");
+  } else if (!videoUrl) {
+    throw new Error("Video URL missing");
+  }
 
   const hashtags = extractHashtags(cap);
   const mentions = extractMentions(cap);
@@ -336,8 +350,10 @@ export async function createVideo(author, {
     username: author.username,
     displayName: author.displayName,
     photoURL: author.photoURL || "",
-    videoUrl,
-    thumbnailUrl: thumbnailUrl || "",
+    mediaType: isPhoto ? "photo" : "video",
+    images: photos,
+    videoUrl: isPhoto ? "" : videoUrl,
+    thumbnailUrl: isPhoto ? photos[0] : thumbnailUrl || "",
     caption: cap,
     hashtags,
     mentions,
@@ -885,8 +901,298 @@ export async function purgeUserData(uid) {
   });
 }
 
-/* Legacy posts kept for migration - read only helpers */
-export async function getPost(postId) {
-  const snap = await getDoc(doc(db, "posts", postId));
+/* Legacy posts helpers removed — the post/thread phase is gone. */
+
+/* ------------------------------------------------------------------ */
+/* direct messages                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Deterministic conversation id for a pair of users, so both sides and
+ * every device agree on one doc — no query needed to find "our" chat.
+ */
+export function conversationIdFor(uidA, uidB) {
+  return [String(uidA), String(uidB)].sort().join("__");
+}
+
+/**
+ * Get or create the 1:1 conversation between two profiles.
+ * `me` and `other` are profile objects ({ uid, ... }). Returns the cid.
+ */
+export async function openConversation(me, other) {
+  if (!me?.uid || !other?.uid) throw new Error("Sign in to start a chat.");
+  if (me.uid === other.uid) throw new Error("You can't message yourself.");
+  const cid = conversationIdFor(me.uid, other.uid);
+  const ref = doc(db, "conversations", cid);
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists()) return;
+    tx.set(ref, {
+      participants: [me.uid, other.uid].sort(),
+      lastMessage: "",
+      lastSenderId: "",
+      lastMessageAt: serverTimestamp(),
+      unreadCount: {},
+      createdAt: serverTimestamp(),
+    });
+  });
+  return cid;
+}
+
+export async function getConversationMeta(cid) {
+  const snap = await getDoc(doc(db, "conversations", cid));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+/**
+ * Live list of my conversations, newest message first.
+ *
+ * Tries the composite-indexed query (participants contains + lastMessageAt
+ * desc) and, if that index isn't built/deployed yet, falls back to an
+ * un-ordered query sorted client-side so DMs still work out of the box.
+ */
+export function watchConversations(uid, onData) {
+  let stopped = false;
+  let unsubMain = null;
+  let unsubFallback = null;
+  const baseFilter = where("participants", "array-contains", uid);
+
+  const sortDocs = (docs) =>
+    docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => ts(b.lastMessageAt) - ts(a.lastMessageAt));
+
+  const emit = (list) => {
+    if (!stopped) onData(list);
+  };
+
+  const startFallback = () => {
+    if (stopped || unsubFallback) return;
+    unsubFallback = onSnapshot(
+      query(collection(db, "conversations"), baseFilter, limit(50)),
+      (snap) => emit(sortDocs(snap.docs)),
+      () => emit([])
+    );
+  };
+
+  unsubMain = onSnapshot(
+    query(collection(db, "conversations"), baseFilter, orderBy("lastMessageAt", "desc"), limit(50)),
+    (snap) => emit(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    startFallback
+  );
+
+  return () => {
+    stopped = true;
+    unsubMain?.();
+    unsubFallback?.();
+  };
+}
+
+export function watchMessages(cid, onData) {
+  return onSnapshot(
+    query(collection(db, "conversations", cid, "messages"), orderBy("createdAt", "asc"), limit(300)),
+    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    () => onData([])
+  );
+}
+
+/** Send a message and update the conversation preview + unread counter. */
+export async function sendDirectMessage(cid, sender, otherUid, text) {
+  const body = String(text || "").trim();
+  if (!cid || !sender?.uid || !otherUid) throw new Error("You can't send that message.");
+  if (!body) throw new Error("Write a message first.");
+  if (body.length > 1000) throw new Error("Messages are limited to 1000 characters.");
+
+  await addDoc(collection(db, "conversations", cid, "messages"), {
+    senderId: sender.uid,
+    senderUsername: sender.username || "",
+    senderName: sender.displayName || "",
+    senderPhoto: sender.photoURL || "",
+    text: body,
+    createdAt: serverTimestamp(),
+  });
+  await updateDoc(doc(db, "conversations", cid), {
+    lastMessage: body.slice(0, 120),
+    lastSenderId: sender.uid,
+    lastMessageAt: serverTimestamp(),
+    [`unreadCount.${otherUid}`]: increment(1),
+  });
+}
+
+/** Zero my unread counter once I've seen the thread. */
+export async function markConversationRead(cid, uid) {
+  if (!cid || !uid) return;
+  await updateDoc(doc(db, "conversations", cid), { [`unreadCount.${uid}`]: 0 }).catch(() => {});
+}
+
+/* ------------------------------------------------------------------ */
+/* engagement counters (views / shares)                                */
+/* ------------------------------------------------------------------ */
+
+/** Count one view (rules allow anyone signed in to bump counters only). */
+export async function bumpVideoView(videoId) {
+  if (!videoId) return;
+  await updateDoc(doc(db, "videos", videoId), { viewCount: increment(1) });
+}
+
+/** Count one share (Web Share API success or link copy). */
+export async function bumpVideoShare(videoId) {
+  if (!videoId) return;
+  await updateDoc(doc(db, "videos", videoId), { shareCount: increment(1) });
+}
+
+/* ------------------------------------------------------------------ */
+/* live streaming (browser camera -> Cloudinary segments -> Firestore) */
+/* ------------------------------------------------------------------ */
+
+// Broadcaster records segments of roughly this length; viewer latency is
+// about one segment plus upload time (roughly 5–15 seconds end to end).
+export const LIVE_SEGMENT_MS = 4000;
+// A live doc whose lastPingAt is older than this is considered dead
+// (broadcaster closed the tab without ending the stream).
+export const LIVE_STALE_MS = 90_000;
+
+export async function createLive(author, title = "") {
+  const ref = await addDoc(collection(db, "lives"), {
+    uid: author.uid,
+    username: author.username,
+    displayName: author.displayName,
+    photoURL: author.photoURL || "",
+    title: String(title || "").trim().slice(0, 120),
+    status: "live",
+    viewerCount: 0,
+    latestSeq: 0,
+    segmentCount: 0,
+    thumbnailUrl: "",
+    startedAt: serverTimestamp(),
+    lastPingAt: serverTimestamp(),
+    endedAt: null,
+  });
+  return ref.id;
+}
+
+export async function getLive(liveId) {
+  if (!liveId) return null;
+  const snap = await getDoc(doc(db, "lives", liveId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+export function watchLive(liveId, cb) {
+  if (!liveId) return () => {};
+  return onSnapshot(
+    doc(db, "lives", liveId),
+    (snap) => cb(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+    () => cb(null)
+  );
+}
+
+export async function endLive(liveId, expectedUid) {
+  if (!liveId) return;
+  const snap = await getDoc(doc(db, "lives", liveId)).catch(() => null);
+  if (!snap || !snap.exists() || snap.data().uid !== expectedUid) return;
+  await updateDoc(doc(db, "lives", liveId), { status: "ended", endedAt: serverTimestamp() }).catch(() => {});
+}
+
+/** Broadcaster heartbeat so the list can hide dead streams. */
+export async function pingLive(liveId) {
+  if (!liveId) return;
+  await updateDoc(doc(db, "lives", liveId), { lastPingAt: serverTimestamp() }).catch(() => {});
+}
+
+/** Broadcaster only: set the stream poster/thumbnail. */
+export async function setLiveThumbnail(liveId, url) {
+  if (!liveId || !url) return;
+  await updateDoc(doc(db, "lives", liveId), { thumbnailUrl: url }).catch(() => {});
+}
+
+/** Broadcaster only: publish an uploaded segment and advance the cursor. */
+export async function addLiveSegment(liveId, { seq, url, duration = 0, thumbnailUrl = "" }) {
+  if (!liveId || !seq || !url) throw new Error("Invalid live segment.");
+  await addDoc(collection(db, "lives", liveId, "segments"), {
+    seq,
+    url,
+    duration: Number(duration) || 0,
+    thumbnailUrl: thumbnailUrl || "",
+    createdAt: serverTimestamp(),
+  });
+  await updateDoc(doc(db, "lives", liveId), {
+    latestSeq: seq,
+    segmentCount: increment(1),
+    lastPingAt: serverTimestamp(),
+  });
+}
+
+/** Fetch segments after a sequence number, in order. */
+export async function fetchLiveSegments(liveId, fromSeq = 0, max = 4) {
+  const snap = await getDocs(
+    query(collection(db, "lives", liveId, "segments"), where("seq", ">", fromSeq), orderBy("seq"), limit(max))
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+/**
+ * Live list, newest first. Tries the composite-indexed query and falls
+ * back to an un-ordered query sorted client-side if the index isn't
+ * built yet — same pattern as watchConversations.
+ */
+export function watchActiveLives(onData) {
+  let stopped = false;
+  let unsubMain = null;
+  let unsubFallback = null;
+  const baseFilter = where("status", "==", "live");
+
+  const emit = (list) => {
+    if (!stopped) onData(list);
+  };
+  const sortDocs = (docs) =>
+    docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => ts(b.startedAt) - ts(a.startedAt));
+
+  unsubMain = onSnapshot(
+    query(collection(db, "lives"), baseFilter, orderBy("startedAt", "desc"), limit(20)),
+    (snap) => emit(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    () => {
+      if (stopped || unsubFallback) return;
+      unsubFallback = onSnapshot(
+        query(collection(db, "lives"), baseFilter, limit(20)),
+        (snap) => emit(sortDocs(snap.docs)),
+        () => emit([])
+      );
+    }
+  );
+
+  return () => {
+    stopped = true;
+    unsubMain?.();
+    unsubFallback?.();
+  };
+}
+
+export async function bumpLiveViewers(liveId, delta) {
+  if (!liveId || !delta) return;
+  await updateDoc(doc(db, "lives", liveId), { viewerCount: increment(delta) }).catch(() => {});
+}
+
+export function watchLiveChat(liveId, onData) {
+  return onSnapshot(
+    query(collection(db, "lives", liveId, "chat"), orderBy("createdAt", "asc"), limit(150)),
+    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    () => onData([])
+  );
+}
+
+export async function sendLiveChat(liveId, actor, text) {
+  const body = String(text || "").trim();
+  if (!liveId || !body) return;
+  if (body.length > 300) throw new Error("Chat messages are limited to 300 characters.");
+  await addDoc(collection(db, "lives", liveId, "chat"), {
+    uid: actor.uid,
+    username: actor.username || "",
+    displayName: actor.displayName || "",
+    photoURL: actor.photoURL || "",
+    text: body.slice(0, 300),
+    createdAt: serverTimestamp(),
+  });
 }

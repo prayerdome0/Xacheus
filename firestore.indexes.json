@@ -107,6 +107,14 @@
       "fields": [
         { "fieldPath": "displayNameLower", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "lives",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "startedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

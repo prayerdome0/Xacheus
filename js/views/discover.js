@@ -2,7 +2,7 @@
 
 import { getTrending, searchUsers, searchVideos, watchTrendingVideos, watchTrendingSounds } from "../data.js";
 import { esc, formatCount, avatar, emptyState } from "../ui.js";
-import { videoCardHtml, bindVideoActions, hydrateVideoStates, userRowHtml } from "./components.js";
+import { videoCardHtml, bindVideoActions, hydrateVideoStates, userRowHtml, postThumb } from "./components.js";
 
 export function discoverView(ctx, { q = "", tab = "videos" } = {}) {
   const initialQuery = q || "";
@@ -128,10 +128,12 @@ export function discoverView(ctx, { q = "", tab = "videos" } = {}) {
   }
 
   function videoGridCard(video) {
+    const thumb = postThumb(video);
     return `
       <div class="video-grid-card" data-video-id="${esc(video.id)}">
         <div class="grid-thumb">
-          ${video.thumbnailUrl ? `<img src="${esc(video.thumbnailUrl)}" alt="" loading="lazy" />` : `<video src="${esc(video.videoUrl)}" muted preload="metadata"></video>`}
+          ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy" />` : video.videoUrl ? `<video src="${esc(video.videoUrl)}" muted preload="metadata"></video>` : `<span class="grid-fallback"></span>`}
+          ${video.mediaType === "photo" ? `<span class="grid-type-badge">🖼️</span>` : ""}
           <span class="grid-views">❤️ ${formatCount(video.likeCount)}</span>
         </div>
         <div class="grid-meta">

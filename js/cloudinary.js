@@ -67,14 +67,18 @@ function uploadWithProgress(file, { resourceType = "auto", onProgress } = {}) {
 
 /**
  * Upload an image File -> secure_url
+ * With `strict: true` the failure fallback (local blob URL) is disabled and
+ * the error is rethrown — used when the URL will be persisted (photo posts,
+ * live posters), not just shown once.
  */
-export async function uploadImage(file, { onProgress } = {}) {
+export async function uploadImage(file, { onProgress, strict = false } = {}) {
   if (!file) return null;
   try {
     const res = await uploadWithProgress(file, { resourceType: "image", onProgress });
     return res.secure_url || res.url || null;
   } catch (err) {
     console.warn("[xacheus] image upload failed", err);
+    if (strict) throw err;
     // fallback to local object URL so UI still works, but mark as local
     return URL.createObjectURL(file);
   }

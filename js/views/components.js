@@ -2,6 +2,7 @@
 
 import {
   addVideoComment,
+  bumpVideoShare,
   toggleVideoLike,
   toggleVideoSave,
   getLikedVideoIds,
@@ -9,12 +10,23 @@ import {
   isFollowing,
   toggleFollow,
 } from "../data.js";
-import { avatar, esc, formatCount, timeAgo, toast, openModal, confirmDialog, copyText, richText } from "../ui.js";
+import { avatar, esc, formatCount, gradientFor, timeAgo, toast, openModal, confirmDialog, copyText, richText } from "../ui.js";
 import { uploadAudio } from "../cloudinary.js";
+
+export function liveThumb(live) {
+  if (live?.thumbnailUrl) return `<img src="${esc(live.thumbnailUrl)}" alt="" loading="lazy" />`;
+  const [from, to] = gradientFor(live?.username || live?.id || "live");
+  return `<span class="live-thumb-fallback" style="background-image:linear-gradient(135deg,${from},${to})"></span>`;
+}
+
+export function postThumb(video) {
+  return video.thumbnailUrl || (Array.isArray(video.images) ? video.images[0] : "") || "";
+}
 
 export function videoCardHtml(video, { liked = false, saved = false, isFollowingAuthor = false } = {}) {
   const captionHtml = video.caption ? richText(video.caption) : "";
   const soundTitle = esc(video.soundTitle || (video.soundId ? "Original sound" : "Original audio"));
+  const isPhoto = video.mediaType === "photo";
   const author = {
     uid: video.uid,
     username: video.username,
@@ -22,9 +34,15 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
     photoURL: video.photoURL,
   };
 
-  return `
-  <article class="video-card" data-video-id="${esc(video.id)}" tabindex="0">
-    <div class="video-wrap">
+  const mediaHtml = isPhoto
+    ? `
+      <div class="photo-carousel" aria-label="Photo post">
+        ${(video.images || []).map((src) => `<img src="${esc(src)}" alt="" loading="lazy" draggable="false" />`).join("")}
+      </div>
+      ${(video.images || []).length > 1
+        ? `<div class="photo-dots" aria-hidden="true">${video.images.map((_, i) => `<span class="${i === 0 ? "is-on" : ""}"></span>`).join("")}</div>`
+        : ""}`
+    : `
       <video
         class="video-player"
         src="${esc(video.videoUrl)}"
@@ -41,7 +59,12 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
 
       <button class="video-play-toggle" type="button" aria-label="Play / Pause">
         <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-      </button>
+      </button>`;
+
+  return `
+  <article class="video-card ${isPhoto ? "is-photo" : ""}" data-video-id="${esc(video.id)}" tabindex="0">
+    <div class="video-wrap">
+      ${mediaHtml}
 
       <div class="video-right-actions">
         <a class="action-avatar" href="#/u/${esc(video.username)}" data-act="profile">
@@ -69,9 +92,10 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
           <em>Share</em>
         </button>
 
+        ${isPhoto ? "" : `
         <button class="v-action v-sound" type="button" data-act="sound">
           <span class="v-icon sound-disc"><span class="disc-inner">${avatar(author, "sm")}</span></span>
-        </button>
+        </button>`}
       </div>
 
       <div class="video-bottom-meta">
@@ -80,16 +104,19 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
           <span class="video-time">· ${timeAgo(video.createdAt)}</span>
         </a>
         ${captionHtml ? `<p class="video-caption">${captionHtml}</p>` : ""}
-        <a class="video-sound" href="#/sounds?q=${esc(video.soundId || "")}" data-act="sound">
+        ${isPhoto
+          ? `<span class="video-sound is-static"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg><span class="marquee"><span>Photo post${video.images?.length > 1 ? ` · ${video.images.length} photos` : ""}</span></span></span>`
+          : `<a class="video-sound" href="#/sounds?q=${esc(video.soundId || "")}" data-act="sound">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
           <span class="marquee"><span>${soundTitle} — @${esc(video.username)}</span></span>
-        </a>
+        </a>`}
       </div>
 
+      ${isPhoto ? "" : `
       <div class="video-volume" data-act="mute">
         <svg viewBox="0 0 24 24" class="vol-on"><path d="M11 5L6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M17.5 6.5a8 8 0 0 1 0 11"/></svg>
         <svg viewBox="0 0 24 24" class="vol-off"><path d="M11 5L6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
-      </div>
+      </div>`}
     </div>
   </article>`;
 }
@@ -120,6 +147,22 @@ export async function hydrateVideoStates(root, uid) {
 export function bindVideoActions(root, ctx) {
   if (root.dataset.videoBound === "1") return;
   root.dataset.videoBound = "1";
+
+  // Photo carousels: sync the position dots as the user swipes/scrolls.
+  root.addEventListener(
+    "scroll",
+    (event) => {
+      const carousel = event.target?.closest?.(".photo-carousel");
+      if (!carousel) return;
+      const card = carousel.closest(".video-card");
+      if (!card) return;
+      const index = Math.round(carousel.scrollLeft / Math.max(1, carousel.clientWidth));
+      card.querySelectorAll(".photo-dots span").forEach((dot, i) => {
+        dot.classList.toggle("is-on", i === index);
+      });
+    },
+    true
+  );
 
   root.addEventListener("click", async (event) => {
     const card = event.target.closest(".video-card[data-video-id]");
@@ -185,8 +228,21 @@ export function bindVideoActions(root, ctx) {
     }
 
     if (act === "share") {
-      copyText(`${location.origin}${location.pathname}#/video/${videoId}`);
-      toast("Link copied", "success");
+      const shareUrl = `${location.origin}${location.pathname}#/video/${videoId}`;
+      if (navigator.share) {
+        navigator
+          .share({
+            title: `${video.displayName || video.username || "Xacheus"} on Xacheus`,
+            text: (video.caption || "").slice(0, 100) || "Watch this video on Xacheus",
+            url: shareUrl,
+          })
+          .then(() => bumpVideoShare(videoId).catch(() => {}))
+          .catch(() => {}); // user dismissed the share sheet
+      } else {
+        copyText(shareUrl);
+        bumpVideoShare(videoId).catch(() => {});
+        toast("Link copied", "success");
+      }
       return;
     }
 

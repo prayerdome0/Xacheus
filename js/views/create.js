@@ -1,6 +1,6 @@
-/** Xacheus — Create video (record or upload) Phase 1 */
+/** Xacheus — Create (video upload/record + photo posts) */
 
-import { uploadVideo, uploadAudio } from "../cloudinary.js";
+import { uploadVideo, uploadAudio, uploadImage } from "../cloudinary.js";
 import { createVideo, createSound, getSounds, CURATED_FREE_SOUNDS } from "../data.js";
 import { toast, esc, avatar } from "../ui.js";
 
@@ -13,15 +13,23 @@ export function createView(ctx) {
   let recordingChunks = [];
   let isRecording = false;
   let uploadProgress = 0;
+  let photoFiles = []; // File objects (max 6)
+  let photoUrls = []; // object URLs for previews
 
   const html = `
     <div class="view-head">
-      <h1>Create video</h1>
-      <p class="view-sub">Upload or record a vertical video. Add caption, hashtags and a free sound.</p>
+      <h1>Create</h1>
+      <p class="view-sub">Post a vertical video or a photo set. Add caption, hashtags and a free sound.</p>
     </div>
 
     <div class="create-layout">
       <div class="create-main">
+        <div class="tabs create-tabs" role="tablist">
+          <button class="tab is-active" type="button" data-ctype="video">🎬 Video</button>
+          <button class="tab" type="button" data-ctype="photo">🖼️ Photo</button>
+        </div>
+
+        <div id="video-pane">
         <div class="create-drop" id="drop-zone">
           <div class="drop-inner" id="drop-inner">
             <div class="drop-icon">🎬</div>
@@ -82,6 +90,38 @@ export function createView(ctx) {
             <p class="fine-print">By posting you confirm you own this video and it doesn't violate copyright. We use only royalty-free sounds — no YouTube rips.</p>
           </div>
         </form>
+        </div><!-- /video-pane -->
+
+        <div id="photo-pane" hidden>
+          <div class="create-drop" id="photo-drop">
+            <div class="drop-inner" id="photo-drop-inner">
+              <div class="drop-icon">🖼️</div>
+              <h3>Add photos</h3>
+              <p>Up to 6 photos — JPG, PNG or WebP. They'll post as a swipeable photo set.</p>
+              <label class="btn btn-primary">
+                <input type="file" id="photo-input" accept="image/*" multiple hidden />
+                Choose photos
+              </label>
+            </div>
+            <div class="photo-previews" id="photo-previews"></div>
+            <div class="upload-progress-bar" id="photo-progress" hidden>
+              <span id="photo-progress-fill" style="width:0%"></span>
+              <em id="photo-progress-text">0%</em>
+            </div>
+          </div>
+
+          <form class="create-form" id="photo-form" novalidate>
+            <label class="field">
+              <span>Caption <em>(optional)</em> — #hashtags and @mentions are linked</span>
+              <textarea id="photo-caption" rows="3" maxlength="1000" placeholder="Add a caption… e.g. Sunday service 🙏 #gospel #zambia"></textarea>
+              <small class="field-hint"><span id="photo-caption-count">0</span>/1000</small>
+            </label>
+            <div class="create-actions">
+              <button class="btn btn-primary btn-block" type="submit" id="photo-post-btn" disabled>Post photos</button>
+              <p class="fine-print">By posting you confirm you own the rights to these photos.</p>
+            </div>
+          </form>
+        </div><!-- /photo-pane -->
       </div>
 
       <aside class="create-side">
@@ -436,6 +476,118 @@ export function createView(ctx) {
         count.textContent = caption.value.length;
       });
 
+      /* ---------------- photo posts ---------------- */
+
+      root.querySelectorAll(".create-tabs .tab").forEach((tab) => {
+        tab.addEventListener("click", () => {
+          const kind = tab.dataset.ctype;
+          root.querySelectorAll(".create-tabs .tab").forEach((t) => t.classList.toggle("is-active", t === tab));
+          root.querySelector("#video-pane").hidden = kind !== "video";
+          root.querySelector("#photo-pane").hidden = kind !== "photo";
+        });
+      });
+
+      function renderPhotoPreviews() {
+        const host = root.querySelector("#photo-previews");
+        const inner = root.querySelector("#photo-drop-inner");
+        host.innerHTML = photoUrls
+          .map(
+            (url, i) => `
+          <div class="photo-preview">
+            <img src="${url}" alt="" />
+            <button class="icon-btn" type="button" data-remove-photo="${i}" aria-label="Remove photo">✕</button>
+          </div>`
+          )
+          .join("");
+        inner.hidden = photoFiles.length > 0;
+        const btn = root.querySelector("#photo-post-btn");
+        btn.disabled = photoFiles.length === 0;
+        btn.textContent = photoFiles.length ? `Post ${photoFiles.length} photo${photoFiles.length > 1 ? "s" : ""}` : "Choose photos first";
+      }
+
+      root.querySelector("#photo-input").addEventListener("change", (event) => {
+        const files = [...event.target.files];
+        for (const file of files) {
+          if (photoFiles.length >= 6) {
+            toast("Photo posts hold up to 6 photos", "info");
+            break;
+          }
+          if (!file.type.startsWith("image/")) {
+            toast(`${file.name} isn't an image`, "error");
+            continue;
+          }
+          if (file.size > 10 * 1024 * 1024) {
+            toast(`${file.name} is over 10MB`, "error");
+            continue;
+          }
+          photoFiles.push(file);
+          photoUrls.push(URL.createObjectURL(file));
+        }
+        event.target.value = "";
+        renderPhotoPreviews();
+      });
+
+      root.querySelector("#photo-previews").addEventListener("click", (event) => {
+        const idx = event.target.closest("[data-remove-photo]")?.dataset.removePhoto;
+        if (idx === undefined) return;
+        const i = Number(idx);
+        URL.revokeObjectURL(photoUrls[i]);
+        photoFiles.splice(i, 1);
+        photoUrls.splice(i, 1);
+        renderPhotoPreviews();
+      });
+
+      const photoCaption = root.querySelector("#photo-caption");
+      photoCaption.addEventListener("input", () => {
+        root.querySelector("#photo-caption-count").textContent = photoCaption.value.length;
+      });
+
+      root.querySelector("#photo-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!ctx.state.profile) return ctx.requireAuth();
+        if (!photoFiles.length) return toast("Choose photos first", "error");
+
+        const btn = root.querySelector("#photo-post-btn");
+        const bar = root.querySelector("#photo-progress");
+        const fill = root.querySelector("#photo-progress-fill");
+        const text = root.querySelector("#photo-progress-text");
+        btn.disabled = true;
+        bar.hidden = false;
+        fill.style.width = "0%";
+        text.textContent = "0%";
+
+        try {
+          const urls = [];
+          for (let i = 0; i < photoFiles.length; i += 1) {
+            const url = await uploadImage(photoFiles[i], {
+              strict: true,
+              onProgress: (p) => {
+                const overall = Math.round(((i + p / 100) / photoFiles.length) * 100);
+                fill.style.width = `${overall}%`;
+                text.textContent = `${overall}%`;
+              },
+            });
+            if (!url || url.startsWith("blob:")) throw new Error("Photo upload failed — check the Cloudinary preset.");
+            urls.push(url);
+          }
+
+          btn.textContent = "Creating post…";
+          await createVideo(ctx.state.profile, {
+            mediaType: "photo",
+            images: urls,
+            caption: photoCaption.value.trim(),
+          });
+
+          toast("Photo post published!", "success");
+          ctx.navigate("#/home");
+        } catch (err) {
+          console.warn("[xacheus] photo post failed", err);
+          toast(err?.message || "Couldn't post photos.", "error", 6000);
+          btn.disabled = false;
+          bar.hidden = true;
+        }
+      });
+
       root.querySelector("#create-form").addEventListener("submit", async (e) => {
         e.preventDefault();
         if (!ctx.state.profile) return ctx.requireAuth();
@@ -491,6 +643,7 @@ export function createView(ctx) {
     destroy() {
       if (recordingStream) recordingStream.getTracks().forEach((t) => t.stop());
       if (mediaRecorder && isRecording) mediaRecorder.stop();
+      photoUrls.forEach((url) => URL.revokeObjectURL(url));
     },
   };
 }
