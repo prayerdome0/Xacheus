@@ -64,7 +64,7 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
       </button>`;
 
   return `
-  <article class="video-card ${isPhoto ? "is-photo" : ""}" data-video-id="${esc(video.id)}" tabindex="0">
+  <article class="video-card ${isPhoto ? "is-photo" : ""}" data-video-id="${esc(video.id)}" tabindex="0" aria-label="${esc((isPhoto ? "Photo post" : "Video post") + " by @" + (video.username || "user") + (video.caption ? ": " + video.caption : ""))}">
     <div class="video-wrap">
       ${mediaHtml}
 
@@ -179,6 +179,18 @@ export function bindVideoActions(root, ctx) {
     },
     true
   );
+
+  root.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target.closest(".video-card[data-video-id]");
+    if (!card || event.target.closest("button,a,input,textarea")) return;
+    event.preventDefault();
+    const vid = card.querySelector("video");
+    if (vid) {
+      if (vid.paused) vid.play().catch(() => {});
+      else vid.pause();
+    }
+  });
 
   root.addEventListener("click", async (event) => {
     const card = event.target.closest(".video-card[data-video-id]");
