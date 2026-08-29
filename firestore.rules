@@ -101,8 +101,15 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.uid == request.auth.uid
         && shortText(request.resource.data.caption, 1000)
-        && request.resource.data.videoUrl is string
-        && request.resource.data.videoUrl.size() > 0
+        && (
+          // video post
+          (request.resource.data.videoUrl is string && request.resource.data.videoUrl.size() > 0)
+          // photo post (1-6 images)
+          || (request.resource.data.mediaType == 'photo'
+              && request.resource.data.images is list
+              && request.resource.data.images.size() >= 1
+              && request.resource.data.images.size() <= 6)
+        )
         && request.resource.data.likeCount == 0
         && request.resource.data.commentCount == 0
         && request.resource.data.viewCount == 0;
@@ -223,6 +230,58 @@ service cloud.firestore {
     match /products/{id} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* lives (client-only live streaming via Cloudinary segments)        */
+    /* ---------------------------------------------------------------- */
+    match /lives/{liveId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.status == 'live'
+        && shortText(request.resource.data.title, 120)
+        && request.resource.data.viewerCount == 0
+        && request.resource.data.latestSeq == 0
+        && request.resource.data.segmentCount == 0;
+
+      // Broadcaster controls stream state; anyone signed in may bump viewerCount only.
+      allow update: if signedIn()
+        && (
+          (resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['status','latestSeq','segmentCount','lastPingAt','endedAt','thumbnailUrl','title','updatedAt']))
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viewerCount'])
+        );
+
+      allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+
+      match /segments/{sid} {
+        allow read: if true;
+        // Only the broadcaster publishes segments.
+        allow create: if signedIn()
+          && request.resource.data.seq is number
+          && request.resource.data.url is string
+          && request.resource.data.url.size() > 0
+          && get(/databases/$(database)/documents/lives/$(liveId)).data.uid == request.auth.uid;
+        allow update, delete: if false;
+      }
+
+      match /chat/{mid} {
+        allow read: if true;
+        allow create: if signedIn()
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 300;
+        // Viewer can delete own message; stream host or admin can moderate.
+        allow delete: if signedIn()
+          && (resource.data.uid == request.auth.uid
+              || get(/databases/$(database)/documents/lives/$(liveId)).data.uid == request.auth.uid
+              || isAdmin());
+        allow update: if false;
+      }
     }
 
     /* ---------------------------------------------------------------- */

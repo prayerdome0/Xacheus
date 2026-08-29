@@ -82,46 +82,57 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
 
   function setupIntersection(feed) {
     if (observer) observer.disconnect();
-    const vids = feed.querySelectorAll("video");
-    if (!vids.length) return;
+    const cards = feed.querySelectorAll(".video-card[data-video-id]");
+    if (!cards.length) return;
 
     observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
-          const video = entry.target;
-          const card = video.closest(".video-card");
+          const card = entry.target;
+          const video = card.querySelector("video");
           if (entry.isIntersecting && entry.intersectionRatio >= 0.7) {
             // pause others
-            feed.querySelectorAll("video").forEach((v) => {
-              if (v !== video) {
+            feed.querySelectorAll(".video-card").forEach((other) => {
+              if (other === card) return;
+              const v = other.querySelector("video");
+              if (v) {
                 v.pause();
                 cancelViewCount(v);
-                v.closest(".video-card")?.classList.remove("is-playing");
               }
+              clearTimeout(other._viewTimer);
+              other.classList.remove("is-playing");
             });
-            video.play().catch(() => {});
-            card?.classList.add("is-playing");
-            scheduleViewCount(video);
-            // progress
-            const progress = card?.querySelector(".video-progress span");
-            if (progress) {
-              video.ontimeupdate = () => {
-                if (video.duration) {
-                  progress.style.width = `${(video.currentTime / video.duration) * 100}%`;
-                }
-              };
+            card.classList.add("is-playing");
+            if (video) {
+              video.play().catch(() => {});
+              scheduleViewCount(video);
+              // progress
+              const progress = card?.querySelector(".video-progress span");
+              if (progress) {
+                video.ontimeupdate = () => {
+                  if (video.duration) {
+                    progress.style.width = `${(video.currentTime / video.duration) * 100}%`;
+                  }
+                };
+              }
+            } else {
+              // photo post: count a view on dwell too
+              scheduleViewCount(card);
             }
           } else {
-            video.pause();
-            cancelViewCount(video);
-            card?.classList.remove("is-playing");
+            if (video) {
+              video.pause();
+              cancelViewCount(video);
+            }
+            clearTimeout(card._viewTimer);
+            card.classList.remove("is-playing");
           }
         });
       },
       { threshold: [0, 0.5, 0.7, 1] }
     );
 
-    vids.forEach((v) => observer.observe(v));
+    cards.forEach((card) => observer.observe(card));
   }
 
   async function start(root) {
@@ -226,6 +237,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
         clearTimeout(v._viewTimer);
         v.pause();
       });
+      document.querySelectorAll(".video-card[data-video-id]").forEach((c) => clearTimeout(c._viewTimer));
     },
   };
 }

@@ -4,6 +4,7 @@ import { getProfileByUsername, watchUserVideos, getFollowers, getFollowing, isFo
 import { avatar, esc, formatCount, emptyState, toast, openModal } from "../ui.js";
 import { uploadImage } from "../cloudinary.js";
 import { updateProfile, changeUsername } from "../data.js";
+import { postThumb } from "./components.js";
 
 export function profileView(ctx, { username, tab = "videos" } = {}) {
   const isOwn = ctx.state.profile && ctx.state.profile.username === username;
@@ -171,10 +172,12 @@ export function profileView(ctx, { username, tab = "videos" } = {}) {
   }
 
   function gridCard(video) {
+    const thumb = postThumb(video);
     return `
       <div class="video-grid-card" data-video-id="${esc(video.id)}">
         <div class="grid-thumb">
-          ${video.thumbnailUrl ? `<img src="${esc(video.thumbnailUrl)}" alt="" loading="lazy" />` : `<video src="${esc(video.videoUrl)}" muted preload="metadata"></video>`}
+          ${thumb ? `<img src="${esc(thumb)}" alt="" loading="lazy" />` : video.videoUrl ? `<video src="${esc(video.videoUrl)}" muted preload="metadata"></video>` : `<span class="grid-fallback"></span>`}
+          ${video.mediaType === "photo" ? `<span class="grid-type-badge">🖼️</span>` : ""}
           <span class="grid-views">❤️ ${formatCount(video.likeCount)} · 💬 ${formatCount(video.commentCount)}</span>
         </div>
         <div class="grid-meta">

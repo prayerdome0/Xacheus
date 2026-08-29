@@ -24,11 +24,13 @@ import { settingsView } from "./views/settings.js";
 import { adminView } from "./views/admin.js";
 import { soundsView } from "./views/sounds.js";
 import { messagesView, chatView } from "./views/messages.js";
+import { liveListView, liveBroadcastView, liveWatchView } from "./views/live.js";
 
 const NAV = [
   { href: "#/home", label: "Home", icon: "home", match: ["home", ""] },
   { href: "#/discover", label: "Discover", icon: "search", match: ["discover", "tag", "search"] },
   { href: "#/create", label: "Create", icon: "plus", match: ["create"], special: true },
+  { href: "#/live", label: "Live", icon: "live", match: ["live"] },
   { href: "#/messages", label: "Messages", icon: "chat", match: ["messages", "dm"] },
   { href: "#/notifications", label: "Inbox", icon: "bell", match: ["notifications"] },
   { href: "#/profile", label: "Profile", icon: "user", match: ["profile", "u"] },
@@ -42,6 +44,7 @@ const ICONS = {
   user: '<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0v1H5v-1z"/>',
   gear: '<path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm9 3l2 1.5-2 3.5-2.4-.8-1.6 1.8-.2 2.5h-4l-.2-2.5-1.6-1.8-2.4.8-2-3.5L5.9 12l-2-1.5 2-3.5 2.4.8 1.6-1.8.2-2.5h4l.2 2.5 1.6 1.8 2.4-.8 2 3.5z"/>',
   chat: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.4-.25-3.4-.7L4 21l1.7-4.6A8.5 8.5 0 1 1 21 11.5z"/>',
+  live: '<circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4"/><path d="M19.1 4.9a10 10 0 0 1 0 14.2"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4"/><path d="M4.9 19.1a10 10 0 0 1 0-14.2"/>',
   admin: '<path d="M12 2l2.5 5 5.5.8-4 3.9.9 5.3L12 14.8l-4.9 2.2.9-5.3-4-3.9 5.5-.8L12 2z"/>',
 };
 
@@ -350,6 +353,10 @@ function resolveRoute() {
       return { view: messagesView(ctx), key: "messages" };
     case "dm":
       return { view: chatView(ctx, { username: second }), key: `dm:${second}` };
+    case "live":
+      if (second === "go") return { view: liveBroadcastView(ctx), key: "live:go" };
+      if (second) return { view: liveWatchView(ctx, { liveId: second }), key: `live:${second}` };
+      return { view: liveListView(ctx), key: "live" };
     case "u":
       return { view: profileView(ctx, { username: second, tab: params.tab || third }), key: `u:${second}` };
     case "video":

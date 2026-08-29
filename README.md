@@ -2,7 +2,7 @@
 
 Xacheus is a **real production-oriented short vertical video platform** (TikTok-style), not a mockup. Built with vanilla JS, Firebase Auth, Firestore and Cloudinary for media.
 
-This is **Phase 1** — real auth, profiles with roles, vertical video feed, Cloudinary uploads, likes, comments, follows, notifications, direct messages, create (record/upload), captions, hashtags, and a **free sounds system** (no copyrighted YouTube tracks).
+This is **Phase 1** — real auth, profiles with roles, vertical video feed, Cloudinary uploads, likes, comments, follows, notifications, direct messages, **live streaming (Go Live)**, **photo posts**, create (record/upload), captions, hashtags, and a **free sounds system** (no copyrighted YouTube tracks).
 
 ---
 
@@ -91,6 +91,22 @@ This is **Phase 1** — real auth, profiles with roles, vertical video feed, Clo
 - `viewCount` increments after ~2s of continuous playback in the feed (one bump per video per session)
 - `shareCount` increments on Web Share API success (mobile share sheet) or link copy fallback
 
+### Live Streaming (Go Live)
+- **Client-only architecture** — no streaming service needed: `MediaRecorder` records ~4s segments, each is uploaded to Cloudinary as an independent WebM, and Firestore tracks the segment cursor (`lives/{liveId}.latestSeq`)
+- `/#/live` — list of active broadcasts (LIVE badge, viewer counts, poster thumbnails); streams whose broadcaster vanished (no heartbeat for 90s) are hidden automatically
+- `/#/live/go` — broadcaster: live camera preview, optional title, on-air clock, viewer count, chunk counter, and live chat; heartbeat every 20s; End Stream (plus best-effort cleanup on tab close)
+- `/#/live/{id}` — viewer: segment playlist player (joins ~1 segment behind live), tap-for-sound, drift protection (skips ahead if the broadcaster outpaces playback), live chat, and replay of published segments after the stream ends
+- Live chat: `lives/{liveId}/chat` — real-time, 300 chars, deletable by author / stream host / admin
+- Latency is ~5–15s by design (segment + upload + Firestore); quality ~900kbps VP9/VP8 WebM, data-friendly
+- Rules: only the stream host updates stream state / publishes segments; anyone signed in can bump `viewerCount` ±1 only
+
+### Photo posts
+- `/#/create` now has **Video | Photo** tabs — photo posts are 1–6 images + caption (TikTok photo-mode style)
+- Stored in the same `videos` collection with `mediaType: "photo"`, `images[]` — so feed, discover, profile grids, likes, comments, saves, shares, notifications and hashtags all work on photo posts automatically
+- Feed renders them as swipeable carousels with position dots; photo dwell also counts a view (2s rule)
+- Rules: photo branch requires `mediaType == 'photo'` and 1–6 `images` instead of a `videoUrl`
+- `uploadImage(..., { strict: true })` — photo posts and live posters fail hard instead of silently storing local blob URLs
+
 ### Admin Panel
 - `/#/admin` — visible only if `profile.role == "admin"`
 - Tabs: Users (change role, verify/unverify), Videos (delete), Sounds (delete)
@@ -115,6 +131,7 @@ usernames/{handle} -> { uid }
 
 videos/{videoId}
   - uid, username, displayName, photoURL
+  - mediaType: "video" | "photo", images[] (photo posts, 1-6)
   - videoUrl, thumbnailUrl, caption, hashtags[], mentions[]
   - soundId, soundTitle, soundUrl, duration, width, height, cloudinaryPublicId
   - likeCount, commentCount, viewCount, shareCount, isPublic, createdAt, updatedAt
@@ -132,6 +149,13 @@ notifications/{nid}
 
 hashtags/{tag}: count, lastUsedAt
 
+lives/{liveId}
+  - uid, username, displayName, photoURL, title
+  - status (live|ended), viewerCount, latestSeq, segmentCount
+  - thumbnailUrl, startedAt, lastPingAt (heartbeat), endedAt
+  - segments/{sid}: seq, url (Cloudinary WebM), duration, createdAt
+  - chat/{mid}: uid, username, displayName, photoURL, text, createdAt
+
 conversations/{cid}  (cid = sorted "uidA__uidB")
   - participants[2], lastMessage, lastSenderId, lastMessageAt, unreadCount: { uid: n }, createdAt
   - messages/{mid}: senderId, senderUsername, senderName, senderPhoto, text, createdAt
@@ -144,7 +168,8 @@ conversations/{cid}  (cid = sorted "uidA__uidB")
 - Public read for `users`, `usernames`, `videos`, `sounds`, `hashtags`
 - `users` create: must be self, role in [user,creator,business,church] (not admin)
 - `users` update: owners can edit profile fields but not role/counters; admin can change role/verified; counters ±1 allowed for follows
-- `videos`: create if signedIn and owner, counters start 0; update: owner can edit caption/hashtags/sound, anyone can bump counters; delete owner or admin
+- `videos`: create if signedIn and owner (video post with videoUrl, or photo post with 1-6 images), counters start 0; update: owner can edit caption/hashtags/sound, anyone can bump counters; delete owner or admin
+- `lives`: read public; create by host (status live, counters 0); update = host on stream-state fields OR anyone signed-in on viewerCount only; segments written by host only; chat 1-300 chars, delete by author/host/admin
 - `sounds`: create owner, update owner or counter bump, delete owner/admin
 - `follows`: self only
 - `notifications`: recipient read only, create if fromUid==auth.uid and toUid!=self
@@ -160,6 +185,7 @@ firebase deploy --only firestore:rules,firestore:indexes
 
 Indexes in `firestore.indexes.json`:
 - conversations: participants contains+lastMessageAt desc
+- lives: status+startedAt desc (client-side sort fallback if not yet built)
 - videos: uid+createdAt, createdAt, likeCount+createdAt, hashtags contains+createdAt, soundId+createdAt
 - sounds: useCount, isFree+useCount
 - users: username, displayNameLower

@@ -3,7 +3,7 @@
  * Caches app shell, never caches Firebase or Cloudinary.
  */
 
-const CACHE_NAME = "xacheus-video-v3";
+const CACHE_NAME = "xacheus-video-v5";
 const SHELL = [
   "./",
   "./index.html",
@@ -22,6 +22,7 @@ const SHELL = [
   "./js/views/profile.js",
   "./js/views/notifications.js",
   "./js/views/messages.js",
+  "./js/views/live.js",
   "./js/views/settings.js",
   "./js/views/admin.js",
   "./assets/icon.svg",
