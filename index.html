@@ -44,6 +44,92 @@
       </div>
     </noscript>
 
+    <script>
+      /**
+       * Boot watchdog.
+       *
+       * The app is a module graph: if any module throws while it is being
+       * evaluated (bad import, blocked CDN, syntax error) nothing ever runs and
+       * the boot spinner spins forever with no explanation. This watches for
+       * that and swaps the spinner for a real, actionable error instead.
+       */
+      (function () {
+        var BOOT_TIMEOUT_MS = 12000;
+        var reported = false;
+
+        function bootScreen() {
+          return document.getElementById("boot");
+        }
+
+        function failure(message, detail) {
+          var screen = bootScreen();
+          if (reported || !screen || screen.hidden || screen.dataset.failed === "1") return;
+          reported = true;
+          screen.dataset.failed = "1";
+          screen.classList.remove("is-done");
+          screen.hidden = false;
+          screen.innerHTML =
+            '<div class="boot-inner">' +
+            '<img class="brand-logo boot-mark" src="assets/icon.svg" alt="Xacheus" width="56" height="56" />' +
+            "<h2>Xacheus could not start</h2>" +
+            '<p class="boot-error">' +
+            String(message).replace(/[<>&]/g, "") +
+            "</p>" +
+            (detail ? '<pre class="boot-detail"></pre>' : "") +
+            '<div class="boot-actions">' +
+            '<button type="button" class="btn btn-primary btn-sm" data-boot="reload">Reload</button>' +
+            '<button type="button" class="btn btn-ghost btn-sm" data-boot="dismiss">Continue anyway</button>' +
+            "</div>" +
+            '<p class="boot-hint">If this keeps happening, check your connection, ad-blocker or VPN — ' +
+            "Xacheus loads Firebase from googleapis.com.</p>" +
+            "</div>";
+          if (detail) {
+            var pre = screen.querySelector(".boot-detail");
+            if (pre) pre.textContent = String(detail).slice(0, 400);
+          }
+          screen.querySelectorAll("[data-boot]").forEach(function (button) {
+            button.addEventListener("click", function () {
+              if (button.dataset.boot === "reload") location.reload();
+              else screen.hidden = true;
+            });
+          });
+        }
+
+        // Any uncaught error while the app is still booting is fatal to boot.
+        window.addEventListener(
+          "error",
+          function (event) {
+            if (document.getElementById("boot")?.hidden) return;
+            var where = event.filename ? event.filename.replace(location.origin, "") : "";
+            failure(
+              event.message || "A script failed to load.",
+              where ? where + (event.lineno ? ":" + event.lineno : "") : ""
+            );
+          },
+          true
+        );
+
+        // Failed module/script fetches surface as the resource erroring.
+        window.addEventListener(
+          "error",
+          function (event) {
+            var target = event.target;
+            if (!target || target === window) return;
+            if (target.tagName === "SCRIPT" || target.tagName === "LINK") {
+              failure("Failed to load " + (target.src || target.href || "a required file") + ".");
+            }
+          },
+          true
+        );
+
+        setTimeout(function () {
+          var screen = bootScreen();
+          if (reported || !screen || screen.hidden || screen.dataset.failed === "1") return;
+          failure("Loading is taking longer than expected. The server may be unreachable.");
+        }, BOOT_TIMEOUT_MS);
+      })();
+    </script>
+
     <script type="module" src="js/app.js"></script>
     <script>
       if ("serviceWorker" in navigator) {
