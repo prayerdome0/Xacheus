@@ -60,6 +60,8 @@ const ICONS = {
   admin: '<path d="M12 2l2.5 5 5.5.8-4 3.9.9 5.3L12 14.8l-4.9 2.2.9-5.3-4-3.9 5.5-.8L12 2z"/>',
 };
 
+document.documentElement.lang = localStorage.getItem("xacheus_language") || "en";
+
 const state = {
   user: null,
   profile: null,

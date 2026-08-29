@@ -52,6 +52,20 @@ export function settingsView(ctx) {
     </section>
 
     <section class="panel">
+      <h2 class="panel-title">Language and accessibility</h2>
+      <div class="setting-row">
+        <div class="setting-main"><div><strong>App language</strong><em>Choose the language used for future translated interface labels.</em></div></div>
+        <select class="settings-select" data-act="language" aria-label="App language">
+          ${[["en", "English"], ["bem", "Bemba"], ["ny", "Nyanja"], ["loz", "Lozi"]].map(([code, label]) => `<option value="${code}" ${localStorage.getItem("xacheus_language") === code ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main"><div><strong>Reduced motion</strong><em>Respects your device preference to reduce animation.</em></div></div>
+        <span class="badge">System</span>
+      </div>
+    </section>
+
+    <section class="panel">
       <h2 class="panel-title">Appearance</h2>
       <div class="setting-row">
         <div class="setting-main"><div><strong>Theme</strong><em>Pick what's comfortable for your eyes.</em></div></div>
@@ -136,6 +150,13 @@ export function settingsView(ctx) {
     html,
     title: "Settings",
     mount(root) {
+      root.addEventListener("change", (event) => {
+        const select = event.target.closest('[data-act="language"]');
+        if (!select) return;
+        localStorage.setItem("xacheus_language", select.value);
+        document.documentElement.lang = select.value;
+        toast("Language preference saved", "success", 1800);
+      });
       root.addEventListener("click", async (event) => {
         const themeBtn = event.target.closest("[data-theme]");
         if (themeBtn) {
