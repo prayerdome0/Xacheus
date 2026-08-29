@@ -51,7 +51,7 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
         poster="${esc(video.thumbnailUrl || "")}"
         loop
         playsinline
-        preload="metadata"
+        preload="${localStorage.getItem("xacheus_dataSaver") === "1" ? "none" : "metadata"}"
         data-video-id="${esc(video.id)}"
       ></video>
 

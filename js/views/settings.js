@@ -87,8 +87,12 @@ export function settingsView(ctx) {
         <span class="badge">On</span>
       </div>
       <div class="setting-row">
-        <div class="setting-main"><div><strong>Data saver</strong><em>Coming soon — lower quality on mobile data.</em></div></div>
-        <span class="badge">Soon</span>
+        <div class="setting-main"><div><strong>Data saver</strong><em>Don't preload videos and only play when you tap.</em></div></div>
+        <button class="btn btn-outline btn-sm" type="button" data-act="data-saver" aria-pressed="${localStorage.getItem("xacheus_dataSaver") === "1"}">${localStorage.getItem("xacheus_dataSaver") === "1" ? "On" : "Off"}</button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main"><div><strong>Browser notifications</strong><em>Allow this browser to notify you about messages and activity.</em></div></div>
+        <button class="btn btn-outline btn-sm" type="button" data-act="notifications">${typeof Notification !== "undefined" && Notification.permission === "granted" ? "On" : "Enable"}</button>
       </div>
     </section>
 
@@ -145,6 +149,25 @@ export function settingsView(ctx) {
         const trigger = event.target.closest("[data-act]");
         if (!trigger) return;
         const act = trigger.dataset.act;
+
+        if (act === "data-saver") {
+          const enabled = localStorage.getItem("xacheus_dataSaver") === "1";
+          localStorage.setItem("xacheus_dataSaver", enabled ? "0" : "1");
+          trigger.textContent = enabled ? "Off" : "On";
+          trigger.setAttribute("aria-pressed", String(!enabled));
+          toast(enabled ? "Data saver disabled" : "Data saver enabled", "success");
+          return;
+        }
+
+        if (act === "notifications") {
+          if (typeof Notification === "undefined") return toast("Browser notifications are not supported here.", "error");
+          try {
+            const permission = await Notification.requestPermission();
+            trigger.textContent = permission === "granted" ? "On" : "Enable";
+            toast(permission === "granted" ? "Browser notifications enabled" : "Notifications were not enabled", permission === "granted" ? "success" : "info");
+          } catch { toast("Could not request notification permission.", "error"); }
+          return;
+        }
 
         if (act === "private-toggle") {
           const next = !Boolean(ctx.state.profile.private);

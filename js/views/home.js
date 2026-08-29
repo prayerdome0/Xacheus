@@ -105,7 +105,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
             });
             card.classList.add("is-playing");
             if (video) {
-              video.play().catch(() => {});
+              if (localStorage.getItem("xacheus_dataSaver") !== "1") video.play().catch(() => {});
               scheduleViewCount(video);
               // progress
               const progress = card?.querySelector(".video-progress span");
