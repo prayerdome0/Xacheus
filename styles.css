@@ -176,7 +176,6 @@ p {
 .boot-mark {
   width: 56px;
   height: 56px;
-  font-size: 1.7rem;
   animation: pulse 1.6s ease-in-out infinite;
 }
 @keyframes pulse {
@@ -205,26 +204,21 @@ p {
   letter-spacing: -0.02em;
   font-size: 1.12rem;
 }
-.brand-mark {
-  display: grid;
-  place-items: center;
+.brand-logo {
+  display: block;
   width: 32px;
   height: 32px;
   border-radius: 10px;
-  background: var(--brand-grad);
-  color: #fff;
-  font-weight: 900;
   box-shadow: 0 6px 18px rgba(124, 92, 255, 0.45);
   flex: none;
 }
 .brand-lg {
   font-size: 1.5rem;
 }
-.brand-lg .brand-mark {
-  width: 42px;
-  height: 42px;
+.brand-lg .brand-logo {
+  width: 46px;
+  height: 46px;
   border-radius: 12px;
-  font-size: 1.25rem;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2329,9 +2323,6 @@ html.light .panel {
   }
   .topbar-post {
     display: none;
-  }
-  .brand-text {
-    font-size: 1.05rem;
   }
 
   .tabbar {

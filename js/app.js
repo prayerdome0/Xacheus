@@ -11,7 +11,7 @@ import {
   watchProfile,
 } from "./data.js";
 import { avatar, clear, esc, formatCount, toast } from "./ui.js";
-import { mountAuth } from "./auth.js";
+import { friendlyAuthError, mountAuth } from "./auth.js";
 import { openComposer } from "./views/components.js";
 import { homeView } from "./views/home.js";
 import { exploreView } from "./views/explore.js";
@@ -132,8 +132,7 @@ function buildShell() {
     <header class="topbar">
       <div class="topbar-inner">
         <a class="brand" href="#/home" aria-label="Xacheus home">
-          <span class="brand-mark" aria-hidden="true">X</span>
-          <span class="brand-text">Xacheus</span>
+          <img class="brand-logo" src="assets/icon.svg" alt="Xacheus" />
         </a>
 
         <form class="topbar-search" id="topbar-search" role="search">
@@ -153,8 +152,8 @@ function buildShell() {
 
     <div class="layout">
       <nav class="sidebar" aria-label="Primary">
-        <a class="brand sidebar-brand" href="#/home">
-          <span class="brand-mark" aria-hidden="true">X</span>
+        <a class="brand sidebar-brand" href="#/home" aria-label="Xacheus home">
+          <img class="brand-logo" src="assets/icon.svg" alt="Xacheus" />
         </a>
         ${NAV.map((item) => navItem(item)).join("")}
         <button class="btn btn-primary btn-block sidebar-post" type="button" data-act="compose">Post</button>
@@ -536,7 +535,7 @@ function boot() {
       profile = await ensureProfile(user);
     } catch (error) {
       console.warn("[xacheus] profile load", error);
-      toast("Could not load your profile. Check that Firestore rules are deployed.", "error", 8000);
+      toast(`Could not load your profile. ${friendlyAuthError(error)}`, "error", 9000);
     }
 
     if (!profile) {
