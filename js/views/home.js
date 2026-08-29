@@ -15,6 +15,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
   let loadingMore = false;
   let followingIds = [];
   let blockedIds = [];
+  let hiddenIds = new Set(JSON.parse(localStorage.getItem("xacheus_hiddenVideos") || "[]"));
   let destroyed = false;
   let observer = null;
 
@@ -48,7 +49,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
     }
 
     // If focusVideoId, bring it to top
-    let ordered = videos;
+    let ordered = mode === "foryou" ? [...videos].sort((a, b) => recommendationScore(b) - recommendationScore(a)) : videos;
     if (focusVideoId) {
       const idx = videos.findIndex((v) => v.id === focusVideoId);
       if (idx > 0) {
@@ -65,6 +66,14 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
       ordered.length >= 6
         ? '<button class="btn btn-ghost btn-block" type="button" data-act="more">Load more videos</button>'
         : `<p class="feed-end">You're all caught up 🎉</p>`;
+  }
+
+  function recommendationScore(video) {
+    const ageHours = Math.max(0, (Date.now() - (video.createdAt?.toMillis?.() || video.createdAt || Date.now())) / 3600000);
+    const engagement = Number(video.likeCount || 0) * 2 + Number(video.commentCount || 0) * 3 + Number(video.shareCount || 0) * 4;
+    const views = Math.min(100, Number(video.viewCount || 0) / 10);
+    // A transparent first version: freshness plus meaningful engagement.
+    return engagement + views + Math.max(0, 48 - ageHours) * 0.35;
   }
 
   function scheduleViewCount(video) {
@@ -161,7 +170,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
       uid: ctx.state.profile?.uid,
       followingIds,
       onData: (videos, docs) => {
-        const visible = (videos || []).filter((video) => !blockedIds.includes(video.uid));
+        const visible = (videos || []).filter((video) => !blockedIds.includes(video.uid) && !hiddenIds.has(video.id));
         lastDocs = docs || [];
         renderVideos(root, visible);
       },
@@ -207,7 +216,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
               afterDoc: lastDocs[lastDocs.length - 1],
             });
             const feed = root.querySelector("#video-feed");
-            const visibleItems = items.filter((v) => !blockedIds.includes(v.uid));
+            const visibleItems = items.filter((v) => !blockedIds.includes(v.uid) && !hiddenIds.has(v.id));
             if (visibleItems.length) {
               const frag = document.createElement("div");
               frag.innerHTML = visibleItems.map((v) => videoCardHtml(v)).join("");

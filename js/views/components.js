@@ -104,6 +104,10 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
           <em>Block</em>
         </button>
 
+        <button class="v-action" type="button" data-act="not-interested" aria-label="Not interested">
+          <span class="v-icon">−</span><em>Not for me</em>
+        </button>
+
         ${isPhoto ? "" : `
         <button class="v-action v-sound" type="button" data-act="sound">
           <span class="v-icon sound-disc"><span class="disc-inner">${avatar(author, "sm")}</span></span>
@@ -254,6 +258,15 @@ export function bindVideoActions(root, ctx) {
       } catch (error) {
         toast(error?.message || "Could not submit report", "error");
       }
+      return;
+    }
+
+    if (act === "not-interested") {
+      const hidden = new Set(JSON.parse(localStorage.getItem("xacheus_hiddenVideos") || "[]"));
+      hidden.add(videoId);
+      localStorage.setItem("xacheus_hiddenVideos", JSON.stringify([...hidden].slice(-300)));
+      card.remove();
+      toast("We’ll show you fewer posts like this", "success", 2500);
       return;
     }
 
