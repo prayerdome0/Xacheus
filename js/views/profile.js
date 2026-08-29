@@ -40,7 +40,7 @@ export function profileView(ctx, { username, tab = "videos" } = {}) {
         <div class="profile-identity">
           <span class="avatar avatar-xl">${avatar(profile, "xl")}</span>
           <div class="profile-actions">
-            ${isOwnProfile ? `<button class="btn btn-outline btn-sm" type="button" data-act="edit">Edit profile</button>` : `<button class="btn btn-primary btn-sm" type="button" data-act="follow" data-uid="${esc(profile.uid)}">Follow</button><a class="btn btn-outline btn-sm" href="#/discover?q=${esc(profile.username)}">Videos</a>`}
+            ${isOwnProfile ? `<button class="btn btn-outline btn-sm" type="button" data-act="edit">Edit profile</button>` : `<button class="btn btn-primary btn-sm" type="button" data-act="follow" data-uid="${esc(profile.uid)}">Follow</button><a class="btn btn-outline btn-sm" href="#/dm/${esc(profile.username)}">Message</a><a class="btn btn-outline btn-sm" href="#/discover?q=${esc(profile.username)}">Videos</a>`}
           </div>
         </div>
 

@@ -13,7 +13,9 @@
  *   follows/{uid}/followers/{followerUid}
  *   notifications/{nid}
  *   hashtags/{tag}                           trending counters
- *   posts/{postId}                           legacy (kept for compat, read-only)
+ *   conversations/{cid}                      1:1 direct messages (participants[2])
+ *   conversations/{cid}/messages/{mid}      chat messages
+ *   posts/{postId}                           removed (legacy reads dropped)
  */
 
 import {
@@ -885,8 +887,143 @@ export async function purgeUserData(uid) {
   });
 }
 
-/* Legacy posts kept for migration - read only helpers */
-export async function getPost(postId) {
-  const snap = await getDoc(doc(db, "posts", postId));
+/* Legacy posts helpers removed — the post/thread phase is gone. */
+
+/* ------------------------------------------------------------------ */
+/* direct messages                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Deterministic conversation id for a pair of users, so both sides and
+ * every device agree on one doc — no query needed to find "our" chat.
+ */
+export function conversationIdFor(uidA, uidB) {
+  return [String(uidA), String(uidB)].sort().join("__");
+}
+
+/**
+ * Get or create the 1:1 conversation between two profiles.
+ * `me` and `other` are profile objects ({ uid, ... }). Returns the cid.
+ */
+export async function openConversation(me, other) {
+  if (!me?.uid || !other?.uid) throw new Error("Sign in to start a chat.");
+  if (me.uid === other.uid) throw new Error("You can't message yourself.");
+  const cid = conversationIdFor(me.uid, other.uid);
+  const ref = doc(db, "conversations", cid);
+
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists()) return;
+    tx.set(ref, {
+      participants: [me.uid, other.uid].sort(),
+      lastMessage: "",
+      lastSenderId: "",
+      lastMessageAt: serverTimestamp(),
+      unreadCount: {},
+      createdAt: serverTimestamp(),
+    });
+  });
+  return cid;
+}
+
+export async function getConversationMeta(cid) {
+  const snap = await getDoc(doc(db, "conversations", cid));
   return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+/**
+ * Live list of my conversations, newest message first.
+ *
+ * Tries the composite-indexed query (participants contains + lastMessageAt
+ * desc) and, if that index isn't built/deployed yet, falls back to an
+ * un-ordered query sorted client-side so DMs still work out of the box.
+ */
+export function watchConversations(uid, onData) {
+  let stopped = false;
+  let unsubMain = null;
+  let unsubFallback = null;
+  const baseFilter = where("participants", "array-contains", uid);
+
+  const sortDocs = (docs) =>
+    docs
+      .map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => ts(b.lastMessageAt) - ts(a.lastMessageAt));
+
+  const emit = (list) => {
+    if (!stopped) onData(list);
+  };
+
+  const startFallback = () => {
+    if (stopped || unsubFallback) return;
+    unsubFallback = onSnapshot(
+      query(collection(db, "conversations"), baseFilter, limit(50)),
+      (snap) => emit(sortDocs(snap.docs)),
+      () => emit([])
+    );
+  };
+
+  unsubMain = onSnapshot(
+    query(collection(db, "conversations"), baseFilter, orderBy("lastMessageAt", "desc"), limit(50)),
+    (snap) => emit(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    startFallback
+  );
+
+  return () => {
+    stopped = true;
+    unsubMain?.();
+    unsubFallback?.();
+  };
+}
+
+export function watchMessages(cid, onData) {
+  return onSnapshot(
+    query(collection(db, "conversations", cid, "messages"), orderBy("createdAt", "asc"), limit(300)),
+    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    () => onData([])
+  );
+}
+
+/** Send a message and update the conversation preview + unread counter. */
+export async function sendDirectMessage(cid, sender, otherUid, text) {
+  const body = String(text || "").trim();
+  if (!cid || !sender?.uid || !otherUid) throw new Error("You can't send that message.");
+  if (!body) throw new Error("Write a message first.");
+  if (body.length > 1000) throw new Error("Messages are limited to 1000 characters.");
+
+  await addDoc(collection(db, "conversations", cid, "messages"), {
+    senderId: sender.uid,
+    senderUsername: sender.username || "",
+    senderName: sender.displayName || "",
+    senderPhoto: sender.photoURL || "",
+    text: body,
+    createdAt: serverTimestamp(),
+  });
+  await updateDoc(doc(db, "conversations", cid), {
+    lastMessage: body.slice(0, 120),
+    lastSenderId: sender.uid,
+    lastMessageAt: serverTimestamp(),
+    [`unreadCount.${otherUid}`]: increment(1),
+  });
+}
+
+/** Zero my unread counter once I've seen the thread. */
+export async function markConversationRead(cid, uid) {
+  if (!cid || !uid) return;
+  await updateDoc(doc(db, "conversations", cid), { [`unreadCount.${uid}`]: 0 }).catch(() => {});
+}
+
+/* ------------------------------------------------------------------ */
+/* engagement counters (views / shares)                                */
+/* ------------------------------------------------------------------ */
+
+/** Count one view (rules allow anyone signed in to bump counters only). */
+export async function bumpVideoView(videoId) {
+  if (!videoId) return;
+  await updateDoc(doc(db, "videos", videoId), { viewCount: increment(1) });
+}
+
+/** Count one share (Web Share API success or link copy). */
+export async function bumpVideoShare(videoId) {
+  if (!videoId) return;
+  await updateDoc(doc(db, "videos", videoId), { shareCount: increment(1) });
 }

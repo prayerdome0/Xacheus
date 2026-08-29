@@ -9,6 +9,7 @@ import {
   getSuggestedUsers,
   getTrending,
   isDeferringProfileCreation,
+  watchConversations,
   watchProfile,
   isAdminProfile,
 } from "./data.js";
@@ -22,11 +23,13 @@ import { profileView } from "./views/profile.js";
 import { settingsView } from "./views/settings.js";
 import { adminView } from "./views/admin.js";
 import { soundsView } from "./views/sounds.js";
+import { messagesView, chatView } from "./views/messages.js";
 
 const NAV = [
   { href: "#/home", label: "Home", icon: "home", match: ["home", ""] },
   { href: "#/discover", label: "Discover", icon: "search", match: ["discover", "tag", "search"] },
   { href: "#/create", label: "Create", icon: "plus", match: ["create"], special: true },
+  { href: "#/messages", label: "Messages", icon: "chat", match: ["messages", "dm"] },
   { href: "#/notifications", label: "Inbox", icon: "bell", match: ["notifications"] },
   { href: "#/profile", label: "Profile", icon: "user", match: ["profile", "u"] },
 ];
@@ -38,6 +41,7 @@ const ICONS = {
   bell: '<path d="M12 3a6 6 0 0 1 6 6v4l2 3H4l2-3V9a6 6 0 0 1 6-6zm-3 15a3 3 0 0 0 6 0z"/>',
   user: '<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm-7 8a7 7 0 0 1 14 0v1H5v-1z"/>',
   gear: '<path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm9 3l2 1.5-2 3.5-2.4-.8-1.6 1.8-.2 2.5h-4l-.2-2.5-1.6-1.8-2.4.8-2-3.5L5.9 12l-2-1.5 2-3.5 2.4.8 1.6-1.8.2-2.5h4l.2 2.5 1.6 1.8 2.4-.8 2 3.5z"/>',
+  chat: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.4-.25-3.4-.7L4 21l1.7-4.6A8.5 8.5 0 1 1 21 11.5z"/>',
   admin: '<path d="M12 2l2.5 5 5.5.8-4 3.9.9 5.3L12 14.8l-4.9 2.2.9-5.3-4-3.9 5.5-.8L12 2z"/>',
 };
 
@@ -50,14 +54,17 @@ const state = {
 };
 
 const videoCache = new Map();
+const countedViews = new Set(); // one view-count bump per video per session
 let currentView = null;
 let unsubProfile = null;
+let unsubConversations = null;
 let authController = null;
 
 const ctx = {
   state,
   videoCache,
   postCache: videoCache, // compat
+  countedViews,
   navigate(hash) {
     if (location.hash === hash) render();
     else location.hash = hash;
@@ -68,7 +75,9 @@ const ctx = {
   setNotificationCount(count) {
     setBadge("notifications", count);
   },
-  setMessageUnread() {},
+  setMessageUnread(count) {
+    setBadge("messages", count);
+  },
   setThemePref(pref) {
     state.themePref = pref;
     localStorage.setItem("xacheus_theme", pref);
@@ -336,6 +345,11 @@ function resolveRoute() {
     case "notifications":
     case "inbox":
       return { view: notificationsView(ctx), key: "notifications" };
+    case "messages":
+      if (second) return { view: chatView(ctx, { cid: second }), key: `dm:${second}` };
+      return { view: messagesView(ctx), key: "messages" };
+    case "dm":
+      return { view: chatView(ctx, { username: second }), key: `dm:${second}` };
     case "u":
       return { view: profileView(ctx, { username: second, tab: params.tab || third }), key: `u:${second}` };
     case "video":
@@ -355,7 +369,7 @@ function resolveRoute() {
   }
 }
 
-const AUTH_ROUTES = new Set(["create", "notifications", "inbox", "settings", "admin"]);
+const AUTH_ROUTES = new Set(["create", "notifications", "inbox", "messages", "dm", "settings", "admin"]);
 
 function render() {
   const viewHost = document.querySelector("#view");
@@ -526,6 +540,13 @@ function activateSession(user, profile) {
     paintSession();
   });
 
+  // Global DM unread badge — runs for the whole session, any route.
+  unsubConversations?.();
+  unsubConversations = watchConversations(user.uid, (items) => {
+    const total = items.reduce((sum, c) => sum + (c.unreadCount?.[user.uid] || 0), 0);
+    ctx.setMessageUnread(total);
+  });
+
   render();
 }
 
@@ -558,7 +579,10 @@ function boot() {
     if (!user) {
       state.profile = null;
       unsubProfile?.();
+      unsubConversations?.();
+      unsubConversations = null;
       setBadge("notifications", 0);
+      setBadge("messages", 0);
       paintSession();
       // rebuild shell to hide admin
       buildShell();

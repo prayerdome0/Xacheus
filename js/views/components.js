@@ -2,6 +2,7 @@
 
 import {
   addVideoComment,
+  bumpVideoShare,
   toggleVideoLike,
   toggleVideoSave,
   getLikedVideoIds,
@@ -185,8 +186,21 @@ export function bindVideoActions(root, ctx) {
     }
 
     if (act === "share") {
-      copyText(`${location.origin}${location.pathname}#/video/${videoId}`);
-      toast("Link copied", "success");
+      const shareUrl = `${location.origin}${location.pathname}#/video/${videoId}`;
+      if (navigator.share) {
+        navigator
+          .share({
+            title: `${video.displayName || video.username || "Xacheus"} on Xacheus`,
+            text: (video.caption || "").slice(0, 100) || "Watch this video on Xacheus",
+            url: shareUrl,
+          })
+          .then(() => bumpVideoShare(videoId).catch(() => {}))
+          .catch(() => {}); // user dismissed the share sheet
+      } else {
+        copyText(shareUrl);
+        bumpVideoShare(videoId).catch(() => {});
+        toast("Link copied", "success");
+      }
       return;
     }
 

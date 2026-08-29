@@ -2,7 +2,7 @@
 
 Xacheus is a **real production-oriented short vertical video platform** (TikTok-style), not a mockup. Built with vanilla JS, Firebase Auth, Firestore and Cloudinary for media.
 
-This is **Phase 1** — real auth, profiles with roles, vertical video feed, Cloudinary uploads, likes, comments, follows, notifications, create (record/upload), captions, hashtags, and a **free sounds system** (no copyrighted YouTube tracks).
+This is **Phase 1** — real auth, profiles with roles, vertical video feed, Cloudinary uploads, likes, comments, follows, notifications, direct messages, create (record/upload), captions, hashtags, and a **free sounds system** (no copyrighted YouTube tracks).
 
 ---
 
@@ -78,6 +78,19 @@ This is **Phase 1** — real auth, profiles with roles, vertical video feed, Clo
 ### Notifications / Inbox
 - `/#/notifications` — likes, comments, follows, mentions — unread dot, mark read after 1.5s, tabs all/likes/comments/follows
 
+### Direct Messages
+- `/#/messages` — private 1:1 chats, live via Firestore snapshots
+- Start from any profile's **Message** button or the ✏️ button (enter an @handle)
+- `/#/dm/{username}` — deterministic conversation id (`uidA__uidB` sorted) so both sides share one doc
+- Messages immutable (rules forbid edit/delete), preview + `unreadCount` per participant on the conversation doc
+- Global unread badge on the Messages nav item, cleared when you open the thread
+- Rules: only participants read/write, `participants` frozen after create, `senderId == auth.uid`, text ≤ 1000 chars
+- Composite index: `participants array-contains + lastMessageAt desc` (client-side sort fallback if index not yet built)
+
+### Engagement counters
+- `viewCount` increments after ~2s of continuous playback in the feed (one bump per video per session)
+- `shareCount` increments on Web Share API success (mobile share sheet) or link copy fallback
+
 ### Admin Panel
 - `/#/admin` — visible only if `profile.role == "admin"`
 - Tabs: Users (change role, verify/unverify), Videos (delete), Sounds (delete)
@@ -118,6 +131,10 @@ notifications/{nid}
   - toUid, fromUid, fromName, fromPhoto, fromUsername, type, videoId?, text?, read, createdAt
 
 hashtags/{tag}: count, lastUsedAt
+
+conversations/{cid}  (cid = sorted "uidA__uidB")
+  - participants[2], lastMessage, lastSenderId, lastMessageAt, unreadCount: { uid: n }, createdAt
+  - messages/{mid}: senderId, senderUsername, senderName, senderPhoto, text, createdAt
 ```
 
 ---
@@ -131,6 +148,7 @@ hashtags/{tag}: count, lastUsedAt
 - `sounds`: create owner, update owner or counter bump, delete owner/admin
 - `follows`: self only
 - `notifications`: recipient read only, create if fromUid==auth.uid and toUid!=self
+- `conversations`: participants only; create = 2 participants incl. self; update can't change `participants`; no deletes; messages immutable, `senderId == auth.uid`, text 1–1000 chars
 - `opportunities`, `churches`, `products`: admin-only write (future phases)
 - No secrets in frontend — all protection in rules
 
@@ -141,6 +159,7 @@ firebase deploy --only firestore:rules,firestore:indexes
 ```
 
 Indexes in `firestore.indexes.json`:
+- conversations: participants contains+lastMessageAt desc
 - videos: uid+createdAt, createdAt, likeCount+createdAt, hashtags contains+createdAt, soundId+createdAt
 - sounds: useCount, isFree+useCount
 - users: username, displayNameLower

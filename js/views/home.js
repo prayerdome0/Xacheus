@@ -1,8 +1,12 @@
 /** Xacheus — Home vertical video feed (Phase 1) */
 
-import { fetchVideoPage, getFollowingIds, watchVideoFeed } from "../data.js";
+import { bumpVideoView, fetchVideoPage, getFollowingIds, watchVideoFeed } from "../data.js";
 import { emptyState, toast } from "../ui.js";
 import { bindVideoActions, hydrateVideoStates, videoCardHtml } from "./components.js";
+
+// Count a view after this much continuous playback, so drive-by scrolls
+// through the feed don't inflate the counter.
+const VIEW_COUNT_DELAY = 2000;
 
 export function homeView(ctx, { focusVideoId = null } = {}) {
   let mode = ctx.state.feedMode || "foryou";
@@ -62,6 +66,20 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
         : `<p class="feed-end">You're all caught up 🎉</p>`;
   }
 
+  function scheduleViewCount(video) {
+    const videoId = video.dataset.videoId;
+    if (!videoId || ctx.countedViews.has(videoId)) return;
+    clearTimeout(video._viewTimer);
+    video._viewTimer = setTimeout(() => {
+      ctx.countedViews.add(videoId);
+      bumpVideoView(videoId).catch(() => {});
+    }, VIEW_COUNT_DELAY);
+  }
+
+  function cancelViewCount(video) {
+    clearTimeout(video._viewTimer);
+  }
+
   function setupIntersection(feed) {
     if (observer) observer.disconnect();
     const vids = feed.querySelectorAll("video");
@@ -77,11 +95,13 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
             feed.querySelectorAll("video").forEach((v) => {
               if (v !== video) {
                 v.pause();
+                cancelViewCount(v);
                 v.closest(".video-card")?.classList.remove("is-playing");
               }
             });
             video.play().catch(() => {});
             card?.classList.add("is-playing");
+            scheduleViewCount(video);
             // progress
             const progress = card?.querySelector(".video-progress span");
             if (progress) {
@@ -93,6 +113,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
             }
           } else {
             video.pause();
+            cancelViewCount(video);
             card?.classList.remove("is-playing");
           }
         });
@@ -200,8 +221,11 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
       destroyed = true;
       if (unsubscribe) unsubscribe();
       if (observer) observer.disconnect();
-      // pause all videos
-      document.querySelectorAll(".video-player").forEach((v) => v.pause());
+      // pause all videos and drop pending view timers
+      document.querySelectorAll(".video-player").forEach((v) => {
+        clearTimeout(v._viewTimer);
+        v.pause();
+      });
     },
   };
 }
