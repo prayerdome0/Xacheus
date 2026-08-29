@@ -1,74 +1,202 @@
 rules_version = '2';
+
+// Xacheus Social — Firestore security rules
+//
+// Deploy with:  firebase deploy --only firestore:rules
+//
+// Model: profiles and posts are public to read so signed-out visitors can
+// browse; everything writable is scoped to the signed-in owner.
+
 service cloud.firestore {
   match /databases/{database}/documents {
+
     function signedIn() {
       return request.auth != null;
     }
 
-    function isAdmin() {
-      return signedIn() && request.auth.token.email == 'zacheussimbaya@gmail.com';
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
     }
 
-    function owns(userId) {
-      return signedIn() && request.auth.uid == userId;
+    function shortText(value) {
+      return value is string && value.size() <= 500;
     }
 
-    match /users/{userId} {
-      allow create: if owns(userId) || isAdmin();
-      allow read, update: if owns(userId) || isAdmin();
-      allow delete: if isAdmin();
+    /* ---------------------------------------------------------------- */
+    /* profiles                                                          */
+    /* ---------------------------------------------------------------- */
 
-      match /blueprints/{blueprintId} {
-        allow create, read, update: if owns(userId) || isAdmin();
-        allow delete: if owns(userId) || isAdmin();
+    match /users/{uid} {
+      allow read: if true;
+
+      allow create: if isSelf(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.keys().hasAll(['uid', 'username', 'displayName', 'createdAt'])
+        && request.resource.data.username is string
+        && request.resource.data.username.size() >= 3
+        && request.resource.data.username.size() <= 20
+        && request.resource.data.displayName.size() <= 40;
+
+      // Owners can edit their profile but must never change their uid.
+      allow update: if isSelf(uid)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['displayName', 'displayNameLower', 'username', 'bio', 'location',
+                       'website', 'photoURL', 'coverURL', 'theme', 'private', 'updatedAt']);
+
+      // Follow / post counters are written by the client in ±1 steps, sometimes
+      // on the *other* profile (following someone bumps their followersCount).
+      // A production build should move this into a Cloud Function; until then
+      // the damage is bounded to counters and never touches profile content.
+      allow update: if signedIn()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['followersCount', 'followingCount', 'postsCount']);
+
+      allow delete: if isSelf(uid);
+
+      // Private, per-user lookup tables: likes, reposts, bookmarks.
+      match /liked/{postId} {
+        allow read, write: if isSelf(uid);
       }
-
-      match /paymentConfirmations/{paymentId} {
-        allow create, read: if owns(userId) || isAdmin();
-        allow update, delete: if isAdmin();
+      match /reposted/{postId} {
+        allow read, write: if isSelf(uid);
       }
-
-      // The store document is the source of truth for the theme editor, catalog,
-      // navigation, orders, and settings belonging to one account.
-      match /store/{storeId} {
-        allow create, read, update, delete: if owns(userId) || isAdmin();
-      }
-    }
-
-    // Published storefronts are public to read, but only the owner can publish
-    // or update their copy (admins can manage them too).
-    match /publicStores/{storeSlug} {
-      allow read: if resource.data.published == true || isAdmin();
-      allow create, update: if isAdmin() || (signedIn() && request.resource.data.publishedBy == request.auth.uid);
-      allow delete: if isAdmin() || (signedIn() && resource.data.publishedBy == request.auth.uid);
-
-      match /orders/{orderId} {
-        allow create: if get(/databases/$(database)/documents/publicStores/$(storeSlug)).data.published == true
-          && request.resource.data.storeSlug == storeSlug
-          && request.resource.data.customerName is string
-          && request.resource.data.customerName.size() <= 80
-          && request.resource.data.customerPhone is string
-          && request.resource.data.customerPhone.size() <= 30
-          && request.resource.data.items is list
-          && request.resource.data.items.size() <= 50
-          && request.resource.data.total is number
-          && request.resource.data.total >= 0
-          && request.resource.data.total <= 1000000
-          && request.resource.data.source == "whatsapp_manual";
-        allow read, update: if isAdmin() || (signedIn() && get(/databases/$(database)/documents/publicStores/$(storeSlug)).data.publishedBy == request.auth.uid);
-        allow delete: if isAdmin() || (signedIn() && get(/databases/$(database)/documents/publicStores/$(storeSlug)).data.publishedBy == request.auth.uid);
+      match /saved/{postId} {
+        allow read, write: if isSelf(uid);
       }
     }
 
-    match /contact_messages/{messageId} {
-      allow create: if true;
-      allow read, update, delete: if isAdmin();
+    /* Handle reservations: one document per handle, owned by its user. */
+    match /usernames/{handle} {
+      allow read: if true;
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && handle.matches('^[a-z0-9_]{3,20}$');
+      allow update: if signedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
     }
 
-    match /payment_confirmations/{paymentId} {
-      allow create: if signedIn();
-      allow read: if isAdmin() || (signedIn() && resource.data.userId == request.auth.uid);
-      allow update, delete: if isAdmin();
+    /* ---------------------------------------------------------------- */
+    /* posts                                                             */
+    /* ---------------------------------------------------------------- */
+
+    match /posts/{postId} {
+      allow read: if true;
+
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && shortText(request.resource.data.text)
+        && request.resource.data.likeCount == 0
+        && request.resource.data.commentCount == 0
+        && request.resource.data.repostCount == 0;
+
+      // Author edits content; anyone may move the counters (like/reply/repost).
+      allow update: if signedIn()
+        && (
+          (resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['text', 'imageUrl', 'hashtags', 'mentions', 'updatedAt']))
+          || request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['likeCount', 'commentCount', 'repostCount'])
+        );
+
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if signedIn()
+          && request.resource.data.uid == request.auth.uid
+          && shortText(request.resource.data.text);
+        // Author of the comment, or author of the post, can remove it.
+        allow delete: if signedIn()
+          && (resource.data.uid == request.auth.uid
+              || get(/databases/$(database)/documents/posts/$(postId)).data.uid == request.auth.uid);
+      }
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* follow graph                                                      */
+    /* ---------------------------------------------------------------- */
+
+    match /follows/{uid} {
+      match /following/{targetUid} {
+        allow read: if true;
+        allow create, delete: if isSelf(uid);
+      }
+      match /followers/{followerUid} {
+        allow read: if true;
+        // The follower adds themselves; either side can remove the edge.
+        allow create: if signedIn() && followerUid == request.auth.uid;
+        allow delete: if signedIn() && (followerUid == request.auth.uid || isSelf(uid));
+      }
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* notifications                                                     */
+    /* ---------------------------------------------------------------- */
+
+    match /notifications/{notificationId} {
+      allow read: if signedIn() && resource.data.toUid == request.auth.uid;
+
+      allow create: if signedIn()
+        && request.resource.data.fromUid == request.auth.uid
+        && request.resource.data.toUid != request.auth.uid
+        && request.resource.data.type in ['like', 'comment', 'follow', 'mention', 'repost', 'message']
+        && request.resource.data.read == false;
+
+      // Recipients may only flip the read flag.
+      allow update: if signedIn()
+        && resource.data.toUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+
+      allow delete: if signedIn() && resource.data.toUid == request.auth.uid;
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* trending hashtags                                                 */
+    /* ---------------------------------------------------------------- */
+
+    match /hashtags/{tag} {
+      allow read: if true;
+      allow create, update: if signedIn();
+      allow delete: if false;
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* direct messages                                                   */
+    /* ---------------------------------------------------------------- */
+
+    match /conversations/{conversationId} {
+      function participantOf(data) {
+        return signedIn() && request.auth.uid in data.participants;
+      }
+
+      allow read: if participantOf(resource.data);
+
+      allow create: if signedIn()
+        && request.auth.uid in request.resource.data.participants
+        && request.resource.data.participants.size() == 2;
+
+      allow update: if participantOf(resource.data);
+      allow delete: if participantOf(resource.data);
+
+      match /messages/{messageId} {
+        allow read: if participantOf(
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data
+        );
+
+        allow create: if participantOf(
+            get(/databases/$(database)/documents/conversations/$(conversationId)).data
+          )
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 1000;
+
+        allow update: if participantOf(
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data
+        );
+      }
     }
   }
 }
