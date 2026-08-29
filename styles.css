@@ -3486,3 +3486,6 @@ html.light .panel {
 .directory-card p { margin:0; color:var(--muted); line-height:1.5; flex:1; }
 .directory-card small { color:var(--muted); }
 .directory-icon { width:42px; height:42px; display:grid; place-items:center; border-radius:13px; background:var(--surface-2); font-size:1.35rem; }
+
+.check-row { display:flex; align-items:center; gap:9px; color:var(--muted); font-size:.9rem; margin:8px 0 18px; }
+.check-row input { width:18px; height:18px; accent-color:var(--accent); }

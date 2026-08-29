@@ -126,7 +126,7 @@ service cloud.firestore {
         && (
           (resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['caption','hashtags','mentions','thumbnailUrl','soundTitle','soundId','soundUrl','isPublic','updatedAt']))
+                 .hasOnly(['caption','hashtags','mentions','thumbnailUrl','soundTitle','soundId','soundUrl','isPublic','allowComments','updatedAt']))
           || request.resource.data.diff(resource.data).affectedKeys()
                .hasOnly(['likeCount','commentCount','viewCount','shareCount'])
         );
@@ -136,6 +136,7 @@ service cloud.firestore {
       match /comments/{commentId} {
         allow read: if true;
         allow create: if signedIn()
+          && get(/databases/$(database)/documents/videos/$(videoId)).data.allowComments != false
           && request.resource.data.uid == request.auth.uid
           && shortText(request.resource.data.text, 500);
         allow delete: if signedIn()

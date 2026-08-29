@@ -80,6 +80,7 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
             <textarea id="caption" rows="3" maxlength="1000" placeholder="Add a caption… e.g. My first video! #zambia #gospel"></textarea>
             <small class="field-hint"><span id="caption-count">0</span>/1000</small>
           </label>
+          <label class="check-row"><input type="checkbox" id="allow-comments" checked /> <span>Allow comments on this post</span></label>
 
           <div class="field">
             <span>Sound <em>(optional)</em> — pick a free sound or original audio</span>
@@ -122,8 +123,9 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
             <label class="field">
               <span>Caption <em>(optional)</em> — #hashtags and @mentions are linked</span>
               <textarea id="photo-caption" rows="3" maxlength="1000" placeholder="Add a caption… e.g. Sunday service 🙏 #gospel #zambia"></textarea>
-              <small class="field-hint"><span id="photo-caption-count">0</span>/1000</small>
-            </label>
+            <small class="field-hint"><span id="photo-caption-count">0</span>/1000</small>
+          </label>
+          <label class="check-row"><input type="checkbox" id="allow-photo-comments" checked /> <span>Allow comments on this post</span></label>
             <div class="create-actions">
               <button class="btn btn-primary btn-block" type="submit" id="photo-post-btn" disabled>Post photos</button>
               <p class="fine-print">By posting you confirm you own the rights to these photos.</p>
@@ -632,6 +634,7 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
             mediaType: "photo",
             images: urls,
             caption: photoCaption.value.trim(),
+            allowComments: root.querySelector("#allow-photo-comments")?.checked !== false,
           });
 
           toast("Photo post published!", "success");
@@ -681,6 +684,7 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
             width: result.width,
             height: result.height,
             cloudinaryPublicId: result.publicId,
+            allowComments: root.querySelector("#allow-comments")?.checked !== false,
           });
 
           toast("Video posted!", "success");

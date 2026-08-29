@@ -334,6 +334,7 @@ export async function createVideo(author, {
   width = 0,
   height = 0,
   cloudinaryPublicId = "",
+  allowComments = true,
 }) {
   const cap = String(caption || "").trim().slice(0, 1000);
 
@@ -369,6 +370,7 @@ export async function createVideo(author, {
     cloudinaryPublicId: cloudinaryPublicId || "",
     likeCount: 0,
     commentCount: 0,
+    allowComments: allowComments !== false,
     viewCount: 0,
     shareCount: 0,
     isPublic: true,

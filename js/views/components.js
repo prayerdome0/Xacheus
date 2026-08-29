@@ -79,10 +79,10 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
           <em data-count="like">${formatCount(video.likeCount)}</em>
         </button>
 
-        <button class="v-action" type="button" data-act="comment">
+        ${video.allowComments === false ? "" : `<button class="v-action" type="button" data-act="comment">
           <span class="v-icon"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.5-4.5A8 8 0 1 1 21 12z"/></svg></span>
           <em data-count="comment">${formatCount(video.commentCount)}</em>
-        </button>
+        </button>`}
 
         <button class="v-action ${saved ? "is-on" : ""}" type="button" data-act="save" aria-pressed="${saved}">
           <span class="v-icon"><svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg></span>
