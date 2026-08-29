@@ -15,6 +15,8 @@ import {
   ensureProfile,
   isUsernameTaken,
   normaliseUsername,
+  setDeferProfileCreation,
+  setPendingProfileDefaults,
   suggestUsername,
   updateProfile,
   usernameError,
@@ -309,19 +311,34 @@ export function mountAuth(host, { onAuthenticated }) {
   async function runGoogle() {
     if (busy) return;
     setBusy(true, "Opening Google…");
+    // For brand-new Google users we must NOT create the profile yet — the user
+    // still has to pick a role on the handle form, and a role can only be set
+    // when the doc is first created. Defer creation until onHandleSubmit.
+    setDeferProfileCreation(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const isNew = !result.user.metadata?.lastSignInTime || result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
       const profile = await ensureProfile(result.user);
-      if (isNew) {
-        host.innerHTML = shell(handleView(profile));
+      if (isNew || !profile) {
+        const seedUsername = await suggestUsername(
+          result.user.displayName || (result.user.email || "").split("@")[0] || "user"
+        ).catch(() => "");
+        const draft = profile || {
+          displayName: result.user.displayName || "",
+          username: seedUsername,
+          bio: "",
+          role: "user",
+        };
+        host.innerHTML = shell(handleView(draft));
         host.querySelector("#handle-form")?.addEventListener("submit", onHandleSubmit);
         wireUsernameHint(host);
       } else {
+        setDeferProfileCreation(false);
         await afterAuth(result.user);
       }
       setBusy(false);
     } catch (error) {
+      setDeferProfileCreation(false);
       setBusy(false);
       if (error?.code === "auth/popup-closed-by-user") return;
       if (error?.code === "auth/cancelled-popup-request") return;
@@ -349,43 +366,45 @@ export function mountAuth(host, { onAuthenticated }) {
     setBusy(true, "Saving…");
     try {
       const current = auth.currentUser;
-      const taken = await isUsernameTaken(username);
-      if (taken) {
-        const owner = await ensureProfile(current);
-        if (!owner || owner.username !== username) {
+      if (!current) {
+        setDeferProfileCreation(false);
+        toast("Your session expired. Please sign in again.", "error");
+        return setBusy(false);
+      }
+
+      // Is the handle free (or already ours)?
+      const { getProfile } = await import("./data.js");
+      const existing = await getProfile(current.uid).catch(() => null);
+      if (await isUsernameTaken(username)) {
+        if (!existing || existing.username !== username) {
           toast("That handle is taken. Try another.", "error");
           return setBusy(false);
         }
       }
-      await updateProfile(current.uid, {
-        displayName,
-        username,
-        bio,
-        displayNameLower: displayName.toLowerCase(),
-      }).catch(() => {});
-      const { changeUsername } = await import("./data.js");
-      await changeUsername(current.uid, username).catch(() => {});
-      // Set role only if not already set (first time)
-      const prof = await ensureProfile(current);
-      if (prof && prof.role === "user" && role !== "user") {
-        // Allow first-time role selection from user to creator/business/church via client
-        // Rules allow role change only via admin, so we need to allow initial role via special path?
-        // For now, we store desired role in Firestore via admin check bypass: we allow role change if current role is user and requested role != admin
-        // Since rules block role, we need to do it via update that includes role? Actually rules block self role update, so we need to handle differently.
-        // Workaround: we set role via direct doc update if user is new and role is not admin - rules currently block, so we will rely on ensureProfile extra handling for Google new users.
-        // For email users, we set role during ensureProfile creation via extra.role which is allowed because create allows role=user only.
-        // So for handle form, we can't change role if rules block. We'll show info that role change needs admin for now, but we save bio.
-        // Instead, we attempt to set role via cloud function? For phase1, we allow role change only if admin; otherwise keep user.
-        // We'll attempt anyway and catch.
-        const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js");
-        const { db } = await import("./firebase.js");
-        try {
-          await updateDoc(doc(db, "users", current.uid), { role });
-        } catch {}
+
+      if (!existing) {
+        // First time: create the profile now, WITH the chosen role. A non-admin
+        // can only set a role at creation, so this is our one chance.
+        setPendingProfileDefaults({ displayName, username, role, bio });
+        setDeferProfileCreation(false);
+        await ensureProfile(current, { displayName, username, role, bio, __commit: true });
+      } else {
+        // Profile already existed (e.g. returning user editing handle): update
+        // the mutable fields. Role is immutable for non-admins by design.
+        await updateProfile(current.uid, {
+          displayName,
+          bio,
+          displayNameLower: displayName.toLowerCase(),
+        }).catch(() => {});
+        const { changeUsername } = await import("./data.js");
+        await changeUsername(current.uid, username).catch(() => {});
       }
-      await afterAuth(current, { displayName, username, bio, role });
+
+      await afterAuth(current, { displayName, username, bio });
       setBusy(false);
     } catch (error) {
+      setDeferProfileCreation(false);
+      setPendingProfileDefaults(null);
       setBusy(false);
       console.warn("[xacheus] handle save", error);
       toast(friendlyAuthError(error), "error", 5000);
@@ -433,15 +452,17 @@ export function mountAuth(host, { onAuthenticated }) {
         toast("That handle is taken — try another.", "error");
         return setBusy(false);
       }
+
+      // Stash the chosen handle/display name/role BEFORE the auth user exists.
+      // The instant createUserWithEmailAndPassword resolves, the global
+      // onAuthStateChanged listener fires and may call ensureProfile itself —
+      // these defaults make sure the profile is created once, with the values
+      // the user actually picked (role can only be set at creation time).
+      setPendingProfileDefaults({ displayName, username, role, bio: "" });
+
       const result = await createUserWithEmailAndPassword(auth, email, password);
-      await updateAuthProfile(result.user, { displayName });
-      // For new user, ensureProfile will create with default role user; we then attempt to set chosen role via admin-allowed path?
-      // Since create rule only allows role=user, we first create, then if role != user, try to update via special allowance for first-time?
-      // Rules block role update for non-admin, so we need to allow initial role via extra param in ensureProfile that is checked?
-      // For now, we set role in Firestore directly after creation bypassing rules? Rules will block non-admin role change, so we keep as user and show toast.
-      // Better: allow role selection for new accounts by passing extra.role and having create rule allow role in allowed list (not admin).
-      // We updated rules to allow role=user only on create, but we should allow creator/business/church as well on create.
-      // For phase1 quick fix, we update profile after creation via updateDoc that will fail if not admin; so we keep user role and inform.
+      await updateAuthProfile(result.user, { displayName }).catch(() => {});
+
       await afterAuth(result.user, { displayName, username, role, bio: "" });
       sendEmailVerification(result.user).catch(() => {});
       setTimeout(() => {
@@ -451,6 +472,7 @@ export function mountAuth(host, { onAuthenticated }) {
       }, 1200);
       setBusy(false);
     } catch (error) {
+      setPendingProfileDefaults(null);
       setBusy(false);
       toast(friendlyAuthError(error), "error", 5000);
     }

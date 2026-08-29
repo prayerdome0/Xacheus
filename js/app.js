@@ -8,6 +8,7 @@ import {
   ensureProfile,
   getSuggestedUsers,
   getTrending,
+  isDeferringProfileCreation,
   watchProfile,
   isAdminProfile,
 } from "./data.js";
@@ -284,8 +285,12 @@ function openAuthOverlay() {
   document.body.classList.add("no-scroll");
   if (!authController) {
     authController = mountAuth(overlay, {
-      onAuthenticated() {
-        closeAuthOverlay();
+      onAuthenticated(user, profile) {
+        // Fully activate the session from the auth flow too. For deferred
+        // sign-ups (new Google user) the global onAuthStateChanged listener
+        // won't fire again, so we must paint the session here.
+        if (user && profile) activateSession(user, profile);
+        else closeAuthOverlay();
       },
     });
   } else {
@@ -508,6 +513,22 @@ function paintSession() {
   }
 }
 
+function activateSession(user, profile) {
+  state.user = user;
+  state.profile = profile;
+  paintSession();
+  refreshRail();
+  closeAuthOverlay();
+
+  unsubProfile?.();
+  unsubProfile = watchProfile(user.uid, (fresh) => {
+    if (fresh) state.profile = fresh;
+    paintSession();
+  });
+
+  render();
+}
+
 function finishBoot() {
   const bootScreen = document.querySelector("#boot");
   if (!bootScreen || bootScreen.hidden) return;
@@ -555,22 +576,16 @@ function boot() {
     }
 
     if (!profile) {
+      // No profile yet. If an onboarding flow is deliberately deferring
+      // creation (new Google user still choosing a handle/role), do NOT sign
+      // them out — the handle form will finish creating the profile and call
+      // activateSession itself. Only sign out on a genuine failure.
+      if (isDeferringProfileCreation()) return;
       await signOut(auth).catch(() => {});
       return;
     }
 
-    state.profile = profile;
-    paintSession();
-    refreshRail();
-    closeAuthOverlay();
-
-    unsubProfile?.();
-    unsubProfile = watchProfile(user.uid, (fresh) => {
-      if (fresh) state.profile = fresh;
-      paintSession();
-    });
-
-    render();
+    activateSession(user, profile);
   });
 
   render();

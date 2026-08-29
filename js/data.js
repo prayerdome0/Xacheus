@@ -144,21 +144,46 @@ export async function suggestUsername(base) {
   return `${stem.slice(0, 10)}${Date.now().toString().slice(-6)}`;
 }
 
-export async function ensureProfile(user, extra = {}) {
-  if (!user) return null;
-  const ref = doc(db, "users", user.uid);
-  const snap = await withRetry(() => getDoc(ref));
-  if (snap.exists()) {
-    const data = snap.data();
-    // Ensure role field exists (migration)
-    if (!data.role) {
-      await updateDoc(ref, { role: DEFAULT_ROLE }).catch(() => {});
-      data.role = DEFAULT_ROLE;
-    }
-    return { id: snap.id, ...data };
-  }
+/**
+ * Registration coordination.
+ *
+ * During sign-up two things race to create the profile: the code that just
+ * called createUserWithEmailAndPassword / signInWithPopup, AND the global
+ * onAuthStateChanged listener (which fires the instant the user is signed in).
+ * If both create the doc, the chosen username/role gets clobbered by whichever
+ * call had no context, and duplicate username reservations are written.
+ *
+ * Two guards fix this:
+ *  - `pendingDefaults`: the username/displayName/role the user picked, so ANY
+ *    ensureProfile that ends up doing the creation writes the right data.
+ *  - `inFlight`: dedupes concurrent ensureProfile calls for the same uid to a
+ *    single promise, so only one creation ever runs.
+ *  - `deferCreate`: lets an onboarding flow (Google's handle/role form) tell the
+ *    background listener "don't auto-create yet, I'll create with the chosen
+ *    role" — a non-admin can only set a role at CREATE time (see rules).
+ */
+let pendingDefaults = null;
+let deferCreate = false;
+const inFlight = new Map();
 
-  const seed = normaliseUsername(extra.username || user.displayName || (user.email || "").split("@")[0] || "user") || "user";
+export function setPendingProfileDefaults(defaults) {
+  pendingDefaults = defaults ? { ...defaults } : null;
+}
+
+export function setDeferProfileCreation(value) {
+  deferCreate = Boolean(value);
+}
+
+export function isDeferringProfileCreation() {
+  return deferCreate;
+}
+
+async function createProfile(user, extra) {
+  const ref = doc(db, "users", user.uid);
+  const seed =
+    normaliseUsername(
+      extra.username || user.displayName || (user.email || "").split("@")[0] || "user"
+    ) || "user";
   const seedIsUsable = !usernameError(seed) && !(await isUsernameTaken(seed));
   const username = seedIsUsable ? seed : await suggestUsername(seed);
   const displayName = extra.displayName || user.displayName || username;
@@ -167,14 +192,14 @@ export async function ensureProfile(user, extra = {}) {
     uid: user.uid,
     username,
     displayNameLower: displayName.toLowerCase(),
-    displayName: extra.displayName || user.displayName || username,
+    displayName,
     email: user.email || "",
     photoURL: user.photoURL || "",
     coverURL: "",
     bio: extra.bio || "",
     location: "",
     website: "",
-    role: extra.role && ROLES.includes(extra.role) ? extra.role : DEFAULT_ROLE,
+    role: extra.role && ROLES.includes(extra.role) && extra.role !== "admin" ? extra.role : DEFAULT_ROLE,
     verified: false,
     followersCount: 0,
     followingCount: 0,
@@ -184,11 +209,54 @@ export async function ensureProfile(user, extra = {}) {
     createdAt: serverTimestamp(),
   };
 
-  await withRetry(() => setDoc(ref, profile));
+  // Reserve the handle first: if it collides mid-flight the whole creation
+  // fails cleanly rather than leaving a profile with an unclaimed username.
   await withRetry(() =>
     setDoc(doc(db, "usernames", username), { uid: user.uid, createdAt: serverTimestamp() })
   );
+  await withRetry(() => setDoc(ref, profile));
   return profile;
+}
+
+export async function ensureProfile(user, extra = {}) {
+  if (!user) return null;
+
+  // Merge in any defaults stashed by the sign-up flow (chosen handle/role).
+  const merged = { ...(pendingDefaults || {}), ...extra };
+
+  // Collapse concurrent calls for the same user into one.
+  if (inFlight.has(user.uid)) return inFlight.get(user.uid);
+
+  const run = (async () => {
+    const ref = doc(db, "users", user.uid);
+    const snap = await withRetry(() => getDoc(ref));
+
+    if (snap.exists()) {
+      const data = snap.data();
+      if (!data.role) {
+        await updateDoc(ref, { role: DEFAULT_ROLE }).catch(() => {});
+        data.role = DEFAULT_ROLE;
+      }
+      return { id: snap.id, ...data };
+    }
+
+    // Missing profile. If an onboarding flow asked us to wait (so it can create
+    // with the chosen role), don't auto-create — unless this call is the commit.
+    if (deferCreate && !merged.__commit) return null;
+
+    const profile = await createProfile(user, merged);
+    // Defaults consumed — clear so later calls don't reapply them.
+    pendingDefaults = null;
+    deferCreate = false;
+    return profile;
+  })();
+
+  inFlight.set(user.uid, run);
+  try {
+    return await run;
+  } finally {
+    inFlight.delete(user.uid);
+  }
 }
 
 export async function getProfile(uid) {
