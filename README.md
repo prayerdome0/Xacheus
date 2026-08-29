@@ -73,6 +73,14 @@ Any static server works — this is plain HTML/CSS/ES modules, no bundler.
 
 The app points at project **`xacheus-7c98b`** (config in `js/firebase.js`).
 
+### 0. Make sure Firestore itself is enabled (required)
+
+Signup and login **fail** if the Cloud Firestore API is disabled: Firebase Auth
+accepts the credentials, then the profile load throws and the app signs you
+straight back out. In the Google Cloud Console → **APIs & Services** for the
+project, enable **Cloud Firestore API**, then create the database
+(Firebase Console → **Build → Firestore Database → Create database**).
+
 ### 1. Deploy the rules and indexes (required)
 
 Nothing works until the security rules and composite indexes are live:
@@ -107,7 +115,7 @@ In Firebase Console → **Authentication** → **Sign-in method**, enable
 
 Add every host you serve from (including local and preview domains) under
 **Authentication → Settings → Authorized domains**, or Google sign-in and
-password resets will be blocked.
+password resets will be blocked. Email/password login works from any domain.
 
 ## Image uploads
 

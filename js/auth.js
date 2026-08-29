@@ -41,6 +41,16 @@ const MESSAGES = {
 };
 
 export function friendlyAuthError(error) {
+  if (error?.code === "permission-denied") {
+    const message = String(error?.message || "");
+    if (message.includes("has not been used in project") || message.includes("disabled")) {
+      return (
+        "Cloud Firestore is not enabled for this project yet. Enable it in " +
+        "Google Cloud Console → APIs & Services → Cloud Firestore API, create the database, then try again."
+      );
+    }
+    return "Firestore rejected this write. Deploy firestore.rules (npm run deploy), then try again.";
+  }
   return MESSAGES[error?.code] || error?.message || "Something went wrong. Please try again.";
 }
 
@@ -56,9 +66,8 @@ function shell(innerHtml) {
     <div class="auth-wrap">
       <section class="auth-hero" aria-label="About Xacheus Social">
         <div class="auth-hero-inner">
-          <a class="brand brand-lg" href="#/home">
-            <span class="brand-mark" aria-hidden="true">X</span>
-            <span>Xacheus</span>
+          <a class="brand brand-lg" href="#/home" aria-label="Xacheus home">
+            <img class="brand-logo" src="assets/icon.svg" alt="Xacheus" />
           </a>
           <h1>The social network for people building something.</h1>
           <p class="auth-hero-text">
