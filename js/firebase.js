@@ -45,16 +45,19 @@ export const auth = getAuth(firebaseApp);
  * instead of throwing.
  */
 export const db = (() => {
+  // Preview iframes, VPNs and some browsers block Firestore's WebChannel
+  // stream, which surfaces as "client is offline". Force HTTP long-polling
+  // and keep the cache in memory so IndexedDB never poisons the client.
+  const settings = {
+    experimentalForceLongPolling: true,
+    useFetchStreams: false,
+    localCache: memoryLocalCache(),
+  };
   try {
-    return initializeFirestore(firebaseApp, {
-      experimentalAutoDetectLongPolling: true,
-      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
-    });
-  } catch (error) {
+    return initializeFirestore(firebaseApp, settings);
+  } catch {
     try {
-      return initializeFirestore(firebaseApp, {
-        experimentalAutoDetectLongPolling: true,
-      });
+      return initializeFirestore(firebaseApp, { experimentalForceLongPolling: true });
     } catch {
       return getFirestore(firebaseApp);
     }

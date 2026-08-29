@@ -102,11 +102,37 @@ export function extractMentions(text) {
 /* profiles + roles                                                    */
 /* ------------------------------------------------------------------ */
 
+async function withRetry(fn, attempts = 4) {
+  let lastError;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const code = String(error?.code || "");
+      const msg = String(error?.message || "");
+      const retryable =
+        code === "unavailable" ||
+        code === "deadline-exceeded" ||
+        msg.includes("client is offline") ||
+        msg.includes("Failed to get document");
+      if (!retryable || i === attempts - 1) throw error;
+      await new Promise((r) => setTimeout(r, 350 * (i + 1)));
+    }
+  }
+  throw lastError;
+}
+
 export async function isUsernameTaken(username) {
   const handle = normaliseUsername(username);
   if (!handle) return true;
-  const snap = await getDoc(doc(db, "usernames", handle));
-  return snap.exists();
+  try {
+    const snap = await withRetry(() => getDoc(doc(db, "usernames", handle)));
+    return snap.exists();
+  } catch (error) {
+    console.warn("[xacheus] username check", error);
+    return false;
+  }
 }
 
 export async function suggestUsername(base) {
@@ -121,7 +147,7 @@ export async function suggestUsername(base) {
 export async function ensureProfile(user, extra = {}) {
   if (!user) return null;
   const ref = doc(db, "users", user.uid);
-  const snap = await getDoc(ref);
+  const snap = await withRetry(() => getDoc(ref));
   if (snap.exists()) {
     const data = snap.data();
     // Ensure role field exists (migration)
@@ -158,8 +184,10 @@ export async function ensureProfile(user, extra = {}) {
     createdAt: serverTimestamp(),
   };
 
-  await setDoc(ref, profile);
-  await setDoc(doc(db, "usernames", username), { uid: user.uid, createdAt: serverTimestamp() });
+  await withRetry(() => setDoc(ref, profile));
+  await withRetry(() =>
+    setDoc(doc(db, "usernames", username), { uid: user.uid, createdAt: serverTimestamp() })
+  );
   return profile;
 }
 
