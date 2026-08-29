@@ -1217,6 +1217,27 @@ export async function isFollowing(uid, targetUid) {
   const snap = await getDoc(followingRef(uid, targetUid));
   return snap.exists();
 }
+export async function isBlocked(uid, targetUid) {
+  if (!uid || !targetUid || uid === targetUid) return false;
+  const snap = await getDoc(doc(db, "users", uid, "blocked", targetUid));
+  return snap.exists();
+}
+export async function toggleBlock(uid, target) {
+  if (!uid || !target?.uid || uid === target.uid) throw new Error("You cannot block yourself.");
+  const ref = doc(db, "users", uid, "blocked", target.uid);
+  const snap = await getDoc(ref);
+  if (snap.exists()) {
+    await deleteDoc(ref);
+    return false;
+  }
+  await setDoc(ref, { uid: target.uid, username: target.username || "", displayName: target.displayName || "", createdAt: serverTimestamp() });
+  return true;
+}
+export async function getBlockedIds(uid) {
+  if (!uid) return [];
+  const snap = await getDocs(collection(db, "users", uid, "blocked"));
+  return snap.docs.map((d) => d.id);
+}
 export async function getFollowingIds(uid) {
   const snap = await getDocs(query(collection(db, "follows", uid, "following"), limit(500)));
   return snap.docs.map((d) => d.id);

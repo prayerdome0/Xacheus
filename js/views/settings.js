@@ -9,7 +9,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
 import { auth } from "../firebase.js";
-import { purgeUserData } from "../data.js";
+import { purgeUserData, updateProfile } from "../data.js";
 import { avatar, confirmDialog, esc, openModal, toast } from "../ui.js";
 
 export function settingsView(ctx) {
@@ -65,6 +65,18 @@ export function settingsView(ctx) {
             )
             .join("")}
         </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Privacy and safety</h2>
+      <div class="setting-row">
+        <div class="setting-main"><div><strong>Private account</strong><em>Only approved followers can follow you and see your posts.</em></div></div>
+        <button class="btn btn-outline btn-sm" type="button" data-act="private-toggle" aria-pressed="${Boolean(me.private)}">${me.private ? "On" : "Off"}</button>
+      </div>
+      <div class="setting-row">
+        <div class="setting-main"><div><strong>Comment safety</strong><em>Manage comments from each post before publishing it.</em></div></div>
+        <span class="badge">Available per post</span>
       </div>
     </section>
 
@@ -133,6 +145,21 @@ export function settingsView(ctx) {
         const trigger = event.target.closest("[data-act]");
         if (!trigger) return;
         const act = trigger.dataset.act;
+
+        if (act === "private-toggle") {
+          const next = !Boolean(ctx.state.profile.private);
+          trigger.disabled = true;
+          try {
+            await updateProfile(ctx.state.profile.uid, { private: next });
+            ctx.state.profile.private = next;
+            trigger.textContent = next ? "On" : "Off";
+            trigger.setAttribute("aria-pressed", String(next));
+            toast(next ? "Private account enabled" : "Private account disabled", "success");
+          } catch (error) {
+            toast(error?.message || "Could not update privacy setting", "error");
+          } finally { trigger.disabled = false; }
+          return;
+        }
 
         if (act === "verify") {
           sendEmailVerification(auth.currentUser)

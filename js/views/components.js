@@ -9,6 +9,7 @@ import {
   getSavedVideoIds,
   isFollowing,
   toggleFollow,
+  toggleBlock,
   reportVideo,
 } from "../data.js";
 import { avatar, esc, formatCount, gradientFor, timeAgo, toast, openModal, confirmDialog, copyText, richText } from "../ui.js";
@@ -96,6 +97,11 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
         <button class="v-action" type="button" data-act="report" aria-label="Report post">
           <span class="v-icon"><svg viewBox="0 0 24 24"><path d="M5 21V4m0 0c4-3 7 3 14 0v9c-7 3-10-3-14 0"/></svg></span>
           <em>Report</em>
+        </button>
+
+        <button class="v-action" type="button" data-act="block" aria-label="Block creator">
+          <span class="v-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m6 6 12 12"/></svg></span>
+          <em>Block</em>
         </button>
 
         ${isPhoto ? "" : `
@@ -248,6 +254,19 @@ export function bindVideoActions(root, ctx) {
       } catch (error) {
         toast(error?.message || "Could not submit report", "error");
       }
+      return;
+    }
+
+    if (act === "block") {
+      if (!ctx.state.profile) return ctx.requireAuth();
+      if (video.uid === ctx.state.profile.uid) return toast("You cannot block yourself.", "error");
+      const ok = await confirmDialog({ title: `Block @${video.username || "this creator"}?`, body: "Their posts will no longer appear in your feed. You can unblock them later from your settings.", confirmLabel: "Block", danger: true });
+      if (!ok) return;
+      try {
+        await toggleBlock(ctx.state.profile.uid, video);
+        card.remove();
+        toast(`Blocked @${video.username}`, "success");
+      } catch (error) { toast(error?.message || "Could not block creator", "error"); }
       return;
     }
 

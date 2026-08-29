@@ -74,6 +74,10 @@ service cloud.firestore {
       match /favoriteSounds/{soundId} {
         allow read, write: if isSelf(uid);
       }
+      match /blocked/{targetUid} {
+        allow read, create, delete: if isSelf(uid);
+        allow update: if false;
+      }
       // legacy liked/saved for posts
       match /liked/{postId} {
         allow read, write: if isSelf(uid);

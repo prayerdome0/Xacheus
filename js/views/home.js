@@ -1,6 +1,6 @@
 /** Xacheus — Home vertical video feed (Phase 1) */
 
-import { bumpVideoView, fetchVideoPage, getFollowingIds, watchVideoFeed } from "../data.js";
+import { bumpVideoView, fetchVideoPage, getFollowingIds, getBlockedIds, watchVideoFeed } from "../data.js";
 import { emptyState, toast } from "../ui.js";
 import { bindVideoActions, hydrateVideoStates, videoCardHtml } from "./components.js";
 
@@ -14,6 +14,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
   let lastDocs = [];
   let loadingMore = false;
   let followingIds = [];
+  let blockedIds = [];
   let destroyed = false;
   let observer = null;
 
@@ -140,6 +141,8 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
     const feed = root.querySelector("#video-feed");
     feed.innerHTML = `<div class="loader-row"><span class="spinner"></span> Loading videos…</div>`;
 
+    blockedIds = ctx.state.profile ? await getBlockedIds(ctx.state.profile.uid).catch(() => []) : [];
+
     if (mode === "following") {
       if (!ctx.state.profile) {
         feed.innerHTML = emptyState("🔒", "Log in to see following", "Create a free account to follow creators.", '<button class="btn btn-primary btn-sm" type="button" data-act="login">Log in</button>');
@@ -158,8 +161,9 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
       uid: ctx.state.profile?.uid,
       followingIds,
       onData: (videos, docs) => {
+        const visible = (videos || []).filter((video) => !blockedIds.includes(video.uid));
         lastDocs = docs || [];
-        renderVideos(root, videos);
+        renderVideos(root, visible);
       },
     });
   }
@@ -203,11 +207,12 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
               afterDoc: lastDocs[lastDocs.length - 1],
             });
             const feed = root.querySelector("#video-feed");
-            if (items.length) {
+            const visibleItems = items.filter((v) => !blockedIds.includes(v.uid));
+            if (visibleItems.length) {
               const frag = document.createElement("div");
-              frag.innerHTML = items.map((v) => videoCardHtml(v)).join("");
+              frag.innerHTML = visibleItems.map((v) => videoCardHtml(v)).join("");
               feed.appendChild(frag);
-              items.forEach((v) => ctx.videoCache.set(v.id, v));
+              visibleItems.forEach((v) => ctx.videoCache.set(v.id, v));
               await hydrateVideoStates(frag, ctx.state.profile?.uid);
               setupIntersection(feed);
               lastDocs = docs;
