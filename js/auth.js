@@ -41,6 +41,13 @@ const MESSAGES = {
 };
 
 export function friendlyAuthError(error) {
+  const raw = String(error?.message || "");
+  if (error?.code === "unavailable" || raw.includes("client is offline")) {
+    return "Couldn't reach the database. Check your connection (or disable VPN/ad-blocker) and try again.";
+  }
+  if (error?.code === "failed-precondition" && raw.includes("Firestore")) {
+    return "Cloud Firestore isn't reachable. Make sure the database is created and try again.";
+  }
   if (error?.code === "permission-denied") {
     const message = String(error?.message || "");
     if (message.includes("has not been used in project") || message.includes("disabled")) {

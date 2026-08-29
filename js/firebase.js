@@ -13,7 +13,10 @@ import {
   browserLocalPersistence,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import {
+  initializeFirestore,
   getFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   serverTimestamp,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
@@ -28,7 +31,35 @@ const firebaseConfig = {
 
 export const firebaseApp = initializeApp(firebaseConfig);
 export const auth = getAuth(firebaseApp);
-export const db = getFirestore(firebaseApp);
+/**
+ * Firestore transport.
+ *
+ * Some networks, proxies, VPNs, browser extensions and in-app browsers block
+ * the default WebChannel streaming connection. When that happens every read
+ * fails with "Failed to get document because the client is offline", even
+ * though the device clearly has internet.
+ *
+ * `experimentalAutoDetectLongPolling` lets the SDK notice a blocked stream and
+ * fall back to HTTP long-polling, which fixes that class of failure. We also
+ * enable a persistent local cache so a temporary blip serves cached data
+ * instead of throwing.
+ */
+export const db = (() => {
+  try {
+    return initializeFirestore(firebaseApp, {
+      experimentalAutoDetectLongPolling: true,
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    });
+  } catch (error) {
+    try {
+      return initializeFirestore(firebaseApp, {
+        experimentalAutoDetectLongPolling: true,
+      });
+    } catch {
+      return getFirestore(firebaseApp);
+    }
+  }
+})();
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: "select_account" });
 

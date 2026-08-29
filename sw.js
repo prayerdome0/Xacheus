@@ -3,7 +3,7 @@
  * Caches app shell, never caches Firebase or Cloudinary.
  */
 
-const CACHE_NAME = "xacheus-video-v2";
+const CACHE_NAME = "xacheus-video-v3";
 const SHELL = [
   "./",
   "./index.html",
@@ -61,6 +61,23 @@ self.addEventListener("fetch", (event) => {
         caches.open(CACHE_NAME).then((c) => c.put("./index.html", copy));
         return res;
       }).catch(() => caches.match("./index.html").then((hit) => hit || caches.match("./")))
+    );
+    return;
+  }
+
+  // Network-first for app code so a stale cached bundle can never pin users to
+  // an old (broken) build; cache-first for everything else (icons, images).
+  const isCode = /\.(js|css|json)$/.test(url.pathname);
+
+  if (isCode) {
+    event.respondWith(
+      fetch(req).then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((c) => c.put(req, copy));
+        }
+        return res;
+      }).catch(() => caches.match(req))
     );
     return;
   }
