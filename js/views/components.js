@@ -13,7 +13,7 @@ import {
   reportVideo,
 } from "../data.js";
 import { avatar, esc, formatCount, gradientFor, timeAgo, toast, openModal, confirmDialog, copyText, richText } from "../ui.js";
-import { uploadAudio } from "../cloudinary.js";
+import { deliveryUrl, uploadAudio } from "../cloudinary.js";
 
 export function liveThumb(live) {
   if (live?.thumbnailUrl) return `<img src="${esc(live.thumbnailUrl)}" alt="" loading="lazy" />`;
@@ -47,7 +47,7 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
     : `
       <video
         class="video-player"
-        src="${esc(video.videoUrl)}"
+        src="${esc(deliveryUrl(video.videoUrl, { dataSaver: localStorage.getItem("xacheus_dataSaver") === "1" }))}"
         poster="${esc(video.thumbnailUrl || "")}"
         loop
         playsinline

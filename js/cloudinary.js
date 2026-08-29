@@ -128,6 +128,13 @@ export async function uploadVideo(file, { onProgress } = {}) {
 /**
  * Upload audio File -> { url, publicId, duration }
  */
+export function deliveryUrl(url, { dataSaver = false } = {}) {
+  const value = String(url || "");
+  if (!value.includes("res.cloudinary.com/") || !value.includes("/upload/")) return value;
+  const transform = dataSaver ? "q_auto:eco,w_720" : "q_auto,w_1080";
+  return value.replace("/upload/", `/upload/${transform}/`);
+}
+
 export async function uploadAudio(file, { onProgress } = {}) {
   if (!file) return null;
   try {
