@@ -24,6 +24,7 @@ const SHELL = [
   "./js/views/messages.js",
   "./js/views/live.js",
   "./js/views/settings.js",
+  "./js/views/analytics.js",
   "./js/views/admin.js",
   "./assets/icon.svg",
 ];

@@ -3472,3 +3472,10 @@ html.light .panel {
     padding: 10px 8px;
   }
 }
+
+/* Creator analytics */
+.analytics-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+.analytics-stat { display:flex; flex-direction:column; gap:5px; min-height:96px; justify-content:center; }
+.analytics-stat strong { font-size:1.65rem; letter-spacing:-.04em; }
+.analytics-stat span { color:var(--muted); font-size:.82rem; }
+@media (max-width:700px) { .analytics-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }

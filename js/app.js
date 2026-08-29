@@ -21,6 +21,7 @@ import { createView } from "./views/create.js";
 import { notificationsView } from "./views/notifications.js";
 import { profileView } from "./views/profile.js";
 import { settingsView } from "./views/settings.js";
+import { analyticsView } from "./views/analytics.js";
 import { adminView } from "./views/admin.js";
 import { soundsView, soundDetailView } from "./views/sounds.js";
 import { messagesView, chatView } from "./views/messages.js";
@@ -284,6 +285,7 @@ function toggleAccountMenu(anchor) {
       </div>
     </div>
     <a class="account-item" href="#/u/${esc(state.profile.username)}">View profile</a>
+    <a class="account-item" href="#/analytics">Creator analytics</a>
     <a class="account-item" href="#/settings">Settings</a>
     ${isAdmin ? `<a class="account-item" href="#/admin">Admin panel</a>` : ""}
     <button class="account-item" type="button" data-act="signout">Sign out</button>`;
@@ -390,6 +392,8 @@ function resolveRoute() {
       return { view: profileView(ctx, { username: state.profile?.username, tab: params.tab }), key: "me" };
     case "settings":
       return { view: settingsView(ctx), key: "settings" };
+    case "analytics":
+      return { view: analyticsView(ctx), key: "analytics" };
     case "admin":
       if (!isAdminProfile(state.profile)) {
         return { view: homeView(ctx), key: "home" };
@@ -400,7 +404,7 @@ function resolveRoute() {
   }
 }
 
-const AUTH_ROUTES = new Set(["create", "notifications", "inbox", "messages", "dm", "settings", "admin"]);
+const AUTH_ROUTES = new Set(["create", "notifications", "inbox", "messages", "dm", "settings", "analytics", "admin"]);
 // live/go is handled inside the broadcast view itself (camera + host identity)
 
 function render() {
