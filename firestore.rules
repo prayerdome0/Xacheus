@@ -1,44 +1,122 @@
 rules_version = '2';
 
-// Xacheus — Production-oriented Firestore rules (short video platform).
+// Xacheus — Firestore security rules.
 // Deploy: firebase deploy --only firestore:rules
-// Principles:
-// - public read for videos, users, sounds, hashtags so guests can browse
-// - writes scoped to owner, counters via ±1 only where needed
-// - role field cannot be escalated by client; only admin can change roles
-// - banned accounts cannot publish new content (see canWrite / isBanned)
-// - reports are create-only for users and admin-read/resolvable
-// - never expose secrets; all protection here
+//
+// Principles
+// - Guests can browse public content; only signed-in, un-banned accounts write.
+// - Owners edit their own content; counters move by ±1 through narrow rules so
+//   no client can invent follower, like or use numbers.
+// - `role` is never client-writable; only an admin changes roles, verified
+//   badges and ban state.
+// - Privacy is enforced here rather than in the UI: private accounts, blocks
+//   and "who may message / comment" are all checked server-side.
+// - Writes are shape-checked (lengths, enums, key whitelists) so a tampered
+//   browser tab cannot turn the database into a dumping ground.
+// - Helpers tolerate documents written before a field existed, so the rules
+//   can be deployed without a backfill.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    /* ---------------------------------------------------------------- */
+    /* shared helpers                                                    */
+    /* ---------------------------------------------------------------- */
     function signedIn() {
       return request.auth != null;
     }
     function isSelf(uid) {
       return signedIn() && request.auth.uid == uid;
     }
+    function userData(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
     function existingUser() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+      return userData(request.auth.uid);
+    }
+    function userExists(uid) {
+      return exists(/databases/$(database)/documents/users/$(uid));
     }
     function isAdmin() {
       return signedIn() && existingUser() != null && existingUser().role == "admin";
     }
     function isBanned() {
-      // Safe for brand-new users whose doc may not exist yet.
       return signedIn() && existingUser() != null && existingUser().banned == true;
     }
-    // The gate for all content writes by an established user: signed-in AND not banned.
+    // The gate for every content write: signed in AND not banned.
     function canWrite() {
       return signedIn() && !isBanned();
     }
     function shortText(v, max) {
       return v is string && v.size() <= max;
     }
+    function oneOf(v, allowed) {
+      return v in allowed;
+    }
+
+    // `users.private` is the canonical privacy flag (kept in step with
+    // prefs.privacy.privateAccount by js/social.js).
+    function isPrivateAccount(uid) {
+      return userExists(uid) && userData(uid).private == true;
+    }
+    function privacySetting(uid, field, fallback) {
+      return userExists(uid)
+          && userData(uid).prefs != null
+          && userData(uid).prefs.privacy != null
+          && field in userData(uid).prefs.privacy
+        ? userData(uid).prefs.privacy[field]
+        : fallback;
+    }
+    function isFollowerOf(visitorUid, ownerUid) {
+      return exists(/databases/$(database)/documents/follows/$(visitorUid)/following/$(ownerUid))
+        || exists(/databases/$(database)/documents/follows/$(ownerUid)/followers/$(visitorUid));
+    }
+    function hasAcceptedRequest(ownerUid, requesterUid) {
+      return exists(/databases/$(database)/documents/followRequests/$(ownerUid)/requests/$(requesterUid))
+        && get(/databases/$(database)/documents/followRequests/$(ownerUid)/requests/$(requesterUid)).data.status == "accepted";
+    }
+    function blockedEither(aUid, bUid) {
+      return exists(/databases/$(database)/documents/users/$(aUid)/blocks/$(bUid))
+        || exists(/databases/$(database)/documents/users/$(bUid)/blocks/$(aUid));
+    }
+    // Content owned by `ownerUid` is public unless that account is private, in
+    // which case only the owner, an approved follower and admins can read it.
+    function canViewOwnersContent(ownerUid) {
+      return ownerUid != null && (
+        !isPrivateAccount(ownerUid)
+        || (signedIn() && (isSelf(ownerUid) || isFollowerOf(request.auth.uid, ownerUid) || isAdmin()))
+      );
+    }
+    // Counters are only ever written with increment(): one step at a time.
+    function counterStepsOk(before, after, keys) {
+      return keys.all(k =>
+        !(k in after) || !(k in before)
+        || (after[k] is number && before[k] is number && after[k] - before[k] in [-1, 0, 1])
+      );
+    }
+    // A reaction tally is a fixed 6-key map; nothing else may be smuggled in.
+    function reactionTallyOk(before, after) {
+      return !('reactions' in after)
+        || (after.reactions is map
+            && after.reactions.size() <= 6
+            && (!('reactions' in before)
+                || after.reactions.diff(before.reactions).affectedKeys()
+                     .hasOnly(['love', 'like', 'amen', 'laugh', 'wow', 'support'])));
+    }
+    function reactionKey(k) {
+      return k in ['love', 'like', 'amen', 'laugh', 'wow', 'support'];
+    }
+    // Map fields such as unreadCount/typing/hiddenBy: a writer may only change
+    // the entry keyed by their own uid.
+    function mapTouchedBySelf(before, after, keys) {
+      return keys.all(k =>
+        !(k in after) || !(k in before) || after[k] == null || before[k] == null
+        || after[k].diff(before[k]).affectedKeys().hasOnly([request.auth.uid])
+      );
+    }
 
     /* ---------------------------------------------------------------- */
-    /* users                                                             */
+    /* users                                                            */
     /* ---------------------------------------------------------------- */
     match /users/{uid} {
       allow read: if true;
@@ -47,35 +125,44 @@ service cloud.firestore {
         && request.auth.uid == uid
         && request.resource.data.uid == uid
         && request.resource.data.keys().hasAll(['uid','username','displayName','createdAt'])
-        && request.resource.data.username is string
-        && request.resource.data.username.size() >= 3
-        && request.resource.data.username.size() <= 20
+        && request.resource.data.username.matches('^[a-z0-9_]{3,20}$')
         && request.resource.data.displayName.size() <= 40
-        && (!('role' in request.resource.data) || request.resource.data.role in ["user","creator","business","church"]);
+        && (!('bio' in request.resource.data) || request.resource.data.bio.size() <= 200)
+        && (!('role' in request.resource.data) || oneOf(request.resource.data.role, ["user","creator","business","church"]));
 
-      // Owners can edit profile but not role, uid, counters directly
+      // Owners edit their own profile — never role, uid or counters.
       allow update: if canWrite()
-        && request.auth.uid == uid
+        && isSelf(uid)
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['displayName','displayNameLower','username','bio','location',
-                       'website','photoURL','coverURL','theme','private','updatedAt']);
+                       'website','photoURL','coverURL','theme','private','prefs','updatedAt'])
+        && (!('username' in request.resource.data) || request.resource.data.username.matches('^[a-z0-9_]{3,20}$'))
+        && (!('displayName' in request.resource.data) || request.resource.data.displayName.size() <= 40)
+        && (!('bio' in request.resource.data) || request.resource.data.bio.size() <= 200)
+        && (!('photoURL' in request.resource.data) || request.resource.data.photoURL.size() <= 600)
+        && (!('coverURL' in request.resource.data) || request.resource.data.coverURL.size() <= 600)
+        && (!('private' in request.resource.data) || request.resource.data.private is bool);
 
-      // Admin can change role, verified, and ban state
+      // Admin: role, verified badge, ban state.
       allow update: if isAdmin()
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['role','verified','banned','updatedAt'])
-        && request.resource.data.role in ["user","creator","business","church","admin"];
+        && oneOf(request.resource.data.role, ["user","creator","business","church","admin"]);
 
-      // Counters: any signed-in (non-banned) user can bump by ±1
+      // Counters: any signed-in (non-banned) user can bump them, one step at a
+      // time — so follower/like totals can't be set by hand.
       allow update: if canWrite()
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['followersCount','followingCount','videosCount','postsCount','likesCount']);
+             .hasOnly(['followersCount','followingCount','videosCount','postsCount','likesCount','profileViewCount'])
+        && counterStepsOk(resource.data, request.resource.data,
+             ['followersCount','followingCount','videosCount','postsCount','likesCount','profileViewCount']);
 
       allow delete: if isSelf(uid) || isAdmin();
 
+      /* ---- my engagement state (private; only I read it) ---- */
       match /likedVideos/{videoId} {
         allow read: if isSelf(uid);
         allow write: if isSelf(uid);
@@ -88,7 +175,69 @@ service cloud.firestore {
         allow read: if isSelf(uid);
         allow write: if isSelf(uid);
       }
-      // legacy liked/saved for posts
+      match /postReactions/{videoId} {
+        allow read: if isSelf(uid);
+        allow create, update: if isSelf(uid) && reactionKey(request.resource.data.reaction);
+        allow delete: if isSelf(uid);
+      }
+      match /mediaReactions/{mediaId} {
+        allow read: if isSelf(uid);
+        allow create, update: if isSelf(uid) && reactionKey(request.resource.data.reaction);
+        allow delete: if isSelf(uid);
+      }
+      match /reposts/{videoId} {
+        allow read: if isSelf(uid);
+        allow create, update: if isSelf(uid) && request.resource.data.videoId == videoId;
+        allow delete: if isSelf(uid);
+      }
+      match /playHistory/{soundId} {
+        allow read: if isSelf(uid);
+        allow create, update: if isSelf(uid)
+          && request.resource.data.soundId == soundId
+          && request.resource.data.seconds is number
+          && request.resource.data.seconds >= 0
+          && request.resource.data.seconds <= 86400;
+        allow delete: if isSelf(uid);
+      }
+      // Saved posts and folders (owner only).
+      match /savedCollections/{savedCollectionId} {
+        allow read: if isSelf(uid);
+        allow create: if isSelf(uid)
+          && shortText(request.resource.data.name, 40)
+          && request.resource.data.count == 0;
+        allow update: if isSelf(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name','count'])
+          && (!('count' in request.resource.data) || request.resource.data.count >= 0);
+        allow delete: if isSelf(uid);
+
+        match /items/{videoId} {
+          allow read: if isSelf(uid);
+          allow create, update: if isSelf(uid) && request.resource.data.videoId == videoId;
+          allow delete: if isSelf(uid);
+        }
+      }
+      // Which stories I have opened (my own read state; the author's list of
+      // who saw a story lives on the story itself).
+      match /storyViews/{storyId} {
+        allow read: if isSelf(uid);
+        allow create, update: if isSelf(uid) && request.resource.data.storyId == storyId;
+        allow delete: if isSelf(uid);
+      }
+      // Blocking list: only I can see who I blocked (other rules read it).
+      match /blocks/{blockedUid} {
+        allow read: if isSelf(uid);
+        allow create: if isSelf(uid) && blockedUid != uid && request.resource.data.uid == blockedUid;
+        allow delete: if isSelf(uid);
+        allow update: if false;
+      }
+      // "Who viewed my profile": a visitor writes it, only I can read it.
+      match /profileViews/{viewId} {
+        allow read: if isSelf(uid);
+        allow create: if canWrite() && !isSelf(uid) && request.resource.data.uid == request.auth.uid;
+        allow update, delete: if isSelf(uid) || isAdmin();
+      }
+
+      /* ---- prototype-era collections (still readable by their owner) ---- */
       match /liked/{postId} {
         allow read: if isSelf(uid);
         allow write: if isSelf(uid);
@@ -103,6 +252,9 @@ service cloud.firestore {
       }
     }
 
+    /* ---------------------------------------------------------------- */
+    /* usernames (reservation records — one handle, one account)         */
+    /* ---------------------------------------------------------------- */
     match /usernames/{handle} {
       allow read: if true;
       allow create: if signedIn()
@@ -113,18 +265,31 @@ service cloud.firestore {
     }
 
     /* ---------------------------------------------------------------- */
-    /* videos                                                            */
+    /* presence (a heartbeat doc per account, kept off the profile so a    */
+    /* tick doesn't invalidate everyone's profile snapshot)               */
+    /* ---------------------------------------------------------------- */
+    match /presence/{uid} {
+      allow read: if signedIn();
+      allow create, update: if canWrite()
+        && isSelf(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.online is bool;
+      allow delete: if isSelf(uid) || isAdmin();
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* videos (posts: video or photo album, with optional licensed music) */
     /* ---------------------------------------------------------------- */
     match /videos/{videoId} {
-      allow read: if true;
+      allow read: if canViewOwnersContent(resource.data.uid);
 
       allow create: if canWrite()
         && request.resource.data.uid == request.auth.uid
         && shortText(request.resource.data.caption, 1000)
         && (
-          // video post (url is a Firebase Storage download URL)
+          // a video post
           (request.resource.data.videoUrl is string && request.resource.data.videoUrl.size() > 0)
-          // photo post (1-6 images)
+          // or a photo post (1-6 images)
           || (request.resource.data.mediaType == 'photo'
               && request.resource.data.images is list
               && request.resource.data.images.size() >= 1
@@ -132,52 +297,241 @@ service cloud.firestore {
         )
         && request.resource.data.likeCount == 0
         && request.resource.data.commentCount == 0
-        && request.resource.data.viewCount == 0;
+        && request.resource.data.viewCount == 0
+        && request.resource.data.shareCount == 0
+        && request.resource.data.repostCount == 0
+        && request.resource.data.isPublic == true
+        && (!('soundId' in request.resource.data)
+            || request.resource.data.soundId == null
+            || request.resource.data.soundId is string)
+        && (!('licenceUrl' in request.resource.data) || shortText(request.resource.data.licenceUrl, 300))
+        && (!('attribution' in request.resource.data) || shortText(request.resource.data.attribution, 300));
 
-      // Author can edit caption, hashtags, thumbnail, etc. but not counters
+      // Author edits content fields; anyone signed in may only move the
+      // engagement counters and the reaction tally, one step at a time.
       allow update: if canWrite()
         && (
           (resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['caption','hashtags','mentions','thumbnailUrl','soundTitle','soundId','soundUrl','isPublic','updatedAt']))
-          || request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['likeCount','commentCount','viewCount','shareCount'])
+                 .hasOnly(['caption','hashtags','mentions','thumbnailUrl','soundTitle','soundId','soundUrl',
+                           'musicSource','licenceUrl','licenceLabel','sourceUrl','attribution','isPublic','updatedAt']))
+          || (request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['likeCount','commentCount','viewCount','shareCount','repostCount','reactions'])
+              && reactionTallyOk(resource.data, request.resource.data)
+              && counterStepsOk(resource.data, request.resource.data,
+                   ['likeCount','commentCount','viewCount','shareCount','repostCount']))
         );
 
       allow delete: if canWrite() && (resource.data.uid == request.auth.uid || isAdmin());
 
       match /comments/{commentId} {
-        allow read: if true;
+        function videoOwner() {
+          return get(/databases/$(database)/documents/videos/$(videoId)).data.uid;
+        }
+        allow read: if canViewOwnersContent(videoOwner());
+
         allow create: if canWrite()
           && request.resource.data.uid == request.auth.uid
-          && shortText(request.resource.data.text, 500);
+          && shortText(request.resource.data.text, 500)
+          && (!('likeCount' in request.resource.data) || request.resource.data.likeCount == 0)
+          && (!('replyCount' in request.resource.data) || request.resource.data.replyCount == 0)
+          // A reply must point at a comment in this same thread, and the
+          // reply-target handle is copied from that comment by the client.
+          && (!('parentId' in request.resource.data)
+              || request.resource.data.parentId == null
+              || (request.resource.data.parentId is string
+                  && exists(/databases/$(database)/documents/videos/$(videoId)/comments/$(request.resource.data.parentId))))
+          && (!('replyToUsername' in request.resource.data) || shortText(request.resource.data.replyToUsername, 20))
+          // Respect "who can comment" on the post owner's account.
+          && (videoOwner() == request.auth.uid
+              || privacySetting(videoOwner(), 'whoCanComment', 'everyone') == 'everyone'
+              || isFollowerOf(request.auth.uid, videoOwner()))
+          && !blockedEither(request.auth.uid, videoOwner());
+
+        // Comment likes and reply counters only.
+        allow update: if canWrite()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount','replyCount'])
+          && counterStepsOk(resource.data, request.resource.data, ['likeCount','replyCount']);
+
         allow delete: if canWrite()
-          && (resource.data.uid == request.auth.uid
-              || get(/databases/$(database)/documents/videos/$(videoId)).data.uid == request.auth.uid
-              || isAdmin());
+          && (resource.data.uid == request.auth.uid || videoOwner() == request.auth.uid || isAdmin());
+
+        match /likes/{likerUid} {
+          allow read: if signedIn();
+          allow create, delete: if canWrite() && isSelf(likerUid);
+          allow update: if false;
+        }
       }
     }
 
     /* ---------------------------------------------------------------- */
-    /* sounds                                                            */
+    /* profile media: avatars, covers and photos — with real engagement    */
+    /* ---------------------------------------------------------------- */
+    match /profileMedia/{mediaId} {
+      allow read: if canViewOwnersContent(resource.data.uid);
+
+      allow create: if canWrite()
+        && request.resource.data.uid == request.auth.uid
+        && oneOf(request.resource.data.kind, ['avatar','cover','photo'])
+        && request.resource.data.url is string
+        && request.resource.data.url.size() > 0
+        && request.resource.data.url.size() <= 600
+        && shortText(request.resource.data.caption, 300)
+        && request.resource.data.isCurrent == true
+        && request.resource.data.likeCount == 0
+        && request.resource.data.commentCount == 0
+        && request.resource.data.viewCount == 0
+        && request.resource.data.shareCount == 0;
+
+      allow update: if canWrite()
+        && (
+          // Owner: caption, and which avatar/cover is the current one.
+          (resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['caption','isCurrent','updatedAt']))
+          // Anyone signed in: engagement counters + the reaction tally.
+          || (request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['likeCount','commentCount','viewCount','shareCount','reactions'])
+              && reactionTallyOk(resource.data, request.resource.data)
+              && counterStepsOk(resource.data, request.resource.data,
+                   ['likeCount','commentCount','viewCount','shareCount']))
+        );
+
+      allow delete: if canWrite() && (resource.data.uid == request.auth.uid || isAdmin());
+
+      match /comments/{commentId} {
+        function mediaOwner() {
+          return get(/databases/$(database)/documents/profileMedia/$(mediaId)).data.uid;
+        }
+        allow read: if canViewOwnersContent(mediaOwner());
+
+        allow create: if canWrite()
+          && request.resource.data.uid == request.auth.uid
+          && shortText(request.resource.data.text, 500)
+          && (!('likeCount' in request.resource.data) || request.resource.data.likeCount == 0)
+          && (!('parentId' in request.resource.data)
+              || request.resource.data.parentId == null
+              || exists(/databases/$(database)/documents/profileMedia/$(mediaId)/comments/$(request.resource.data.parentId)))
+          && !blockedEither(request.auth.uid, mediaOwner());
+
+        allow update: if canWrite()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount','replyCount'])
+          && counterStepsOk(resource.data, request.resource.data, ['likeCount','replyCount']);
+
+        allow delete: if canWrite()
+          && (resource.data.uid == request.auth.uid || mediaOwner() == request.auth.uid || isAdmin());
+
+        match /likes/{likerUid} {
+          allow read: if signedIn();
+          allow create, delete: if canWrite() && isSelf(likerUid);
+          allow update: if false;
+        }
+      }
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* reposts: a copy that references the original post                 */
+    /* ---------------------------------------------------------------- */
+    match /reposts/{repostId} {
+      allow read: if canViewOwnersContent(resource.data.uid);
+
+      allow create: if canWrite()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.videoId is string
+        && request.resource.data.videoId.size() > 0
+        && shortText(request.resource.data.note, 300)
+        && exists(/databases/$(database)/documents/videos/$(request.resource.data.videoId))
+        && get(/databases/$(database)/documents/videos/$(request.resource.data.videoId)).data.uid != request.auth.uid
+        && !blockedEither(request.auth.uid, get(/databases/$(database)/documents/videos/$(request.resource.data.videoId)).data.uid);
+
+      allow update: if false;
+      allow delete: if canWrite() && resource.data.uid == request.auth.uid;
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* stories (24 hours)                                                */
+    /* ---------------------------------------------------------------- */
+    match /stories/{storyId} {
+      allow read: if canViewOwnersContent(resource.data.uid);
+
+      allow create: if canWrite()
+        && request.resource.data.uid == request.auth.uid
+        && oneOf(request.resource.data.kind, ['photo','video'])
+        && request.resource.data.url is string
+        && request.resource.data.url.size() > 0
+        && request.resource.data.url.size() <= 600
+        && shortText(request.resource.data.text, 280)
+        && request.resource.data.viewCount == 0
+        && request.resource.data.replyCount == 0
+        // expiresAt comes from the client but is bounded here: a story can be
+        // neither permanent nor already-expired.
+        && request.resource.data.expiresAt is timestamp
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt < request.time + duration.value(30, 'd');
+
+      allow update: if canWrite()
+        && (
+          (resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['text','link','updatedAt']))
+          || (request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['viewCount','replyCount','reactions'])
+              && reactionTallyOk(resource.data, request.resource.data)
+              && counterStepsOk(resource.data, request.resource.data, ['viewCount','replyCount']))
+        );
+
+      allow delete: if canWrite() && (resource.data.uid == request.auth.uid || isAdmin());
+
+      match /views/{viewerUid} {
+        function storyOwner() {
+          return get(/databases/$(database)/documents/stories/$(storyId)).data.uid;
+        }
+        allow get: if signedIn() && (isSelf(viewerUid) || storyOwner() == request.auth.uid);
+        // Only the broadcaster may list who watched their story.
+        allow list: if signedIn() && storyOwner() == request.auth.uid;
+        allow create: if canWrite() && isSelf(viewerUid) && !blockedEither(viewerUid, storyOwner());
+        allow update, delete: if false;
+      }
+
+      match /reactions/{reactorUid} {
+        function owner() {
+          return get(/databases/$(database)/documents/stories/$(storyId)).data.uid;
+        }
+        allow get: if signedIn();
+        allow list: if signedIn() && owner() == request.auth.uid;
+        allow create, delete: if canWrite() && isSelf(reactorUid) && !blockedEither(reactorUid, owner());
+        allow update: if canWrite() && isSelf(reactorUid) && reactionKey(request.resource.data.reaction);
+      }
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* sounds: member uploads + imported licensed catalogue tracks        */
     /* ---------------------------------------------------------------- */
     match /sounds/{soundId} {
       allow read: if true;
+
       allow create: if canWrite()
         && request.resource.data.artistUid == request.auth.uid
         && shortText(request.resource.data.title, 80)
         && request.resource.data.audioUrl is string
         && request.resource.data.audioUrl.size() > 0
-        && request.resource.data.useCount == 0;
+        && request.resource.data.audioUrl.size() <= 800
+        && request.resource.data.useCount == 0
+        && (!('playCount' in request.resource.data) || request.resource.data.playCount == 0)
+        // Anything imported from an outside catalogue must carry its licence
+        // and a link to the original item, so credit can't be stripped.
+        && (!('external' in request.resource.data) || request.resource.data.external != true
+            || (shortText(request.resource.data.licenceUrl, 300)
+                && shortText(request.resource.data.licenceLabel, 120)
+                && shortText(request.resource.data.sourceId, 120)
+                && request.resource.data.isFree == true));
 
-      // Owner or admin can edit; anyone signed in can bump counters
       allow update: if canWrite()
         && (
           (resource.data.artistUid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['title','coverUrl','genre','bpm','isFree','updatedAt']))
+                 .hasOnly(['title','coverUrl','genre','bpm','isFree','audioUrl','updatedAt']))
           || request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['useCount','lastUsedAt','favoriteCount'])
+               .hasOnly(['useCount','lastUsedAt','favoriteCount','playCount'])
           || isAdmin()
         );
 
@@ -185,17 +539,61 @@ service cloud.firestore {
     }
 
     /* ---------------------------------------------------------------- */
-    /* follows                                                           */
+    /* follows — private-account approval and blocking enforced here      */
     /* ---------------------------------------------------------------- */
     match /follows/{uid} {
+      // `uid` is the follower; `following/{targetUid}` is who they follow.
       match /following/{targetUid} {
         allow read: if true;
-        allow create, delete: if canWrite() && request.auth.uid == uid;
+        // I may follow an open account, or one whose request I had approved.
+        allow create: if canWrite()
+          && request.auth.uid == uid
+          && targetUid != uid
+          && !blockedEither(uid, targetUid)
+          && (!isPrivateAccount(targetUid) || hasAcceptedRequest(targetUid, uid));
+        allow delete: if canWrite() && (request.auth.uid == uid || request.auth.uid == targetUid);
+        allow update: if false;
       }
       match /followers/{followerUid} {
         allow read: if true;
-        allow create: if canWrite() && followerUid == request.auth.uid;
+        // Either the follower's own mirror doc, or the target writing it when
+        // they accept a follow request (both happen in one batch).
+        allow create: if canWrite()
+          && followerUid != uid
+          && !blockedEither(uid, followerUid)
+          && (followerUid == request.auth.uid
+              || (request.auth.uid == uid && hasAcceptedRequest(uid, followerUid)));
         allow delete: if canWrite() && (followerUid == request.auth.uid || request.auth.uid == uid);
+        allow update: if false;
+      }
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* follow requests (private accounts)                                */
+    /* ---------------------------------------------------------------- */
+    match /followRequests/{ownerUid} {
+      match /requests/{requesterUid} {
+        allow get: if signedIn() && (isSelf(ownerUid) || isSelf(requesterUid));
+        allow list: if isSelf(ownerUid);
+
+        allow create: if canWrite()
+          && isSelf(requesterUid)
+          && requesterUid != ownerUid
+          && request.resource.data.uid == requesterUid
+          && request.resource.data.status == "pending"
+          && !blockedEither(ownerUid, requesterUid);
+
+        // The owner accepts or declines; the requester may withdraw.
+        allow update: if canWrite()
+          && (
+            (isSelf(ownerUid)
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','resolvedAt'])
+              && oneOf(request.resource.data.status, ["accepted","declined"]))
+            || (isSelf(requesterUid) && resource.data.status == "pending"
+                && request.resource.data.status == "cancelled")
+          );
+
+        allow delete: if canWrite() && (isSelf(ownerUid) || isSelf(requesterUid));
       }
     }
 
@@ -204,29 +602,44 @@ service cloud.firestore {
     /* ---------------------------------------------------------------- */
     match /notifications/{nid} {
       allow read: if signedIn() && resource.data.toUid == request.auth.uid;
+
       allow create: if canWrite()
         && request.resource.data.fromUid == request.auth.uid
         && request.resource.data.toUid != request.auth.uid
-        && request.resource.data.type in ['like','comment','follow','mention','repost','message','gift']
-        && request.resource.data.read == false;
+        && oneOf(request.resource.data.type, ['like','comment','reply','follow','followRequest','followAccepted',
+                                              'mention','repost','message','gift','reaction','mediaComment','story','system'])
+        && request.resource.data.read == false
+        && (!('text' in request.resource.data) || request.resource.data.text.size() <= 300);
+
       allow update: if signedIn()
         && resource.data.toUid == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+
       allow delete: if canWrite() && resource.data.toUid == request.auth.uid;
     }
 
     /* ---------------------------------------------------------------- */
-    /* hashtags + legacy posts (read)                                    */
+    /* hashtags (trending counters only)                                 */
     /* ---------------------------------------------------------------- */
     match /hashtags/{tag} {
       allow read: if true;
-      allow create, update: if canWrite();
-      allow delete: if false;
+      allow create: if canWrite()
+        && request.resource.data.tag == tag
+        && tag.matches('^[a-z0-9_]{1,40}$')
+        && request.resource.data.count == 1;
+      allow update: if canWrite()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['count','lastUsedAt'])
+        && (request.resource.data.count == resource.data.count + 1
+            || request.resource.data.count == resource.data.count - 1);
+      allow delete: if isAdmin();
     }
 
+    /* ---------------------------------------------------------------- */
+    /* legacy posts (read-only; new content goes to /videos)             */
+    /* ---------------------------------------------------------------- */
     match /posts/{postId} {
       allow read: if true;
-      allow create: if false; // legacy, no new posts via old collection
+      allow create: if false;
       allow update, delete: if canWrite() && resource.data.uid == request.auth.uid;
       match /comments/{cid} {
         allow read: if true;
@@ -235,27 +648,30 @@ service cloud.firestore {
     }
 
     /* ---------------------------------------------------------------- */
-    /* reports (content moderation)                                      */
+    /* reports (moderation queue)                                        */
     /* ---------------------------------------------------------------- */
     match /reports/{reportId} {
-      allow read: if signedIn()
-        && (resource.data.reporterUid == request.auth.uid || isAdmin());
+      allow read: if signedIn() && (resource.data.reporterUid == request.auth.uid || isAdmin());
+
       allow create: if canWrite()
         && request.resource.data.reporterUid == request.auth.uid
-        && request.resource.data.targetType in ['video','user','comment','sound','live']
+        && oneOf(request.resource.data.targetType, ['video','user','comment','sound','live','conversation','profileMedia','story'])
+        && shortText(request.resource.data.targetId, 120)
         && shortText(request.resource.data.reason, 160)
         && request.resource.data.details is string
         && request.resource.data.details.size() <= 500
         && request.resource.data.status == 'open'
         && request.resource.data.resolvedBy == '';
+
       allow update: if isAdmin()
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['status','resolvedBy','resolvedAt']);
+
       allow delete: if isAdmin();
     }
 
     /* ---------------------------------------------------------------- */
-    /* future: opportunities, churches, etc (admin-only write)           */
+    /* directory collections                                             */
     /* ---------------------------------------------------------------- */
     match /opportunities/{id} {
       allow read: if true;
@@ -263,7 +679,8 @@ service cloud.firestore {
     }
     match /churches/{id} {
       allow read: if true;
-      allow create, update, delete: if isAdmin() || (signedIn() && request.resource.data.uid == request.auth.uid);
+      allow create: if canWrite() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isAdmin() || (canWrite() && resource.data.uid == request.auth.uid);
       match /sermons/{sid} {
         allow read: if true;
         allow write: if canWrite() && get(/databases/$(database)/documents/churches/$(id)).data.uid == request.auth.uid;
@@ -275,7 +692,7 @@ service cloud.firestore {
     }
 
     /* ---------------------------------------------------------------- */
-    /* lives (client-only live streaming via Firebase Storage segments)  */
+    /* lives (browser capture -> Storage segments -> Firestore)          */
     /* ---------------------------------------------------------------- */
     match /lives/{liveId} {
       allow read: if true;
@@ -288,21 +705,22 @@ service cloud.firestore {
         && request.resource.data.latestSeq == 0
         && request.resource.data.segmentCount == 0;
 
-      // Broadcaster controls stream state; signed-in viewers may bump counters only.
+      // The broadcaster controls stream state; signed-in viewers may only move
+      // the public counters.
       allow update: if canWrite()
         && (
           (resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['status','latestSeq','segmentCount','lastPingAt','endedAt','thumbnailUrl','title','updatedAt','pinnedChatId']))
-          || request.resource.data.diff(resource.data).affectedKeys()
-               .hasOnly(['viewerCount','giftCount','giftCoins','likeCount','shareCount'])
+          || (request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['viewerCount','giftCount','giftCoins','likeCount','shareCount'])
+              && counterStepsOk(resource.data, request.resource.data, ['viewerCount','giftCount','likeCount','shareCount']))
         );
 
       allow delete: if canWrite() && (resource.data.uid == request.auth.uid || isAdmin());
 
       match /segments/{sid} {
         allow read: if true;
-        // Only the broadcaster publishes segments.
         allow create: if canWrite()
           && request.resource.data.seq is number
           && request.resource.data.url is string
@@ -318,7 +736,6 @@ service cloud.firestore {
           && request.resource.data.text is string
           && request.resource.data.text.size() > 0
           && request.resource.data.text.size() <= 300;
-        // Viewer can delete own message; stream host or admin can moderate.
         allow delete: if canWrite()
           && (resource.data.uid == request.auth.uid
               || get(/databases/$(database)/documents/lives/$(liveId)).data.uid == request.auth.uid
@@ -326,7 +743,7 @@ service cloud.firestore {
         allow update: if false;
       }
 
-      // Paid gifts — anyone signed in can send; immutable once written.
+      // Paid gifts — immutable once written.
       match /gifts/{gid} {
         allow read: if true;
         allow create: if canWrite()
@@ -340,7 +757,6 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
-      // Floating reactions — high frequency, free, immutable.
       match /reactions/{rid} {
         allow read: if true;
         allow create: if canWrite()
@@ -358,27 +774,72 @@ service cloud.firestore {
       function participantOf(data) {
         return signedIn() && request.auth.uid in data.participants;
       }
+      function otherParticipant(data) {
+        return data.participants[0] == request.auth.uid ? data.participants[1] : data.participants[0];
+      }
+
       allow read: if participantOf(resource.data);
+
       allow create: if canWrite()
         && request.auth.uid in request.resource.data.participants
         && request.resource.data.participants.size() == 2
         && request.resource.data.lastMessage is string
-        && request.resource.data.lastMessage.size() <= 120;
-      // Participants may update the preview + unread counters,
-      // but membership is frozen once the conversation exists.
+        && request.resource.data.lastMessage.size() <= 120
+        // No threads through a block, and the recipient's DM setting applies.
+        && !blockedEither(request.auth.uid, otherParticipant(request.resource.data))
+        && (privacySetting(otherParticipant(request.resource.data), 'whoCanMessage', 'everyone') == 'everyone'
+            || (privacySetting(otherParticipant(request.resource.data), 'whoCanMessage', 'everyone') == 'followers'
+                && isFollowerOf(request.auth.uid, otherParticipant(request.resource.data))));
+
+      // Participants may update the preview, unread counters, typing state and
+      // read flags — and nothing else. Membership is frozen for good.
       allow update: if participantOf(resource.data)
-        && request.resource.data.participants == resource.data.participants;
-      // No deletes — threads and their messages are permanent.
+        && request.resource.data.participants == resource.data.participants
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['lastMessage','lastSenderId','lastMessageAt','unreadCount','hiddenBy','typing','lastReadAt'])
+        && request.resource.data.lastMessage.size() <= 120
+        && mapTouchedBySelf(resource.data, request.resource.data, ['unreadCount','hiddenBy','typing','lastReadAt']);
+
+      // Threads are never hard-deleted (the other person's history matters);
+      // participants hide them with hiddenBy, senders unsend single messages.
       allow delete: if false;
+
       match /messages/{mid} {
-        allow read: if participantOf(get(/databases/$(database)/documents/conversations/$(cid)).data);
-        allow create: if participantOf(get(/databases/$(database)/documents/conversations/$(cid)).data)
+        function conv() {
+          return get(/databases/$(database)/documents/conversations/$(cid)).data;
+        }
+        allow read: if signedIn() && request.auth.uid in conv().participants;
+
+        allow create: if canWrite()
+          && request.auth.uid in conv().participants
           && request.resource.data.senderId == request.auth.uid
           && request.resource.data.text is string
           && request.resource.data.text.size() > 0
-          && request.resource.data.text.size() <= 1000;
-        // Messages are immutable — no edits, no deletes.
-        allow update, delete: if false;
+          && request.resource.data.text.size() <= 1000
+          && (!('readBy' in request.resource.data) || request.resource.data.readBy is map)
+          && (!('attachment' in request.resource.data)
+              || request.resource.data.attachment == null
+              || (request.resource.data.attachment is map
+                  && oneOf(request.resource.data.attachment.kind, ['image','video','audio','file'])
+                  && request.resource.data.attachment.url is string
+                  && request.resource.data.attachment.url.size() <= 600
+                  && request.resource.data.attachment.size is number
+                  && request.resource.data.attachment.size <= 52428800));
+
+        // Two narrow updates only: reactions + read receipts by a participant,
+        // and the sender unsending their own message (which leaves a tombstone).
+        allow update: if signedIn()
+          && request.auth.uid in conv().participants
+          && (
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy'])
+            || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])
+            || (resource.data.senderId == request.auth.uid
+                && request.resource.data.diff(resource.data).affectedKeys()
+                     .hasOnly(['text','unsent','unsentAt','attachment','storagePathToRemove'])
+                && request.resource.data.unsent == true)
+          );
+
+        allow delete: if false;
       }
     }
   }

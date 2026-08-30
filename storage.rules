@@ -1,21 +1,20 @@
 rules_version = '2';
 
-// Xacheus — Production Firebase Storage rules.
+// Xacheus — Firebase Storage rules.
 // Deploy with: firebase deploy --only storage
 //
-// Layout:
+// Layout (built by js/storage.js):
 //   uploads/{uid}/{kind}/{filename}
-//     kind: images | thumbnails | videos | audio
+//     kind: images | thumbnails | videos | audio | stories | documents
 //
 // Principles:
-//   - anyone can read media (videos/photos must be viewable publicly)
-//   - only the signed-in owner can write under their own {uid} folder
-//   - size + content-type restrictions block abuse
-//   - deletes are owner-only
-//
-// NOTE: media paths are scoped by the uploader's uid at write time
-// (`js/storage.js` builds `uploads/{uid}/...`), so ownership is enforced by
-// matching the URL path segment against the authenticated user's uid.
+//   - every media object is readable, because posts, photos, stories and sound
+//     covers are public content by design
+//   - only the signed-in owner may write inside their own {uid} folder, and
+//     only under a known kind
+//   - per-kind size + content-type limits stop abuse (no 4 GB "thumbnails",
+//     no HTML/SVG payloads that could execute when opened directly)
+//   - deletes are owner-only, so a deleted post's file really goes away
 
 service firebase.storage {
   match /b/{bucket}/o {
@@ -23,32 +22,83 @@ service firebase.storage {
     function signedIn() {
       return request.auth != null;
     }
+    function mediaType() {
+      return request.resource.contentType;
+    }
+    function isImage() {
+      return mediaType().matches('image/(png|jpeg|jpg|gif|webp|avif)');
+    }
+    function isVideo() {
+      return mediaType().matches('video/(mp4|quicktime|webm|x-m4v|3gpp)');
+    }
+    function isAudio() {
+      return mediaType().matches('audio/(mpeg|mp3|mp4|m4a|wav|ogg|aac|x-m4a|flac)');
+    }
+    function isDocument() {
+      return mediaType().matches('application/(pdf|json|zip|x-zip-compressed|vnd.openxmlformats-officedocument.*|msword|vnd.ms-excel|vnd.ms-powerpoint|epub\\+zip)')
+        || mediaType().matches('text/(plain|csv)');
+    }
+    // Anything that could run in a browser when opened straight from the CDN.
+    function isDangerousType() {
+      return mediaType().matches('text/html|application/xhtml.*|image/svg.*|text/xml|application/xml.*|application/javascript.*');
+    }
 
-    // Public read for every media object.
+    // Public read for all uploaded media.
     match /uploads/{allPaths=**} {
       allow read: if true;
     }
 
     match /uploads/{uid}/{kind}/{filename} {
+      function kindAllowed() {
+        return kind in ['images', 'thumbnails', 'videos', 'audio', 'stories', 'documents'];
+      }
+      function sizeOk() {
+        return request.resource.size > 0
+          && (
+            (kind == 'images' && request.resource.size <= 15 * 1024 * 1024)
+            || (kind == 'thumbnails' && request.resource.size <= 6 * 1024 * 1024)
+            || (kind == 'stories' && request.resource.size <= 40 * 1024 * 1024)
+            || (kind == 'videos' && request.resource.size <= 110 * 1024 * 1024)
+            || (kind == 'audio' && request.resource.size <= 40 * 1024 * 1024)
+            || (kind == 'documents' && request.resource.size <= 30 * 1024 * 1024)
+          );
+      }
+      // Nested ternary because rules functions take a single expression.
+      function typeOk() {
+        return isDangerousType()
+          ? false
+          : kind == 'images' || kind == 'thumbnails'
+            ? isImage() || isVideo()                                     // cover art may be a still or a poster
+            : kind == 'videos' || kind == 'stories'
+              ? isVideo() || isImage()                                   // stories accept either
+              : kind == 'audio'
+                ? isAudio()
+                : kind == 'documents'
+                  ? isDocument() || isImage() || isVideo() || isAudio()   // chat attachments
+                  : false;
+      }
+      function safeName() {
+        return !filename.contains('..') && filename.size() <= 140;
+      }
+
       allow create: if signedIn()
         && request.auth.uid == uid
-        && (kind in ['images', 'thumbnails', 'videos', 'audio'])
-        && request.resource.size > 0
-        && request.resource.size < 110 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*|video/.*|audio/.*');
+        && kindAllowed()
+        && safeName()
+        && sizeOk()
+        && typeOk();
 
-      // Resumable uploads issue a second metadata-overwrite (update) request;
-      // keep it scoped identically to create.
+      // A resumable upload finishes with a metadata write — same constraints.
       allow update: if signedIn()
         && request.auth.uid == uid
-        && (kind in ['images', 'thumbnails', 'videos', 'audio'])
-        && request.resource.size < 110 * 1024 * 1024
-        && request.resource.contentType.matches('image/.*|video/.*|audio/.*');
+        && kindAllowed()
+        && sizeOk()
+        && typeOk();
 
       allow delete: if signedIn() && request.auth.uid == uid;
     }
 
-    // Everything else is locked down.
+    // Everything outside the layout above is locked down.
     match /{allPaths=**} {
       allow read, write: if false;
     }

@@ -45,11 +45,13 @@ function mediaName(file, kind) {
   const stamp = Date.now();
   const rand = Math.random().toString(36).slice(2, 10);
   const ext =
-    kind === "images" || kind === "thumbnails"
+    kind === "images" || kind === "thumbnails" || kind === "stories"
       ? safeExt(file?.name, "jpg")
       : kind === "videos"
         ? safeExt(file?.name, "mp4")
-        : safeExt(file?.name, "mp3");
+        : kind === "documents"
+          ? safeExt(file?.name, "bin")
+          : safeExt(file?.name, "mp3");
   return `${stamp}-${rand}.${ext}`;
 }
 
@@ -295,6 +297,69 @@ export async function uploadAudio(file, { onProgress } = {}) {
   return { url: res.url, path: res.path, publicId: res.path, duration, raw: { path: res.path } };
 }
 
+/**
+ * Upload story media. Photos land in uploads/{uid}/stories, clips in
+ * uploads/{uid}/videos (already covered by storage.rules) — either way the
+ * path prefix belongs to this account only.
+ */
+export async function uploadStoryMedia(file, { onProgress } = {}) {
+  if (!file) throw new Error("Choose a photo or video first.");
+  const isVideo = String(file.type || "").startsWith("video/");
+  const res = await uploadResumable(file, isVideo ? "videos" : "stories", onProgress);
+  const meta = isVideo ? await loadVideoMeta(file).catch(() => ({ duration: 0, width: 0, height: 0 })) : { duration: 0, width: 0, height: 0 };
+  return { url: res.url, path: res.path, kind: isVideo ? "video" : "photo", ...meta };
+}
+
+/**
+ * Attach a file to a direct message (photo, clip, audio or document).
+ * Documents get their real file name back so the bubble can show it.
+ */
+export async function uploadChatAttachment(file, { onProgress } = {}) {
+  if (!file) throw new Error("Choose a file first.");
+  const type = String(file.type || "");
+  const kind = type.startsWith("image/")
+    ? "images"
+    : type.startsWith("video/")
+      ? "videos"
+      : type.startsWith("audio/")
+        ? "audio"
+        : "documents";
+  const res = await uploadResumable(file, kind, onProgress);
+  const meta =
+    kind === "videos"
+      ? await loadVideoMeta(file).catch(() => ({ duration: 0, width: 0, height: 0 }))
+      : kind === "images"
+        ? await loadImageMeta(file).catch(() => ({ width: 0, height: 0 }))
+        : {};
+  return {
+    url: res.url,
+    path: res.path,
+    kind: kind === "images" ? "image" : kind === "videos" ? "video" : kind === "audio" ? "audio" : "file",
+    name: String(file.name || "attachment").slice(0, 120),
+    size: Number(file.size) || 0,
+    mimeType: type,
+    width: Number(meta.width) || 0,
+    height: Number(meta.height) || 0,
+    duration: Number(meta.duration) || 0,
+  };
+}
+
+function loadImageMeta(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.naturalWidth || 0, height: img.naturalHeight || 0 });
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("Unreadable image"));
+    };
+    img.src = url;
+  });
+}
+
 /** Remove a file from Storage (e.g. when a post/sound is deleted). */
 export async function removeObject(path) {
   if (!path) return;
@@ -305,4 +370,4 @@ export async function removeObject(path) {
   }
 }
 
-export default { storage, uploadImage, uploadVideo, uploadAudio, removeObject };
+export default { storage, uploadImage, uploadVideo, uploadAudio, uploadStoryMedia, uploadChatAttachment, removeObject };

@@ -23,6 +23,7 @@ import {
   ROLES,
 } from "./data.js";
 import { esc, toast } from "./ui.js";
+import { brandSlotHtml } from "./brand.js";
 
 const MESSAGES = {
   "auth/invalid-email": "That email address doesn't look right.",
@@ -114,14 +115,7 @@ function shell(innerHtml) {
     <div class="auth-wrap">
       <section class="auth-hero" aria-label="About Xacheus">
         <div class="auth-hero-inner">
-          <a class="brand brand-lg" href="#/home" aria-label="Xacheus home">
-            <img
-              class="brand-logo brand-wordmark brand-auth-logo"
-              data-logo="wordmark"
-              src="${document.documentElement.classList.contains("light") ? "assets/logo-wordmark.png" : "assets/logo-wordmark-light.png"}"
-              alt="Xacheus"
-            />
-          </a>
+          ${brandSlotHtml({ role: "wordmark", size: "xl", extraClass: "brand-hero" })}
           <h1>Zambia's short video community.</h1>
           <p class="auth-hero-text">
             Share real vertical videos, discover creators, churches and opportunities. Built for creators, businesses and communities — with real auth, real Cloudinary media and strict security.

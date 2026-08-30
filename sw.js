@@ -3,7 +3,7 @@
  * Caches app shell, never caches Firebase or File Storage.
  */
 
-const CACHE_NAME = "xacheus-video-v8";
+const CACHE_NAME = "xacheus-video-v9";
 const SHELL = [
   "./",
   "./index.html",
@@ -12,6 +12,10 @@ const SHELL = [
   "./js/firebase.js",
   "./js/data.js",
   "./js/ui.js",
+  "./js/brand.js",
+  "./js/social.js",
+  "./js/music.js",
+  "./js/player.js",
   "./js/pwa.js",
   "./js/auth.js",
   "./js/storage.js",
@@ -27,11 +31,14 @@ const SHELL = [
   "./js/views/settings.js",
   "./js/views/admin.js",
   "./manifest.json",
-  "./assets/logo-plate.png",
-  "./assets/logo-mark.png",
-  "./assets/logo-mark-dark.png",
+  "./assets/logo.png", // measured by js/brand.js at runtime
   "./assets/logo-wordmark.png",
-  "./assets/logo-wordmark-light.png",
+  "./assets/logo-wordmark-dark.png",
+  "./assets/icon.svg",
+  "./assets/icon-dark.svg",
+  "./assets/brand-card.png",
+  "./assets/brand-manifest.json",
+  "./assets/logo-plate.png",
   "./assets/icon-192.png",
   "./assets/icon-512.png",
   "./assets/icon-maskable-192.png",
@@ -97,11 +104,14 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Network-first for app code so a stale cached bundle can never pin users to
-  // an old (broken) build; cache-first for everything else (icons, images).
+  // Network-first for app code *and* for the brand artwork: a logo that changed
+  // shape or colour is exactly the case where serving the previous cached copy
+  // would undo the plate decision. Content images (covers, avatars, video
+  // posters) stay cache-first, since they are immutable per upload.
   const isCode = /\.(js|css|json)$/.test(url.pathname);
+  const isBrandArt = /\/assets\/(logo|icon|apple-touch-icon|favicon|brand-card)[\w.-]*$/.test(url.pathname);
 
-  if (isCode) {
+  if (isCode || isBrandArt) {
     event.respondWith(
       fetch(req).then((res) => {
         if (res.ok) {

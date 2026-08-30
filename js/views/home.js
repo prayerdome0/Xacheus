@@ -1,8 +1,16 @@
-/** Xacheus — Home vertical video feed (Phase 1) */
+/**
+ * Xacheus — Home.
+ *
+ * The vertical feed: stories on top, then one card per post with real counts.
+ * Autoplay is driven by IntersectionObserver, and playback pauses whenever the
+ * story viewer or a modal is open so audio never doubles up.
+ */
 
 import { bumpVideoView, fetchVideoPage, getFollowingIds, watchVideoFeed } from "../data.js";
-import { emptyState, toast } from "../ui.js";
+import { emptyState, formatCount, toast } from "../ui.js";
 import { bindVideoActions, hydrateVideoStates, videoCardHtml } from "./components.js";
+import { renderStoryTray, storyViewerOpen } from "./stories.js";
+import { getPlayerOptions } from "../player.js";
 
 // Count a view after this much continuous playback, so drive-by scrolls
 // through the feed don't inflate the counter.
@@ -16,6 +24,8 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
   let followingIds = [];
   let destroyed = false;
   let observer = null;
+  let storyStop = null;
+  const onVideoUpdated = (event) => applyCounts(event.detail);
 
   const html = `
     <div class="video-feed-head">
@@ -26,12 +36,45 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
       <button class="icon-btn" type="button" data-act="refresh" aria-label="Refresh">⟳</button>
     </div>
 
+    <section class="story-strip-host" data-story-tray hidden></section>
+
     <div class="video-feed" id="video-feed" aria-live="polite">
       <div class="loader-row"><span class="spinner"></span> Loading videos…</div>
     </div>
 
     <div class="feed-foot" id="feed-foot"></div>
   `;
+
+  /** Data saver: don't pre-download feed video bytes until asked. */
+  function applyPlaybackPrefs(host) {
+    const opts = getPlayerOptions();
+    host.querySelectorAll("video.video-player").forEach((v) => {
+      v.preload = opts.dataSaver ? "none" : "metadata";
+    });
+    if (opts.autoplayPreviews === false) host.classList.add("is-no-autoplay");
+    else host.classList.remove("is-no-autoplay");
+  }
+
+  /** Tap a video (or its photo slide) to start/stop it. */
+  function wireTapToPlay(root) {
+    root.addEventListener("click", (event) => {
+      const video = event.target.closest("video.video-player");
+      if (!video) return;
+      const card = video.closest(".video-card");
+      if (event.target.closest("[data-act]")) return;
+      if (video.paused) {
+        root.querySelectorAll("video.video-player").forEach((other) => {
+          if (other !== video) other.pause();
+        });
+        video.play().catch(() => {});
+        card?.classList.remove("is-taptoplay");
+        scheduleViewCount(video);
+      } else {
+        video.pause();
+        cancelViewCount(video);
+      }
+    });
+  }
 
   function renderVideos(root, videos) {
     const feed = root.querySelector("#video-feed");
@@ -58,6 +101,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
 
     feed.innerHTML = ordered.map((v) => videoCardHtml(v)).join("");
     ordered.forEach((v) => ctx.videoCache.set(v.id, v));
+    applyPlaybackPrefs(feed);
     hydrateVideoStates(feed, ctx.state.profile?.uid);
     setupIntersection(feed);
     root.querySelector("#feed-foot").innerHTML =
@@ -80,6 +124,28 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
     clearTimeout(video._viewTimer);
   }
 
+  const homeCleanups = [];
+
+  /** Patch one card's counters without re-rendering (keeps playback alive). */
+  function applyCounts(detail) {
+    const video = detail?.video;
+    if (!video?.id) return;
+    const card = document.querySelector(`#video-feed .video-card[data-video-id="${CSS.escape(video.id)}"]`);
+    if (!card) return;
+    const set = (key, value) => {
+      card.querySelectorAll(`[data-count="${key}"]`).forEach((node) => (node.textContent = formatCount(value || 0)));
+    };
+    set("like", video.likeCount);
+    set("comment", video.commentCount);
+    set("repost", video.repostCount);
+  }
+
+  /** Anything that must own the audio: story viewer, media viewer, any modal. */
+  function overlayOpen() {
+    if (storyViewerOpen()) return true;
+    return Boolean(document.querySelector(".modal-backdrop, .mv-backdrop, .story-viewer"));
+  }
+
   function setupIntersection(feed) {
     if (observer) observer.disconnect();
     const cards = feed.querySelectorAll(".video-card[data-video-id]");
@@ -90,6 +156,15 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
         entries.forEach((entry) => {
           const card = entry.target;
           const video = card.querySelector("video");
+          if (overlayOpen()) {
+            // A modal, the media viewer or the story viewer owns the sound.
+            const v = entry.target.querySelector("video");
+            if (v) {
+              v.pause();
+              cancelViewCount(v);
+            }
+            return;
+          }
           if (entry.isIntersecting && entry.intersectionRatio >= 0.7) {
             // pause others
             feed.querySelectorAll(".video-card").forEach((other) => {
@@ -104,7 +179,13 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
             });
             card.classList.add("is-playing");
             if (video) {
-              video.play().catch(() => {});
+              // Feed autoplay is a preference, not a certainty.
+              if (getPlayerOptions().autoplayPreviews === false) {
+                card.classList.add("is-taptoplay");
+                video.pause();
+              } else {
+                video.play().catch(() => {});
+              }
               scheduleViewCount(video);
               // progress
               const progress = card?.querySelector(".video-progress span");
@@ -133,6 +214,29 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
     );
 
     cards.forEach((card) => observer.observe(card));
+  }
+
+  /**
+   * Modals are mounted outside the feed, so re-evaluate whenever the overlay
+   * count changes: opening one pauses the video, closing it resumes the card
+   * under the viewport (re-observing re-fires the callback for every card).
+   */
+  function watchOverlays(root) {
+    let lastOpen = overlayOpen();
+    const check = () => {
+      const open = overlayOpen();
+      if (open === lastOpen) return;
+      lastOpen = open;
+      const feed = root.querySelector("#video-feed");
+      if (feed) setupIntersection(feed);
+    };
+    const mo = new MutationObserver(check);
+    mo.observe(document.body, { childList: true });
+    const timer = setInterval(check, 900);
+    homeCleanups.push(() => {
+      mo.disconnect();
+      clearInterval(timer);
+    });
   }
 
   async function start(root) {
@@ -169,6 +273,7 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
     title: mode === "following" ? "Following" : "For You",
     mount(root) {
       bindVideoActions(root, ctx);
+      wireTapToPlay(root);
 
       root.addEventListener("click", async (event) => {
         const trigger = event.target.closest("[data-act],[data-mode]");
@@ -226,10 +331,36 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
         }
       });
 
+      // Stories: the tray is real (24h media from you + the people you follow).
+      const trayHost = root.querySelector("[data-story-tray]");
+      if (trayHost) {
+        renderStoryTray(ctx, trayHost).then((stop) => {
+          if (destroyed) {
+            stop?.();
+            return;
+          }
+          storyStop = stop;
+          if (ctx.state.profile) trayHost.hidden = false;
+        });
+      }
+
+      // Fresh counts from an action taken in a modal (comment, share, save).
+      watchOverlays(root);
+      window.addEventListener("xacheus:video-updated", onVideoUpdated);
+      const onFeedRefresh = () => start(root);
+      window.addEventListener("xacheus:feed-refresh", onFeedRefresh);
+      homeCleanups.push(() => {
+        window.removeEventListener("xacheus:video-updated", onVideoUpdated);
+        window.removeEventListener("xacheus:feed-refresh", onFeedRefresh);
+      });
+
       start(root);
     },
     destroy() {
       destroyed = true;
+      storyStop?.();
+      storyStop = null;
+      while (homeCleanups.length) homeCleanups.pop()?.();
       if (unsubscribe) unsubscribe();
       if (observer) observer.disconnect();
       // pause all videos and drop pending view timers

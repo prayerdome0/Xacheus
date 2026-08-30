@@ -1,39 +1,145 @@
-# Logo Visibility — Auto-Matching Backgrounds
+# Phase 2 — profiles, media, stories, messaging, licensed music
 
 ## Date: 2026-08-30
 
-## Changes Made
+Everything below is wired to Firestore/Storage. No placeholder data was added;
+the curated "free sounds" fallback list from Phase 1 was **deleted**, because it
+displayed songs the app could not license or count.
 
-### Logo ink now adapts to the surface it sits on
-The logo assets previously shipped with a baked light-grey background, which
-looked muddy on dark surfaces and clashed with the theme. The logo art is now
-transparent and rendered in the ink variant that guarantees contrast:
+### Foundation (audited and rewritten first)
+- `docs/FOUNDATION_AUDIT.md` — what the foundation actually looked like, what was
+  broken, and the schema/collection decisions the rest of the app now follows.
+- `firestore.rules` — rewritten to match the client exactly: per-collection
+  whitelists, `serverTimestamp()` fields compared against `request.time`,
+  owner-only subcollections (`mediaReactions`, `postReactions`, `likedVideos`,
+  `savedVideos`, `savedCollections`, `blocks`, `presence`, `storyViews`,
+  `profileViews`, `playHistory`, `favoriteSounds`), participant-only DM reads,
+  `stories` expiry enforced by rules, follow-request documents, repost pair
+  writes, and counter increments bounded to sane ranges.
+- `storage.rules` — owner-scoped `uploads/{uid}/{kind}/…` writes with content-type
+  and size ceilings (image 10 MB, video 100 MB, audio 40 MB, chat attachment
+  30 MB), public read, delete restricted to the owner's own prefix.
+- `firestore.indexes.json` — 31 composite indexes, one per non-trivial query in
+  `js/data.js` / `js/social.js` (verified by extracting every `query(...)` from
+  the source and diffing against the file).
+- `js/data.js` — batch/transaction correctness (`batch.set(..., {merge:true})`,
+  500-op chunking, no cross-parent subcollection queries), comment threads gain
+  `parentId`/`replyToUsername`/`likeCount`/`replyCount`, `bumpVideoShare`,
+  `bumpVideoView`, `getLikedVideos`, `watchConversation`, `reactToMessage`,
+  provenance fields on `createVideo`, and username propagation on rename.
+- `js/social.js` — reaction state as the source of truth, `DEFAULT_PREFS`
+  (`notifications`, `privacy`, `playback`) validated on write, `canMessage` /
+  `canComment` / `getAccessState` gates, blocks, presence, typing, follow
+  requests, stories, profile media + comments + replies, reposts, saved
+  collections, activity, `removeFollower`, and a fixed `savePrefs` (it was about
+  to throw on the `playback` group it never built).
 
-- **Dark artwork** (navy X + blue, dark wordmark) on **light surfaces** — the
-  variant chosen automatically for light theme.
-- **Light artwork** on **dark surfaces** — chosen automatically for dark theme.
-- App/PWA icons live on a clean white rounded plate (`assets/logo-plate.png`)
-  so they stay legible in launchers, task bars and home screens.
+### Profiles
+- `js/views/profile.js` rewritten: cover + avatar (both tappable → full-screen
+  media viewer), stats, follow/request-follow/cancel/accept flow, message button
+  gated by privacy + blocking, share/report/block/mute menu, eleven tabs,
+  private-account lock panel, realtime repaints (`watchProfile`,
+  `watchUserVideos`, `watchProfileMedia`, `watchSavedVideos`, `watchMyReposts`,
+  `watchPresence`, `watchFollowRequests`) all torn down on unmount, edit-profile
+  modal (avatar, cover, name, bio, links, location, handle change, private
+  toggle), media uploader for photos/covers, follow-requests inbox.
+- `js/views/mediaViewer.js` — full-screen viewer for any `profileMedia` item with
+  reactions, comments, threaded replies, comment likes, own-comment delete,
+  share, caption editing, set-as-current, delete, and honest "not in your
+  gallery" synthetic mode for a bare avatar/cover URL.
+- `js/views/stories.js` — story tray (seen/unseen rings derived from a real
+  `users/{uid}/storyViews` read), viewer with per-story progress, 5 s photo timer
+  or video-end advance, tap-thirds nav, hold-to-pause, keyboard nav, reactions
+  (`reactToStory`), viewer list, owner delete, and a reply box that sends a real
+  DM; composer uploads through `uploadStoryMedia` + `addStory`.
 
-### New assets
-- `assets/logo-wordmark.png` — transparent dark-ink wordmark (light surfaces)
-- `assets/logo-wordmark-light.png` — transparent light-ink wordmark (dark surfaces)
-- `assets/logo-plate.png` — 320×320 white-plate mark for PWA icons
-- Reuses existing transparent marks: `assets/logo-mark.png` (dark ink),
-  `assets/logo-mark-dark.png` (light ink)
+### Messaging
+- `js/views/messages.js` rewritten: inbox with realtime unread badges, presence
+  dots, follow-request panel, new-chat finder, hide/restore/report; thread view
+  with realtime bubbles, date grouping, typing indicator, presence label,
+  read receipts (single tick = sent, double tick = the other side wrote a
+  `readBy` stamp), attachments with progress, image expansion, audio/video via
+  the global player, tapback reactions, unsend, per-message report, block,
+  and in-thread search.
 
-### Where it's applied
-- Topbar wordmark, sidebar mark (`js/app.js`)
-- Boot screen + boot-failure screen (`index.html`; failure screen picks the
-  correct variant even if the app never boots)
-- Auth/sign-in overlay wordmark (`js/auth.js`)
-- PWA manifest 320px icon (`manifest.json`)
-- Service worker shell cache refreshed (`sw.js` cache v8)
+### Music
+- `js/music.js` — Internet Archive client: `advancedsearch.php` + `/metadata/`
+  with JSONP fallback, LRU + 30-minute cache, licence allow-list, mood presets,
+  seed items, `describeLicence`/`attributionLine`/`trackToSoundDoc`.
+- `js/player.js` — the shared dock (queue, shuffle/repeat, Media Session,
+  shortcuts, restore, licence line, 20-second play attribution).
+- `js/views/sounds.js` — `#/music` with Library / Discover / Your uploads /
+  Favourites / Recently played, real per-row counts, licence chips on every
+  catalogue row, "Listen only" for NC/ND items, import-then-attach flow.
 
-### How it stays correct at runtime
-`applyTheme()` now calls `syncLogoVariants()`, which retints every
-`img[data-logo]` on the screen whenever theme switches (dark/light/system), so
-no logo is ever left with poor contrast — including after a live theme change.
+### Composer, settings, shell
+- `js/views/create.js` — photo posts, video upload/record, story opt-in on both,
+  sound picker backed by the real library plus live catalogue search (no
+  per-row `<audio controls>` any more; preview goes through the player).
+- `js/views/settings.js` — notification categories, privacy (private account,
+  who-can-message, who-can-comment, show activity/saved/liked), playback prefs
+  that actually change behaviour (feed autoplay, `preload`, player options),
+  blocked-accounts list with unblock, and an on-screen list of what isn't built.
+- `js/app.js` — routes `#/music`, `#/media/{id}`, `?tab=`/`?media=` params;
+  presence heartbeat + honest offline on `pagehide`; notification badge watcher;
+  prefs hydration; `mountPlayer()`; `ctx.refreshVideoCounts` / `ctx.openMedia` /
+  `ctx.refreshStories`.
+- `js/views/home.js` — story tray above the feed, tap-to-play when autoplay is
+  off, data-saver preload handling, in-place counter patches after modal actions.
+- `styles.css` — ~800 lines for the new surfaces (profile hero, tabs, grids,
+  activity, stories, media viewer, inbox, chat bubbles, sound rows, catalogue
+  cards, player dock, switches) plus light-theme and mobile rules.
+- `sw.js` — cache bumped to `xacheus-video-v8`.
+
+### Verification done in this environment
+- `node --check` on every module; a named-import resolver run over `js/**`
+  (caught three fatal import mistakes, all fixed); a "called but not imported"
+  pass (caught `getProfile` in the share sheet); static HTML/asset fetch smoke
+  test through a local server; index heuristic over every `query(...)` vs
+  `firestore.indexes.json`.
+- Not verifiable here: Firestore/Storage rule compilation and real browser
+  behaviour. Deploy rules/indexes and click through the flows in
+  `docs/FOUNDATION_AUDIT.md` → "Manual pass".
+
+---
+
+# Logo Visibility — theme-matched transparent variants (PR #19)
+
+## Date: 2026-08-30
+
+> **Status: superseded by the measured brand plate above.** This section came in
+> from `main` while the plate work was on its own branch, and it fixes the same
+> report the same way at heart (never let the logo sit on a background that
+> swallows it). The two mechanisms were merged into one: the plate decides the
+> surface, so there is exactly one code path that touches logo contrast.
+>
+> **Kept from PR #19** — `assets/logo-plate.png`, a 320×320 white rounded-plate
+> mark, now the `purpose: "any"` app icon in `manifest.json` (a plate icon is a
+> better answer for launchers than the raw artwork that was there before), and
+> cached in the service-worker shell.
+>
+> **Removed in the merge** — `LOGO_VARIANTS` / `syncLogoVariants()` in `js/app.js`,
+> the `img[data-logo]` attributes, the boot-screen `bootMarkSrc()` helper, and
+> `assets/logo-wordmark-light.png`. A theme-driven swap cannot answer the case
+> this app actually has: a logo on a *profile cover*, which is somebody's photo
+> and matches no theme. It also left two light-ink wordmarks in the repo, one of
+> them extracted without antialiasing (hard, staircased edges), which invites a
+> future edit to rewire the dead mechanism. The plate path instead measures the
+> artwork itself (`assets/brand-manifest.json`, canvas fallback) and sizes every
+> slot from one builder.
+
+## What PR #19 did (as merged into `main`)
+
+- Logo art made transparent and rendered in the ink variant matching the theme:
+  dark artwork (navy X + blue wordmark) on light theme, light artwork on dark.
+- New assets: `assets/logo-wordmark.png` (dark ink), `assets/logo-wordmark-light.png`
+  (light ink), `assets/logo-plate.png` (white plate for app icons); reuses
+  `assets/logo-mark.png` / `assets/logo-mark-dark.png`.
+- Applied to topbar, sidebar, boot screen, boot-failure screen, auth overlay and
+  the PWA manifest icon; `applyTheme()` called `syncLogoVariants()` so a live
+  theme switch re-tinted every `img[data-logo]` in the same frame.
+- Service-worker cache bumped to `v8` (now `v9`, which also picks up the plate
+  assets and the brand manifest).
 
 ---
 
@@ -194,6 +300,107 @@ All changes are backward compatible:
 - Client-side file validation (type + size) added to avatar/cover and kept for video/photo/sound uploads.
 - `uploadImage` now defaults to `strict: true` so a failed upload can never persist a `blob:` URL.
 - Deleting a video or sound also best-effort removes its media object from Storage.
+
+## Logo visibility — the brand plate
+
+The reported bug: the logo sat on backgrounds that swallowed it (navy ink on the
+dark app shell in the top bar, on profile covers, in the sidebar, on the auth
+hero). Requirement: dark logo → light background, light logo → dark background,
+everywhere, consistently.
+
+### Rule, not colour-per-page
+- The plate is **measured from the artwork** instead of being picked per screen,
+  so a new logo file automatically gets the right plate. `js/brand.js` samples
+  the image on a canvas, separates ink from background (the artwork's own border
+  defines the matte — a mostly-unpainted border means the file is already
+  ink-on-transparent), averages the ink's WCAG relative luminance, and picks:
+  `inkLum < 0.55` → light plate `#ffffff`, else dark plate `#05060a`.
+- Both pairings were verified against the actual artwork: **16.77:1** (navy ink
+  on white) and **17.15:1** (light build on near-black); the inverted pairings
+  are ~1.2:1, i.e. invisible. All above WCAG AA and AAA for a logo.
+- A mid-tone logo whose luminance sits between the two plates would otherwise land
+  on a low-contrast surface, so `plateForLuminance()` falls back to whichever plate
+  reads better when the ruled one cannot reach 3:1. `tools/plate-rule.test.mjs`
+  pins that behaviour (`L=0.45` → dark plate; `L=0.3` → still white, because white
+  gives exactly 3.0:1 there, which is the legibility floor for a graphic).
+- The decision is theme-independent: dark mode and light mode both show the same
+  plate, because the plate is the logo's own surface, not the page's.
+
+### Assets (new)
+- `assets/logo-wordmark.png` / `assets/logo-wordmark-dark.png` — 702×149,
+  transparent ink in the two brand colours, produced by `tools/build-brand.py`.
+  The source PNGs (`logo.png`, `logo1.png`) ship as ink over a ~27 % alpha noise
+  wash, which is exactly what made them look like a gray rectangle when dropped
+  on a solid background; the wash is now stripped at build time.
+- `assets/brand-card.png` — 1200×630 link-preview card with the plate baked in
+  (social previews cannot run CSS). `og:image` / `twitter:image` now point here
+  instead of at `assets/logo1.png`.
+- PWA icons and favicons were measured too: `icon-192/512`, the maskables,
+  `apple-touch-icon` and the favicon PNGs are already navy ink on white, i.e.
+  already on the correct plate — nothing was regenerated. `assets/icon.svg`
+  (transparent ink) and `assets/icon-dark.svg` are the two runtime variants.
+- `manifest.json`: the `assets/logo.png` icon entry was removed (raw artwork with
+  a translucent wash is not a PWA icon; `icon-192/512` are), and
+  `background_color` became `#ffffff` so the install splash puts the logo on its
+  measured plate instead of floating a white square on `#0a0b12`. `theme_color`
+  stays `#0a0b12` (that colours browser chrome, not the logo).
+
+### Tooling + runtime (new)
+- `tools/build-brand.py` — stdlib-only PNG read/write (no Pillow in this repo's
+  environment), does the wash removal, trim, ink snap and luminance report;
+  `--check` measures and **fails if any artwork drops below 4.5:1 on its chosen
+  plate, or if the other plate would read better** (catches inverted logic).
+- `tools/check-brand.mjs` — structural guard: no bare `<img src="assets/logo…">`
+  outside a plate, every slot emits both inks, every `.logo-plate--*` used in JS
+  is styled, the pre-paint script is still in `index.html`, and `sw.js` caches
+  every brand file the runtime loads.
+- `js/brand.js` — `analysePixels` / `measureImage` / `plateForLuminance` /
+  `relativeLuminance` / `contrastRatio` / `brandSlotHtml` / `syncBrandSlots` /
+  `applyPlate` / `initBrand` / `report`, cached in `localStorage` under
+  `xacheus.brand.plate.v1` keyed by file + size so a replaced artwork
+  re-measures, and broadcast to `xacheus:brand-plate`. `window.XacheusBrand.use(src)`
+  re-measures a candidate file live.
+- `index.html` applies the cached plate in an inline script before first paint
+  (no FOUC); `app.js` calls `initBrand()` during boot and `syncBrandSlots()`
+  after every view render so hand-written markup is corrected too.
+
+### Slots now plated
+`index.html` boot + boot-failure, top bar wordmark, sidebar mark, account-menu
+row, auth hero, profile cover corner (`.logo-plate--watermark`, the *mark* — a
+wordmark's tagline is unreadable at that size), share-preview card, settings
+footer. `.logo-plate--*` modifiers own sizing; the watermark keeps a solid
+`background` fallback before `color-mix()`.
+
+### Freshness (why a logo fix could look like it did nothing)
+- `/assets/**` was served `max-age=604800` and the service worker cached images
+  cache-first, so a *replaced* logo file could stay invisible for a week on both
+  the CDN and the device. Brand artwork (`logo*`, `icon*`, `apple-touch-icon`,
+  `favicon*`, `brand-card`) is now network-first in `sw.js` alongside app code,
+  while user content images keep the cache-first path — they are immutable per
+  upload.
+- `tools/build-brand.py` writes `assets/brand-manifest.json` (plate, accent, ink
+  luminance, measured contrasts, artwork paths) and `initBrand()` reads it first,
+  so the common path is a 400-byte network-first JSON instead of a canvas decode
+  of a 116 KB source file. Canvas measurement remains the fallback, which is what
+  `XacheusBrand.use("some/file.png")` still exercises.
+- `index.html` (which carries the pre-paint plate script) is now `no-cache` in
+  `firebase.json`; it previously inherited the 1-hour default.
+- `tools/check-brand.mjs` fails if the manifest is missing, unusable, points at a
+  file that does not exist, is inconsistent with its own measured luminance (i.e.
+  someone edited the logo without re-running the build), or is not in the shell.
+
+### Also
+- `styles.css`: old brand rules (`.brand-logo`, `.brand-wordmark`, `.brand-lg`,
+  fixed-size `.brand-auth-logo`, which was clipping the hero artwork) replaced by
+  the plate system.
+- `sw.js`: cache bumped `xacheus-video-v8` → `v9`; `SHELL` gained `js/brand.js`
+  and lost `assets/logo1.png` (281 KB the runtime never loads), and `js/music.js`,
+  `js/player.js`, `js/social.js` were added — they were missing from the shell
+  list since Phase 2, so the offline app could not have booted from cache.
+- Verified statically here: `node --check` on all modules, import audit, the
+  7-case plate harness (black/green/navy ink → white plate, white/pale ink →
+  black plate), both new tools, and an HTTP pass over every changed file.
+  **Not** yet opened in a browser — that pass is still on the user's side.
 
 ## Deployment
 

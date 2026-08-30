@@ -1,4 +1,11 @@
-/** Xacheus — Settings (Phase 1 video platform) */
+/**
+ * Xacheus — Settings.
+ *
+ * Account, appearance, notification categories, privacy, playback and the
+ * block list. Everything here writes to your own `users/{uid}` document (or a
+ * subcollection), so it is still in force the next time you open the app on any
+ * device — and the same values are enforced server-side by firestore.rules.
+ */
 
 import {
   EmailAuthProvider,
@@ -9,8 +16,11 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
 import { auth } from "../firebase.js";
-import { purgeUserData } from "../data.js";
-import { avatar, confirmDialog, esc, openModal, toast } from "../ui.js";
+import { getProfile, purgeUserData, updateProfile } from "../data.js";
+import { NOTIFICATION_CATEGORIES, getBlockList, getUserPrefs, savePrefs, unblockUser } from "../social.js";
+import { setPlayerOptions } from "../player.js";
+import { avatar, confirmDialog, emptyState, esc, openModal, timeAgo, toast } from "../ui.js";
+import { brandSlotHtml } from "../brand.js";
 
 export function settingsView(ctx) {
   const me = ctx.state.profile;
@@ -69,15 +79,24 @@ export function settingsView(ctx) {
     </section>
 
     <section class="panel">
-      <h2 class="panel-title">Video preferences</h2>
-      <div class="setting-row">
-        <div class="setting-main"><div><strong>Auto-play videos</strong><em>Videos play automatically when in view.</em></div></div>
-        <span class="badge">On</span>
-      </div>
-      <div class="setting-row">
-        <div class="setting-main"><div><strong>Data saver</strong><em>Coming soon — lower quality on mobile data.</em></div></div>
-        <span class="badge">Soon</span>
-      </div>
+      <h2 class="panel-title">Notifications</h2>
+      <p class="tab-note">Turn categories off and Xacheus stops creating those notifications for you at all — the check runs on the sender's write, so it also applies to other devices.</p>
+      <div data-prefs-notifications></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Privacy</h2>
+      <div data-prefs-privacy></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Playback &amp; data</h2>
+      <div data-prefs-playback></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Blocked accounts</h2>
+      <div data-blocked-list><div class="loader-row"><span class="spinner"></span> Loading…</div></div>
     </section>
 
     <section class="panel">
@@ -101,8 +120,14 @@ export function settingsView(ctx) {
       </div>
     </section>
 
+    <section class="panel">
+      <h2 class="panel-title">Not built yet</h2>
+      <p class="tab-note">To keep this page honest: language/region settings, export my data, a second-factor sign-in method and email digest frequency aren't implemented — nothing here pretends to save them.</p>
+    </section>
+
     <p class="settings-foot">
-      Xacheus · Built in Zambia 🌍 · <a class="link" href="#/home">Back to feed</a>
+      ${brandSlotHtml({ role: "wordmark", size: "sm", linked: false })}
+      <span>Built in Zambia 🌍 · <a class="link" href="#/home">Back to feed</a></span>
     </p>`;
 
   function formatRoleDesc(role) {
@@ -116,10 +141,133 @@ export function settingsView(ctx) {
     return map[role] || map.user;
   }
 
+  let prefs = { ...{ notifications: {}, privacy: {}, playback: {} } };
+
+  function toggleRow(key, label, hint, value, group) {
+    return `
+      <div class="setting-row">
+        <div class="setting-main"><div><strong>${esc(label)}</strong><em>${esc(hint)}</em></div></div>
+        <label class="switch">
+          <input type="checkbox" data-pref="${group}" data-pref-key="${esc(key)}" ${value ? "checked" : ""} />
+          <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+          <span class="sr-only">${esc(label)}</span>
+        </label>
+      </div>`;
+  }
+
+  function selectRow(key, label, hint, value, options, group) {
+    return `
+      <div class="setting-row">
+        <div class="setting-main"><div><strong>${esc(label)}</strong><em>${esc(hint)}</em></div></div>
+        <select class="select-sm" data-pref="${group}" data-pref-key="${esc(key)}" aria-label="${esc(label)}">
+          ${options.map((o) => `<option value="${esc(o.value)}" ${o.value === value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}
+        </select>
+      </div>`;
+  }
+
+  function paintPrefs(root) {
+    const notif = root.querySelector("[data-prefs-notifications]");
+    if (notif) {
+      notif.innerHTML = NOTIFICATION_CATEGORIES.map((c) =>
+        toggleRow(c.key, c.label, `Includes: ${c.types.join(", ")}`, prefs.notifications[c.key] !== false, "notifications")
+      ).join("");
+    }
+    const privacy = root.querySelector("[data-prefs-privacy]");
+    if (privacy) {
+      privacy.innerHTML = [
+        toggleRow("privateAccount", "Private account", "Only approved followers can see your posts, and requests are needed before anyone can follow you.", prefs.privacy.privateAccount, "privacy"),
+        selectRow("whoCanMessage", "Who can message you", "Blocking always overrides this.", prefs.privacy.whoCanMessage || "everyone", [
+          { value: "everyone", label: "Everyone" },
+          { value: "followers", label: "People I follow back" },
+          { value: "nobody", label: "Nobody" },
+        ], "privacy"),
+        selectRow("whoCanComment", "Who can comment on your posts", "Applied when someone opens the comment composer.", prefs.privacy.whoCanComment || "everyone", [
+          { value: "everyone", label: "Everyone" },
+          { value: "followers", label: "My followers" },
+        ], "privacy"),
+        toggleRow("showActivity", "Show my activity on my profile", "The public activity list people can see on your profile page.", prefs.privacy.showActivity !== false, "privacy"),
+        toggleRow("showLiked", "Show my liked videos", "Off means the Liked tab is only visible to you.", prefs.privacy.showLiked, "privacy"),
+        toggleRow("showSaved", "Show my saved posts", "Off means your Saves tab is only visible to you.", prefs.privacy.showSaved, "privacy"),
+      ].join("");
+    }
+    const playback = root.querySelector("[data-prefs-playback]");
+    if (playback) {
+      playback.innerHTML = [
+        toggleRow("autoplayPreviews", "Auto-play videos in the feed", "Off means you tap a video to start it — useful on mobile data.", prefs.playback.autoplayPreviews !== false, "playback"),
+        toggleRow("dataSaver", "Data saver", "Music preloads nothing until you press play, and feed videos only load their first frame.", prefs.playback.dataSaver, "playback"),
+        toggleRow("reducedMotion", "Reduce motion", "Turns off transitions and the animated story rings.", prefs.playback.reducedMotion, "playback"),
+      ].join("");
+    }
+  }
+
+  async function paintBlocked(root) {
+    const host = root.querySelector("[data-blocked-list]");
+    if (!host) return;
+    const rows = await getBlockList(ctx.state.profile.uid).catch(() => []);
+    if (!rows.length) {
+      host.innerHTML = `<p class="panel-empty">You haven't blocked anyone. Blocking is available from any profile's ⋯ menu, and it stops messaging, following and comments both ways.</p>`;
+      return;
+    }
+    const people = await Promise.all(rows.map((r) => getProfile(r.uid || r.id).catch(() => null)));
+    host.innerHTML = `<div class="block-list">${people
+      .map((p, i) =>
+        p
+          ? `<div class="block-row">
+               ${avatar(p, "md")}
+               <span class="block-main"><strong>${esc(p.displayName || p.username)}</strong><em>@${esc(p.username)} · blocked ${timeAgo(rows[i].createdAt)}</em></span>
+               <button class="btn btn-outline btn-sm" type="button" data-unblock="${esc(rows[i].id)}">Unblock</button>
+             </div>`
+          : `<div class="block-row"><span class="block-main"><em>Deleted account · blocked ${timeAgo(rows[i].createdAt)}</em></span><button class="btn btn-outline btn-sm" type="button" data-unblock="${esc(rows[i].id)}">Unblock</button></div>`
+      )
+      .join("")}</div>`;
+    host.querySelectorAll("[data-unblock]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await unblockUser(ctx.state.profile.uid, btn.dataset.unblock);
+          toast("Unblocked", "success");
+          paintBlocked(root);
+        } catch (err) {
+          toast(err?.message || "Could not unblock that account", "error");
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
   return {
     html,
     title: "Settings",
-    mount(root) {
+    async mount(root) {
+      prefs = await getUserPrefs(ctx.state.profile.uid).catch(() => ({ notifications: {}, privacy: {}, playback: {} }));
+      setPlayerOptions(prefs.playback || {});
+      paintPrefs(root);
+      paintBlocked(root);
+
+      root.addEventListener("change", async (event) => {
+        const input = event.target.closest("[data-pref-key]");
+        if (!input) return;
+        const group = input.dataset.pref;
+        const key = input.dataset.prefKey;
+        const value = input.type === "checkbox" ? input.checked : input.value;
+        try {
+          prefs = await savePrefs(ctx.state.profile.uid, { [group]: { [key]: value } });
+          if (group === "playback") setPlayerOptions(prefs.playback || {});
+          if (group === "privacy" && key === "privateAccount") {
+            // `users.private` is what rules read; keep the profile object in sync.
+            await updateProfile(ctx.state.profile.uid, { private: Boolean(value) }).catch(() => {});
+            ctx.refreshProfile?.();
+            window.dispatchEvent(new CustomEvent("xacheus:privacy-changed", { detail: { private: Boolean(value) } }));
+          }
+          const label = input.type === "checkbox" ? (value ? "on" : "off") : value;
+          toast(`Saved — ${key.replace(/([A-Z])/g, " $1").toLowerCase()} is ${label}`, "success", 2200);
+          paintPrefs(root);
+        } catch (err) {
+          toast(err?.message || "Could not save that preference", "error");
+          paintPrefs(root);
+        }
+      });
+
       root.addEventListener("click", async (event) => {
         const themeBtn = event.target.closest("[data-theme]");
         if (themeBtn) {

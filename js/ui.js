@@ -15,12 +15,30 @@ export function esc(value) {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Anything usable as an href. Only http(s), protocol-relative-free `#` routes
+ * and `mailto:` survive — a profile's "website" field is user input, so it can
+ * never become a `javascript:` link.
+ */
+export function safeUrl(value, { allowRoutes = true } = {}) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (allowRoutes && /^#[a-z0-9_./?=&%-]{1,200}$/i.test(raw)) return raw;
+  if (/^(https?:)?\/\//i.test(raw)) {
+    const withScheme = raw.startsWith("//") ? `https:${raw}` : raw;
+    return /^https?:\/\/[a-z0-9@:._%+#!?\/&=~,;'-]+$/i.test(withScheme) ? withScheme.replace(/"/g, "%22") : "";
+  }
+  if (/^mailto:[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(raw)) return raw;
+  return "";
+}
+
 /** Escape, then linkify #hashtags, @handles and safe https:// links. */
 export function richText(value) {
   let out = esc(value ?? "");
   out = out.replace(/(https?:\/\/[^\s<]+)/g, (match) => {
-    const safe = match.replace(/"/g, "%22");
-    return `<a class="link" href="${safe}" target="_blank" rel="noopener noreferrer">${match.replace(/^https?:\/\//, "")}</a>`;
+    const safe = safeUrl(match);
+    if (!safe) return esc(match);
+    return `<a class="link" href="${safe}" target="_blank" rel="noopener noreferrer nofollow">${match.replace(/^https?:\/\//, "")}</a>`;
   });
   out = out.replace(/#([a-z0-9_]{2,30})/gi, (_, tag) => `<a class="link" href="#/tag/${tag.toLowerCase()}">#${tag}</a>`);
   out = out.replace(/@([a-z0-9_]{3,20})/gi, (_, name) => `<a class="link" href="#/u/${name}">@${name}</a>`);
@@ -193,7 +211,7 @@ export function toast(message, type = "info", timeout = 3600) {
 let modalRoot;
 let lastFocused = null;
 
-export function openModal({ title = "", body = "", size = "", onMount } = {}) {
+export function openModal({ title = "", body = "", size = "", onMount, onClose } = {}) {
   closeModal(true);
   lastFocused = document.activeElement;
 
@@ -218,6 +236,8 @@ export function openModal({ title = "", body = "", size = "", onMount } = {}) {
   document.body.classList.add("no-scroll");
   requestAnimationFrame(() => modalRoot.classList.add("is-in"));
 
+  modalRoot.dataset.dismissed = "";
+  if (onClose) modalRoot._onClose = onClose;
   if (onMount) onMount(modalRoot, () => closeModal());
   const focusable = modalRoot.querySelector("input,textarea,button:not([data-close])");
   if (focusable) focusable.focus({ preventScroll: true });
@@ -234,6 +254,13 @@ export function closeModal(silent = false) {
   modalRoot.classList.remove("is-in");
   const node = modalRoot;
   modalRoot = null;
+  // Snapshot listeners and intervals are torn down here, not by polling, so a
+  // closed modal can never keep writing to a detached DOM node.
+  try {
+    node._onClose?.();
+  } catch (err) {
+    console.warn("[modal] onClose failed", err);
+  }
   document.body.classList.remove("no-scroll");
   setTimeout(() => node.remove(), 220);
   if (!silent && lastFocused && document.contains(lastFocused)) lastFocused.focus({ preventScroll: true });
@@ -314,10 +341,14 @@ export function bindZoom(root) {
   root.addEventListener("click", (event) => {
     const img = event.target.closest("img[data-zoom]");
     if (!img) return;
+    if (event.target.closest("[data-no-zoom]")) return;
     openModal({
       title: "",
       size: "media",
-      body: `<img class="lightbox-img" src="${esc(img.src)}" alt="Expanded media" />`,
+      body: `<figure class="lightbox-fig">
+        <img class="lightbox-img" src="${esc(img.src)}" alt="${esc(img.alt || "Expanded media")}" />
+        ${img.dataset.caption ? `<figcaption>${esc(img.dataset.caption)}</figcaption>` : ""}
+      </figure>`,
     });
   });
 }
