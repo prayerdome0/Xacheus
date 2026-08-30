@@ -1,3 +1,84 @@
+# Guest browsing — watch everything without an account
+
+## Date: 2026-08-30
+
+The security rules already let signed-out visitors read public content; this
+pass removes the UI gates that were blocking them. Guests can now watch the
+feed, stories, profiles, comments, sounds and live streams. Interactions
+(like, comment, follow, save, gift, chat, upload) still prompt sign-in, and
+private accounts stay locked by rules, not just by hidden buttons.
+
+- `js/views/home.js` — the story tray is no longer hidden from guests;
+  `renderStoryTray` owns its visibility and hides itself when empty.
+- `js/social.js` — `listActiveStories` gains `everyone` mode: with no follow
+  graph to filter by, guests get every active story Firestore will read
+  (public accounts only; private-account stories stay rule-locked).
+- `js/views/stories.js` — tray + per-owner viewer use `everyone` for guests;
+  the viewer already prompted sign-in for reactions/replies.
+- `js/views/components.js` — **comments modal opens for guests**: the thread
+  is fully readable, the composer becomes a "Log in to comment" button, and
+  reply/like/report still prompt sign-in. Delete stays owner-only
+  (`canDelete` now also requires being signed in).
+- `js/views/profile.js` — the Profile tab for a guest is a proper sign-in
+  card ("Keep browsing as guest" included) instead of a terse error.
+- `styles.css` — `.comment-form--guest` for the single-button composer.
+- Already guest-ready (verified, unchanged): For You feed, Following tab
+  (login empty-state), Discover search/trending, public profiles + media
+  viewer, Music catalogue + player, Live watching (chat shows "Log in to
+  chat, gift and react"), share-by-link, report/login prompts everywhere.
+- Not changed on purpose: `bumpVideoView` is a write, so a guest's playback
+  does not increment view counts — anonymous counter writes would be
+  trivially abusable.
+- `sw.js` cache bumped `v10 → v11` (all touched modules are precached).
+
+# Mobile design pass — phones first, safe areas everywhere
+
+## Date: 2026-08-30
+
+A focused pass over `styles.css` (+3 small JS hooks) so the app fits and feels
+native on small screens. No behaviour or data changes; pure shell/UX polish.
+
+- **Tab bar**: items now show icon **+ label** (stacked, 10px) instead of a bare
+  icon row; active tab is highlighted, the raised centre Create button keeps its
+  look, and labels drop automatically in landscape (`max-height: 430px`).
+  `js/app.js` renders the labels; the ≤1239px rule that hid `.nav-label` for the
+  collapsed tablet sidebar is re-asserted for the tab bar so they stay visible.
+- **Top bar (≤767px)**: wordmark shrinks to its small cut (88px, 78px ≤420px),
+  gaps tighten and the redundant Live shortcut is hidden (Live is a tab) so
+  brand + messages + inbox + theme + avatar fit a 320px screen.
+- **Safe areas / standalone PWA**: new `--safe-top` token; the topbar pads under
+  the status bar and every sticky offset/height that must clear it
+  (feed head, sidebar, rail, chat shell, auth card) now accounts for it.
+- **Dialogs are bottom sheets on phones (≤640px)**: docked to the bottom with a
+  grab handle, rounded top, slide-up animation, full-width action buttons and
+  home-indicator padding. Media lightboxes keep the centred chrome-less
+  treatment via the new `modal-backdrop--{size}` hook in `js/ui.js`.
+- **`dvh` units** (with `vh` fallbacks) for the media viewer, story viewer,
+  chat shell, live/broadcast boxes, comment lists and lightbox so nothing hides
+  under mobile browser chrome.
+- **Tab strips scroll**: `.tabs` (Discover, Music, Inbox) become swipeable
+  pill strips on phones instead of squeezing four labels per row.
+- **Profile goes edge-to-edge on phones**: full-bleed hero (square corners,
+  no side padding), stretched action buttons.
+- **Profile cover bug fixed (all screens)**: the rewritten profile renders the
+  whole cover as `<button class="cover cover-btn">`, but the legacy
+  `.cover-btn` "small pill" rules shrank it to a floating pill in the corner;
+  `.profile-hero > .cover.cover-btn` restores the full-width banner (and the
+  watermark / Edit pill position correctly inside it again).
+- **Chat is a full-height pane on phones**: exact geometry between top bar and
+  tab bar (incl. safe areas), square bottom corners; desktop no longer
+  subtracts a tab bar it doesn't have.
+- **Music player dock**: was floating 58px above the bottom on desktop (a
+  tab-bar offset with no tab bar) — now flush at the bottom, and on phones it
+  clears the tab bar **and** the home-indicator inset; feeds reserve room for
+  it and toasts rise above it while playing.
+- **Notifications** drop the 84px kind-caption column on phones (icon stays);
+  **Messages** toolbar wraps search + "New message" into one full-width row.
+- **Touch polish**: `-webkit-tap-highlight-color: transparent` and
+  `touch-action: manipulation` on all controls (no 300ms tap delay, zoom
+  intact), slightly more opaque tab-bar blur.
+- `sw.js` cache bumped `v9 → v10` so installed PWAs pick up the new shell.
+
 # Phase 2 — profiles, media, stories, messaging, licensed music
 
 ## Date: 2026-08-30

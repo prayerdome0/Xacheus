@@ -40,12 +40,15 @@ export async function renderStoryTray(ctx, host) {
   const paint = async () => {
     if (stopped || !host.isConnected) return;
     const following = myUid ? await getFollowingIds(myUid).catch(() => []) : [];
-    const raw = await listActiveStories(following, { includeUid: myUid, max: 40 });
+    // Guests have no follow graph, so they get every public active story.
+    const raw = await listActiveStories(following, { includeUid: myUid, max: 40, everyone: !myUid });
     const stories = await attachSeenState(raw, myUid);
     const byOwner = groupByOwner(stories);
     const mine = byOwner.get(myUid) || [];
 
     if (!byOwner.size) {
+      // Signed-in users keep the "Your story" composer bubble; guests see
+      // nothing (no dead strip on the public feed).
       host.hidden = !ctx.state.profile;
       host.innerHTML = ctx.state.profile
         ? `<div class="story-strip is-empty">
@@ -57,7 +60,7 @@ export async function renderStoryTray(ctx, host) {
              <p class="story-strip-note">No active stories. Share a photo or clip — it disappears after 24 hours.</p>
            </div>`
         : `<div class="story-strip is-empty">
-             <p class="story-strip-note">Stories appear here once you follow people who post them. <a href="#/discover">Find accounts</a></p>
+             <p class="story-strip-note">No active stories right now — check back soon, or <a href="#/discover">browse videos</a>.</p>
            </div>`;
       bindTray(ctx, host);
       return;
@@ -115,7 +118,11 @@ function bindTray(ctx, host) {
 
 async function openStoryViewerForOwner(ctx, uid) {
   const following = ctx.state.profile ? await getFollowingIds(ctx.state.profile.uid).catch(() => []) : [];
-  const stories = await attachSeenState(await listActiveStories(following, { max: 60 }), ctx.state.profile?.uid || "");
+  // Guest path mirrors the tray: no follow graph, so pull every public story.
+  const stories = await attachSeenState(
+    await listActiveStories(following, { max: 60, everyone: !ctx.state.profile }),
+    ctx.state.profile?.uid || ""
+  );
   const mine = stories.filter((s) => s.uid === uid);
   if (!mine.length) {
     toast("Those stories just expired.", "info");

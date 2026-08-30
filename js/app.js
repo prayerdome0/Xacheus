@@ -189,7 +189,7 @@ function buildShell() {
         </div>
 
         <div class="topbar-right">
-          <a class="icon-btn" href="#/live" aria-label="Live" title="Live">
+          <a class="icon-btn topbar-live" href="#/live" aria-label="Live" title="Live">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4"/><path d="M7.8 16.2a6 6 0 0 1 0-8.4"/></svg>
           </a>
           <a class="icon-btn" href="#/messages" aria-label="Messages" data-nav-icon="messages">
@@ -252,7 +252,7 @@ function buildShell() {
     </div>
 
     <nav class="tabbar tabbar-video" aria-label="Primary mobile">
-      ${tabNav.map((item) => navItem(item, { iconOnly: true })).join("")}
+      ${tabNav.map((item) => navItem(item)).join("")}
     </nav>
 
     <div class="account-menu" id="account-menu" hidden></div>`;

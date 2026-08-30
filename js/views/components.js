@@ -520,13 +520,12 @@ async function loadPostSound(video) {
 /* ------------------------------------------------------------------ */
 
 export function openCommentsModal(ctx, video) {
-  if (!ctx.state.profile) {
-    ctx.requireAuth();
-    return;
-  }
+  // Guests can read the whole thread; posting, replying and liking prompt
+  // sign-in (the security rules allow public reads of the comments).
   let unsub = null;
   let comments = [];
-  const myUid = ctx.state.profile.uid;
+  const myUid = ctx.state.profile?.uid || "";
+  const isGuest = !ctx.state.profile;
 
   const modal = openModal({
     title: `Comments · @${video.username || "xacheus"}`,
@@ -536,10 +535,16 @@ export function openCommentsModal(ctx, video) {
         <div class="comments-list" data-comments>
           <div class="loader-row"><span class="spinner"></span> Loading…</div>
         </div>
-        <form class="comment-form" data-comment-form>
-          <input type="text" data-comment-input maxlength="500" placeholder="Add a comment…" autocomplete="off" />
-          <button class="btn btn-primary btn-sm" type="submit">Post</button>
-        </form>
+        ${
+          isGuest
+            ? `<div class="comment-form comment-form--guest">
+                 <button class="btn btn-primary btn-sm btn-block" type="button" data-comment-login>Log in to comment</button>
+               </div>`
+            : `<form class="comment-form" data-comment-form>
+                 <input type="text" data-comment-input maxlength="500" placeholder="Add a comment…" autocomplete="off" />
+                 <button class="btn btn-primary btn-sm" type="submit">Post</button>
+               </form>`
+        }
         <p class="comment-reply-hint" data-reply-hint hidden></p>
       </div>`,
     onClose() {
@@ -552,11 +557,13 @@ export function openCommentsModal(ctx, video) {
       const hint = root.querySelector("[data-reply-hint]");
       let replyTo = null;
 
+      root.querySelector("[data-comment-login]")?.addEventListener("click", () => ctx.requireAuth());
+
       const setReplyTarget = (comment) => {
         replyTo = comment;
         hint.hidden = !comment;
         if (comment) hint.innerHTML = `Replying to <strong>@${esc(comment.username)}</strong> <button type="button" class="link-btn" data-cancel-reply>cancel</button>`;
-        input.focus();
+        input?.focus();
       };
       hint.addEventListener("click", (event) => {
         if (event.target.closest("[data-cancel-reply]")) setReplyToNull();
@@ -564,7 +571,7 @@ export function openCommentsModal(ctx, video) {
       function setReplyToNull() {
         replyTo = null;
         hint.hidden = true;
-        input.focus();
+        input?.focus();
       }
 
       const render = (rows) => {
@@ -582,7 +589,7 @@ export function openCommentsModal(ctx, video) {
 
       const likedSet = new Set();
 
-      form.addEventListener("submit", async (event) => {
+      form?.addEventListener("submit", async (event) => {
         event.preventDefault();
         const text = input.value.trim();
         if (!text) return;
@@ -622,6 +629,7 @@ export function openCommentsModal(ctx, video) {
         const action = actionEl.dataset.commentAct;
 
         if (action === "reply") {
+          if (!ctx.state.profile) return ctx.requireAuth();
           setReplyTarget({ ...comment, parentIdFor: comment.parentId || comment.id });
           return;
         }
@@ -680,7 +688,7 @@ export function openCommentsModal(ctx, video) {
 
 function commentHtml(comment, replies, { myUid, video, liked }) {
   const mine = comment.uid === myUid;
-  const canDelete = mine || video.uid === myUid;
+  const canDelete = Boolean(myUid) && (mine || video.uid === myUid);
   return `
   <div class="comment ${replies.length ? "has-replies" : ""}" data-comment-id="${esc(comment.id)}">
     <a href="#/u/${esc(comment.username)}" data-open-user>${avatar({ username: comment.username, displayName: comment.displayName, photoURL: comment.photoURL }, "sm")}</a>

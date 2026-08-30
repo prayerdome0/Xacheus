@@ -216,7 +216,7 @@ export function openModal({ title = "", body = "", size = "", onMount, onClose }
   lastFocused = document.activeElement;
 
   modalRoot = fromHTML(`
-    <div class="modal-backdrop" role="presentation">
+    <div class="modal-backdrop ${size ? `modal-backdrop--${size}` : ""}" role="presentation">
       <div class="modal ${size ? `modal-${size}` : ""}" role="dialog" aria-modal="true" aria-label="${esc(title || "Dialog")}">
         <header class="modal-head">
           <h2>${esc(title)}</h2>

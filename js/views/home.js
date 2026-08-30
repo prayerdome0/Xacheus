@@ -331,7 +331,9 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
         }
       });
 
-      // Stories: the tray is real (24h media from you + the people you follow).
+      // Stories: the tray is real (24h media). Signed-in users see stories from
+      // the people they follow (+ their own); guests see every public story.
+      // renderStoryTray owns the host's visibility and hides it when empty.
       const trayHost = root.querySelector("[data-story-tray]");
       if (trayHost) {
         renderStoryTray(ctx, trayHost).then((stop) => {
@@ -340,7 +342,6 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
             return;
           }
           storyStop = stop;
-          if (ctx.state.profile) trayHost.hidden = false;
         });
       }
 
