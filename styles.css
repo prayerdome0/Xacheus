@@ -32,6 +32,11 @@
 
   --topbar-h: 58px;
   --tabbar-h: 58px;
+  /* Notch / status-bar inset. Zero on desktop browsers and non-standalone
+     mobile Safari, `env(safe-area-inset-top)` in installed-PWA mode where the
+     topbar sits under the status bar. Every height/offset that has to clear
+     the topbar uses this so standalone mode never clips content. */
+  --safe-top: env(safe-area-inset-top, 0px);
 
   font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   color-scheme: dark;
@@ -74,6 +79,31 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
+  /* No grey flash-box around every tapped control on iOS/Android. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Kill the legacy 300 ms tap / double-tap-zoom delay on touch without losing
+   pinch-zoom anywhere (only "manipulation", never "none"). */
+a,
+button,
+summary,
+label,
+[role="button"],
+.tab,
+.top-tab,
+.feed-tab,
+.seg,
+.chip,
+.genre-chip,
+.nav-item,
+.icon-btn,
+.tool-btn,
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"],
+input[type="submit"] {
+  touch-action: manipulation;
 }
 
 body.no-scroll {
@@ -601,6 +631,8 @@ html.light .field-prefix-wrap {
   backdrop-filter: blur(14px);
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   border-bottom: 1px solid var(--line-soft);
+  /* In standalone/installed mode the bar sits under the status bar. */
+  padding-top: var(--safe-top);
 }
 html.light .topbar {
   background: rgba(255, 255, 255, 0.86);
@@ -689,7 +721,7 @@ html.light .topbar {
 
 .sidebar {
   position: sticky;
-  top: calc(var(--topbar-h) + 18px);
+  top: calc(var(--topbar-h) + var(--safe-top) + 18px);
   display: grid;
   gap: 4px;
   align-content: start;
@@ -800,7 +832,7 @@ html.light .topbar {
 
 .rail {
   position: sticky;
-  top: calc(var(--topbar-h) + 18px);
+  top: calc(var(--topbar-h) + var(--safe-top) + 18px);
   display: grid;
   gap: 16px;
 }
@@ -1892,8 +1924,10 @@ html.light .panel {
   background: #000;
   aspect-ratio: 9 / 14;
   max-height: 74vh;
+  max-height: 74dvh;
   margin: 0 auto;
   width: min(100%, calc(74vh * 9 / 14));
+  width: min(100%, calc(74dvh * 9 / 14));
 }
 .live-player-box video {
   width: 100%;
@@ -1998,7 +2032,9 @@ html.light .panel {
   background: #000;
   aspect-ratio: 9 / 14;
   max-height: 62vh;
+  max-height: 62dvh;
   width: min(100%, calc(62vh * 9 / 14));
+  width: min(100%, calc(62dvh * 9 / 14));
   margin: 0 auto;
 }
 .broadcast-preview-box video {
@@ -2641,6 +2677,7 @@ html.light .panel {
   width: 100%;
   max-width: 560px;
   max-height: min(86vh, 720px);
+  max-height: min(86dvh, 720px);
   display: flex;
   flex-direction: column;
   background: var(--bg-elev);
@@ -3054,6 +3091,26 @@ html.light .panel {
     display: none;
   }
 
+  /* Compact topbar: the wordmark drops to its small cut, the gap tightens and
+     the Live shortcut is dropped (Live already owns a tab in the bar below),
+     so brand + messages + inbox + theme + avatar fit a 320px screen. */
+  .topbar-inner {
+    gap: 8px;
+    padding: 0 10px;
+  }
+  .topbar .logo-plate--wordmark {
+    padding: 4px 8px;
+  }
+  .topbar .logo-plate--wordmark .logo-ink {
+    width: 88px;
+  }
+  .topbar-live {
+    display: none;
+  }
+  .topbar-right {
+    gap: 2px;
+  }
+
   .tabbar {
     position: fixed;
     bottom: 0;
@@ -3062,22 +3119,56 @@ html.light .panel {
     z-index: 60;
     display: flex;
     justify-content: space-around;
-    align-items: center;
+    align-items: stretch;
     height: calc(var(--tabbar-h) + env(safe-area-inset-bottom));
     padding-bottom: env(safe-area-inset-bottom);
-    background: color-mix(in srgb, var(--bg-elev) 94%, transparent);
+    background: color-mix(in srgb, var(--bg-elev) 96%, transparent);
     backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
     border-top: 1px solid var(--line-soft);
   }
+  /* Icon over a tiny label — a bare icon row is hard to learn. */
   .tabbar .nav-item {
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
     width: auto;
-    padding: 10px 14px;
+    min-width: 0;
+    padding: 8px 4px;
     border-radius: 12px;
+    font-size: 0.62rem;
+    line-height: 1;
+  }
+  .tabbar .nav-icon {
+    width: 100%;
+  }
+  .tabbar .nav-icon svg {
+    width: 24px;
+    height: 24px;
+  }
+  .tabbar .nav-label {
+    /* Re-assert display: the collapsed tablet sidebar (≤1239px) hides
+       `.nav-label` globally — the phone tab bar wants it back. */
+    display: block;
+    font-size: inherit;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tabbar .nav-item.is-active {
+    color: var(--text);
+  }
+  .tabbar .nav-item.is-active .nav-label {
+    color: var(--text);
   }
   .tabbar .nav-badge {
     position: absolute;
-    top: 2px;
-    right: 6px;
+    top: 5px;
+    right: calc(50% - 24px);
   }
 
   .fab {
@@ -3161,6 +3252,7 @@ html.light .panel {
   }
   .modal {
     max-height: 90vh;
+    max-height: 90dvh;
   }
 }
 
@@ -3219,7 +3311,10 @@ html.light .panel {
   margin-top: -18px;
   z-index: 2;
 }
-.tabbar-video .nav-create-inner {
+.tabbar-video .nav-create .nav-label {
+  display: none;
+}
+.tabbar-video .nav-create .nav-create-inner {
   width: 52px;
   height: 52px;
   border-radius: 50%;
@@ -3244,7 +3339,7 @@ html.light .panel {
 }
 
 /* Video feed */
-.video-feed-head { display: flex; align-items: center; gap: 12px; padding: 10px 4px; position: sticky; top: var(--topbar-h); z-index: 5; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); }
+.video-feed-head { display: flex; align-items: center; gap: 12px; padding: 10px 4px; position: sticky; top: calc(var(--topbar-h) + var(--safe-top)); z-index: 5; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(8px); }
 .feed-tabs { display: flex; gap: 8px; }
 .feed-tab {
   background: var(--surface-2); border: 1px solid var(--line); padding: 7px 14px; border-radius: 999px;
@@ -3512,7 +3607,7 @@ html.light .panel {
 
 /* Comments modal */
 .comments-modal { display: grid; gap: 12px; }
-.comments-list { max-height: 50vh; overflow-y: auto; display: grid; gap: 8px; }
+.comments-list { max-height: 50vh; max-height: 50dvh; overflow-y: auto; display: grid; gap: 8px; }
 .comment-form { display: flex; gap: 8px; }
 .comment-form input { flex: 1; }
 
@@ -3553,7 +3648,10 @@ html.light .panel {
 
 @media (max-width: 420px) {
   .tabbar .nav-item {
-    padding: 10px 8px;
+    padding: 8px 2px;
+  }
+  .topbar .logo-plate--wordmark .logo-ink {
+    width: 78px;
   }
 }
 
@@ -4120,7 +4218,7 @@ button.chip.is-on { background: var(--brand-1); border-color: transparent; color
   display: grid; place-items: center;
   touch-action: manipulation;
 }
-.sv-stages { position: relative; width: min(430px, 100vw); height: min(100vh, 860px); overflow: hidden; background: #000; }
+.sv-stages { position: relative; width: min(430px, 100vw); height: min(100vh, 860px); height: min(100dvh, 860px); overflow: hidden; background: #000; }
 .sv-stage { position: absolute; inset: 0; display: grid; }
 .sv-media { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .sv-text {
@@ -4252,8 +4350,8 @@ button.chip.is-on { background: var(--brand-1); border-color: transparent; color
 .mv-side .user-list { max-height: none; }
 
 @media (max-width: 860px) {
-  .mv-stage { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; width: 100vw; height: 100vh; border-radius: 0; border: 0; }
-  .mv-side { border-left: 0; border-top: 1px solid var(--line); max-height: 46vh; }
+  .mv-stage { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr) auto; width: 100vw; height: 100vh; height: 100dvh; border-radius: 0; border: 0; }
+  .mv-side { border-left: 0; border-top: 1px solid var(--line); max-height: 46vh; max-height: 46dvh; }
   .mv-comment.is-reply { margin-left: 18px; }
 }
 
@@ -4303,7 +4401,8 @@ button.chip.is-on { background: var(--brand-1); border-color: transparent; color
 
 .chat-shell {
   display: grid; grid-template-rows: auto auto 1fr auto auto auto;
-  height: calc(100vh - var(--topbar-h) - var(--tabbar-h) - 24px);
+  height: calc(100vh - var(--topbar-h) - 24px);
+  height: calc(100dvh - var(--topbar-h) - var(--safe-top) - 24px);
   min-height: 420px;
   border: 1px solid var(--line); border-radius: var(--radius-lg);
   background: var(--surface); overflow: hidden;
@@ -4494,7 +4593,7 @@ button.chip.is-on { background: var(--brand-1); border-color: transparent; color
 
 /* ---- global player dock ---- */
 #player-dock {
-  position: fixed; left: 0; right: 0; bottom: var(--tabbar-h);
+  position: fixed; left: 0; right: 0; bottom: 0;
   z-index: 120;
   background: rgba(16, 18, 27, 0.94);
   backdrop-filter: blur(14px);
@@ -4566,11 +4665,18 @@ html.light #player-dock { background: rgba(255, 255, 255, 0.95); }
   .player-volume input[type="range"] { width: 60px; }
 }
 @media (max-width: 640px) {
-  #player-dock { bottom: calc(var(--tabbar-h) + 0px); }
+  #player-dock { bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px)); }
   .player-inner { gap: 8px; padding: 6px 10px; }
   .player-extra .icon-btn[data-p="shuffle"], .player-volume { display: none; }
 }
 body.has-player #view { padding-bottom: 96px; }
+/* Phones: the layout already reserves the tab bar, the feed only needs the
+   extra ~70px the dock itself adds. */
+@media (max-width: 767px) {
+  body.has-player #view { padding-bottom: 78px; }
+}
+/* Toasts have to clear the dock whenever it is up (~62px tall). */
+body.has-player .toast-host { bottom: 86px; }
 
 /* reduce motion preference + data-saver affordance */
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
@@ -4841,3 +4947,205 @@ body.has-player #view { padding-bottom: 96px; }
 @media (max-width: 560px) {
   .comment.is-reply { margin-left: 14px; }
 }
+
+/* ================================================================== */
+/* Mobile refinement pass                                              */
+/*                                                                     */
+/* One place for the phone-specific behaviours that make the app feel  */
+/* native: scrollable tab strips, bottom-sheet dialogs, edge-to-edge   */
+/* profile chrome, compact list rows and landscape tweaks.             */
+/* ================================================================== */
+
+/* Tab strips ("Trending videos / Trending sounds / …") are too wide for
+   equal columns on a phone — let them scroll like the profile tabs do. */
+@media (max-width: 767px) {
+  .tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs .tab {
+    flex: 1 0 auto;
+    padding: 12px 14px;
+    font-size: 0.88rem;
+    white-space: nowrap;
+  }
+}
+
+/* Dialogs become bottom sheets on phones: thumb-reachable, with a grab
+   handle, rounded top and home-indicator clearance. Media lightboxes keep
+   their centred, chrome-less treatment (`.modal-backdrop--media`). */
+@media (max-width: 640px) {
+  .modal-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+  .modal-backdrop--media {
+    align-items: center;
+    padding: 12px;
+  }
+  .modal {
+    max-width: none;
+    max-height: min(92dvh, 720px);
+    border-radius: 22px 22px 0 0;
+    transform: translateY(60%);
+    transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .modal-backdrop.is-in .modal { transform: translateY(0); }
+  .modal-backdrop--media .modal {
+    max-height: 96dvh;
+    border-radius: 0;
+    transform: none;
+  }
+  .modal-head {
+    position: relative;
+    padding-top: 20px;
+  }
+  .modal-head::before {
+    content: "";
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    width: 38px;
+    height: 4px;
+    margin-left: -19px;
+    border-radius: 999px;
+    background: var(--line);
+  }
+  .modal-backdrop--media .modal-head::before { display: none; }
+  .modal-body {
+    padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+  .modal-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* The whole cover is one tappable button in the current profile markup
+   (`<button class="cover cover-btn">`). The legacy `.cover-btn` rules above
+   were written for a small "change photo" pill and were shrinking that button
+   to a floating pill in the corner — restore full-banner behaviour. */
+.profile-hero > .cover.cover-btn {
+  position: relative;
+  inset: auto;
+  display: block;
+  width: 100%;
+  height: clamp(140px, 26vw, 260px);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background-size: cover;
+  background-position: center;
+  background-color: var(--surface-2);
+}
+.profile-hero > .cover.cover-btn:hover {
+  transform: none;
+}
+
+/* Profile: go edge-to-edge on phones instead of a floating card. */
+@media (max-width: 767px) {
+  .profile-hero {
+    margin: 0 -12px;
+    border-radius: 0;
+    border-width: 1px 0 0;
+  }
+  .profile-hero > .cover.cover-btn,
+  .profile-hero .cover,
+  .profile-cover {
+    height: clamp(120px, 32vw, 190px);
+    margin: 0;
+    border-radius: 0;
+  }
+  .profile-content {
+    padding: 12px 14px 14px;
+  }
+  .profile-actions .btn,
+  .profile-follow-row .btn {
+    flex: 1 1 auto;
+  }
+  .profile-stats {
+    gap: 14px;
+  }
+  .profile-stats dd {
+    font-size: 1rem;
+  }
+}
+
+/* Notifications: the 84px kind column ("Like"/"Follow" captions) is dead
+   weight next to a 360px-wide body — keep the icon, drop the caption. */
+@media (max-width: 640px) {
+  .notif {
+    grid-template-columns: auto minmax(0, 1fr) auto 6px;
+    gap: 10px;
+    padding: 10px;
+  }
+  .notif-kind {
+    width: 34px;
+    justify-items: center;
+  }
+  .notif-kind em { display: none; }
+  .notif-icon { font-size: 1.2rem; }
+  .notif-thumb { max-width: 96px; }
+}
+
+/* Inbox toolbar: search box and "New message" share one row at any width. */
+@media (max-width: 640px) {
+  .inbox-tools {
+    width: 100%;
+  }
+  .inbox-tools input[type="search"] {
+    min-width: 0;
+    flex: 1 1 120px;
+  }
+}
+
+/* Chat: a full-height app pane between the top bar and the tab bar. The
+   `:has()` bonus drops the feed's 96px bottom reserve where it isn't
+   needed; without support the pane is simply a touch shorter. */
+@media (max-width: 767px) {
+  .layout:has(.chat-shell) {
+    padding-bottom: 10px;
+  }
+  .chat-shell {
+    height: calc(100dvh - var(--topbar-h) - var(--safe-top) - var(--tabbar-h) - env(safe-area-inset-bottom, 0px) - 10px);
+    min-height: 320px;
+    border-radius: 16px 16px 0 0;
+  }
+}
+
+/* Auth overlay: keep the card clear of the status bar in standalone mode. */
+@media (max-width: 767px) {
+  .auth-panel {
+    padding: calc(28px + var(--safe-top)) 18px 60px;
+  }
+}
+
+/* Account menu never runs past the left edge on small phones. */
+@media (max-width: 480px) {
+  .account-menu {
+    min-width: 0;
+    width: min(272px, calc(100vw - 20px));
+  }
+}
+
+/* Landscape phones: drop the tab labels and reclaim vertical space. */
+@media (max-height: 430px) and (orientation: landscape) and (max-width: 1023px) {
+  .tabbar .nav-label { display: none; }
+  .tabbar .nav-item { gap: 0; }
+}
+
+/* Very narrow phones: trim the feed switcher pills. */
+@media (max-width: 380px) {
+  .feed-tab {
+    padding: 7px 12px;
+    font-size: 0.8rem;
+  }
+}
+
+/* Lightbox: dvh so tall images never hide behind mobile browser chrome. */
+.lightbox-img {
+  max-height: 84vh;
+  max-height: 84dvh;
+}
+
