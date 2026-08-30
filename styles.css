@@ -4641,3 +4641,203 @@ body.has-player #view { padding-bottom: 96px; }
 .account-brand { padding: 12px 14px 8px; }
 .settings-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; color: var(--muted); font-size: 0.84rem; }
 .boot-inner .logo-plate { margin-bottom: 4px; }
+
+/* ------------------------------------------------------------------ */
+/* incomplete-surface styles: classes used by the views but not yet    */
+/* given rules (comments, share sheet, media viewer, create/profile   */
+/* edit, sounds, player, live, messages, notifications).               */
+/* ------------------------------------------------------------------ */
+
+/* ---- shared state classes ---- */
+.is-busy { pointer-events: none; opacity: 0.55; }
+.is-ready { pointer-events: none; }
+
+/* icon buttons with inline SVG (topbar, player, modals) */
+.icon-btn svg:not(.p-icon) { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.icon-btn .p-icon { width: 18px; height: 18px; fill: currentColor; }
+.icon-btn.ghost { color: var(--faint); }
+.icon-btn.ghost:hover { color: var(--text); }
+.p-icon { width: 18px; height: 18px; fill: currentColor; }
+
+/* ---- feed / thread comments ---- */
+.comment-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.comment-act {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 0; background: none; color: var(--muted); cursor: pointer;
+  font: inherit; font-size: 0.78rem; padding: 2px 4px; border-radius: 6px;
+}
+.comment-act svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.comment-act:hover { color: var(--text); }
+.comment-act.is-on { color: var(--brand-2); }
+.comment-act.is-on svg { fill: var(--brand-2); stroke: var(--brand-2); }
+.comment-act.danger { color: var(--danger); }
+.comment-replies { display: grid; gap: 2px; margin-top: 4px; margin-left: 4px; padding-left: 10px; border-left: 2px solid var(--line-soft); }
+.comment-reply-count { display: inline-block; margin-top: 4px; color: var(--faint); font-size: 0.75rem; }
+.comment-reply-hint { margin: 6px 0 0; color: var(--accent); font-size: 0.8rem; }
+.reply-to { color: var(--brand-2); font-style: normal; }
+
+/* repost byline on a feed card */
+.repost-byline {
+  position: absolute; top: 8px; left: 8px; z-index: 5;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px; border-radius: 999px;
+  background: rgba(6, 7, 12, 0.6); color: #fff; font-size: 0.75rem;
+  max-width: calc(100% - 16px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.repost-byline span { overflow: hidden; text-overflow: ellipsis; }
+.video-grid-card.is-repost::after {
+  content: "↻"; position: absolute; top: 6px; left: 6px; z-index: 2;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--brand-grad); color: #fff;
+  display: grid; place-items: center; font-size: 0.75rem;
+}
+
+/* reaction summary on a feed card */
+.rx-summary { display: inline-flex; align-items: center; gap: 6px; color: #fff; font-size: 0.8rem; opacity: 0.95; }
+.rx-summary em { font-style: normal; opacity: 0.9; }
+.rx-bubbles { display: inline-flex; align-items: center; }
+.rx-bubbles i {
+  width: 22px; height: 22px; border-radius: 50%;
+  background: rgba(6, 7, 12, 0.65); border: 1px solid rgba(255, 255, 255, 0.25);
+  display: grid; place-items: center; font-style: normal; font-size: 0.85rem;
+}
+.rx-bubbles i + i { margin-left: -6px; }
+.rx-emoji { font-size: 1.1rem; line-height: 1; }
+
+/* mini play control inside a video sound line */
+.sound-play-mini {
+  width: 20px; height: 20px; border-radius: 50%; flex: none;
+  border: 0; background: rgba(255, 255, 255, 0.16); color: #fff;
+  display: grid; place-items: center; cursor: pointer;
+}
+.sound-play-mini svg { width: 11px; height: 11px; fill: currentColor; }
+
+/* ---- media viewer: reactions + comment list ---- */
+.mv-reactions { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 14px 10px; }
+.mv-reactions .mv-rx { flex: 1 1 0; min-width: 44px; }
+.mv-comment-list { display: grid; gap: 0; }
+.mv-comments h3 { margin: 0 0 8px; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--faint); }
+.mv-comments h3 em { font-style: normal; color: var(--muted); }
+
+/* ---- share sheet ---- */
+.share-sheet { display: grid; gap: 16px; }
+.share-preview {
+  display: grid; gap: 6px; padding: 14px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.share-preview > strong { font-size: 0.95rem; }
+.share-preview p { margin: 0; color: var(--muted); font-size: 0.86rem; line-height: 1.4; }
+.share-preview code {
+  display: block; padding: 8px 10px; border-radius: 6px;
+  background: var(--surface); border: 1px solid var(--line-soft);
+  font-size: 0.74rem; overflow-wrap: anywhere; color: var(--muted);
+}
+.share-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.share-dm { display: grid; gap: 10px; border-top: 1px solid var(--line-soft); padding-top: 12px; }
+.share-section-title { margin: 0; color: var(--faint); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.share-people { display: grid; gap: 6px; max-height: 220px; overflow-y: auto; }
+.share-person {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line-soft); background: var(--surface);
+  color: inherit; font: inherit; cursor: pointer; text-align: left;
+}
+.share-person:hover { border-color: var(--brand-1); background: var(--surface-2); }
+.share-person[disabled] { opacity: 0.6; cursor: default; }
+.share-person-text { display: grid; gap: 1px; min-width: 0; }
+.share-person-text strong { font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-person-text em { display: block; font-style: normal; color: var(--muted); font-size: 0.76rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.share-person-action { font-size: 0.78rem; color: var(--accent); font-weight: 600; }
+.share-search { display: flex; gap: 8px; }
+.share-search input { flex: 1 1 auto; }
+
+/* ---- search / create / admin layout ---- */
+.search-form { display: flex; gap: 8px; align-items: center; }
+.chip-icon { font-size: 1rem; line-height: 1; }
+.create-main { display: grid; gap: 16px; min-width: 0; }
+.create-side { display: grid; gap: 14px; align-content: start; }
+.create-actions { display: grid; gap: 10px; margin-top: 16px; }
+.admin-content { display: grid; gap: 14px; margin-top: 16px; min-width: 0; }
+
+/* ---- profile edit ---- */
+.edit-form { display: grid; gap: 2px; }
+.edit-cover { border-radius: 12px; padding: 6px; }
+.edit-cover img { width: 150px; height: 92px; object-fit: cover; border-radius: 8px; display: block; }
+.edit-cover-empty {
+  width: 150px; height: 92px; display: grid; place-items: center;
+  border-radius: 8px; background: var(--surface-3);
+  color: var(--muted); font-size: 0.85rem; font-weight: 600;
+}
+.edit-cover .edit-overlay { border-radius: 8px; }
+.edit-cover:hover .edit-overlay { opacity: 1; }
+.edit-avatar.is-ready .avatar,
+.edit-cover.is-ready { border-color: var(--success); box-shadow: 0 0 0 3px rgba(47, 208, 138, 0.18); }
+
+/* ---- upload drops ---- */
+.upload-drop {
+  display: grid; place-items: center; gap: 8px; text-align: center;
+  border: 2px dashed var(--line); border-radius: var(--radius-sm);
+  padding: 22px; min-height: 120px; background: var(--surface);
+  color: var(--muted); cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.upload-drop:hover, .upload-drop.is-drag { border-color: var(--brand-1); background: color-mix(in srgb, var(--brand-1) 8%, var(--surface)); }
+.upload-drop-inner { display: grid; gap: 4px; justify-items: center; }
+.upload-drop-inner strong { font-size: 0.92rem; color: var(--text); }
+.upload-drop-inner em { font-style: normal; color: var(--faint); font-size: 0.78rem; }
+.upload-preview { max-height: 200px; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+
+/* ---- sounds ---- */
+.sound-licence-note { margin: 0; }
+.sounds-modal-host { min-width: 0; }
+.licence-panel { margin-top: 12px; }
+.licence-panel h3 { margin: 0 0 6px; }
+.release-card.is-seed { border-style: dashed; }
+.release-card.is-seed .release-art { opacity: 0.85; }
+.track-row.is-compact { grid-template-columns: 34px minmax(0, 1fr) auto; }
+
+/* ---- global player states ---- */
+#player-dock.is-loading { cursor: progress; }
+#player-dock.is-loading .player-art { opacity: 0.55; }
+#player-dock.has-error { border-top-color: rgba(255, 90, 110, 0.55); }
+#player-dock.has-error .player-art,
+#player-dock.has-error .player-title { color: var(--danger); }
+
+/* ---- live ---- */
+.live-chat-row.is-sticker { justify-content: center; }
+.live-top-gifters { margin-top: 12px; }
+
+/* ---- messages ---- */
+.msg-time { opacity: 0.85; }
+.msg-sent { color: rgba(255, 255, 255, 0.72); }
+.msg-row.is-other .msg-sent { color: var(--faint); }
+
+/* ---- notifications ---- */
+.notif-avatar .avatar { width: 38px; height: 38px; }
+
+/* ---- lightbox ---- */
+.lightbox-fig { margin: 0; display: grid; gap: 8px; justify-items: center; }
+.lightbox-fig figcaption { color: var(--muted); font-size: 0.85rem; text-align: center; }
+
+/* ---- theme toggle ---- */
+.theme-toggle { font-size: 1.05rem; }
+
+/* ---- stories / buttons state ---- */
+.sv-stages.is-paused { cursor: pointer; }
+.sv-rx.is-fired { animation: rx-fire 0.7s ease; }
+@keyframes rx-fire {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.3) rotate(-8deg); }
+  60% { transform: scale(1.06) rotate(6deg); }
+  100% { transform: scale(1); }
+}
+.btn.is-hot { border-color: var(--brand-2); color: var(--brand-2); font-weight: 700; }
+.rx-main .rx-emoji { font-size: 1.15rem; line-height: 1; }
+.rx-main.is-on .v-icon { background: rgba(255, 77, 141, 0.28); }
+.share-people.share-search-results { margin-top: 6px; }
+.comment.is-reply { margin-left: 26px; padding: 8px 4px; }
+.comment.is-reply .comment-body header strong { font-weight: 600; }
+@media (max-width: 560px) {
+  .comment.is-reply { margin-left: 14px; }
+}
