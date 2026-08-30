@@ -151,6 +151,16 @@ export async function notifyUser(toUid, payload) {
   const fromUid = payload.fromUid || "";
   if (fromUid && (await isBlocking(fromUid, toUid)).blocked) return false;
 
+  // A mute is a *notification* mute: you stop hearing from them, but they
+  // can still see your posts. Checked here rather than in the feed, so it
+  // holds for every device and every future notification type.
+  if (fromUid && fromUid !== toUid) {
+    const muted = await getDoc(muteRef(toUid, fromUid))
+      .then((snap) => Boolean(snap?.exists()))
+      .catch(() => false);
+    if (muted) return false;
+  }
+
   const category = categoryForType(payload.type);
   if (category) {
     const prefs = await getUserPrefs(toUid);
@@ -281,6 +291,72 @@ export async function assertCanInteract(myUid, targetUid) {
   if (blocked) throw new Error("You've blocked this account. Unblock them first.");
   if (blockedBy) throw new Error("You can't interact with this account.");
   return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* muting                                                              */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Mute is the softer step between "follow" and "block".
+ *
+ *   users/{uid}/mutes/{mutedUid}   { uid, username, displayName, photoURL,
+ *                                    createdAt, until }
+ *
+ * What muting does, and what it deliberately does not do:
+ *   - their posts are filtered out of your feed (client-side, because
+ *     Firestore cannot express "author not in my mute list" alongside
+ *     `orderBy(createdAt)` in one indexed query);
+ *   - they stop generating notifications for you (checked in notifyUser, so
+ *     it holds on every device, not just in this tab);
+ *   - their stories stay out of your tray.
+ *
+ * It does NOT hide them from search, stop them following you, or stop them
+ * messaging you — that is what blocking is for, and the UI says so.
+ */
+export function muteRef(uid, targetUid) {
+  return doc(db, "users", uid, "mutes", targetUid);
+}
+
+export async function muteUser(uid, target) {
+  if (!uid || !target?.uid) throw new Error("Nothing to mute.");
+  if (uid === target.uid) throw new Error("You can't mute yourself.");
+  await setDoc(muteRef(uid, target.uid), {
+    uid: target.uid,
+    username: target.username || "",
+    displayName: target.displayName || "",
+    photoURL: target.photoURL || "",
+    createdAt: serverTimestamp(),
+  });
+  return true;
+}
+
+export async function unmuteUser(uid, targetUid) {
+  if (!uid || !targetUid) return false;
+  await deleteDoc(muteRef(uid, targetUid));
+  return true;
+}
+
+export async function getMuteList(uid) {
+  if (!uid) return [];
+  try {
+    const snap = await getDocs(query(collection(db, "users", uid, "mutes"), orderBy("createdAt", "desc"), limit(200)));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch {
+    const snap = await getDocs(collection(db, "users", uid, "mutes"));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  }
+}
+
+export async function getMutedIds(uid) {
+  const list = await getMuteList(uid);
+  return new Set(list.map((m) => m.uid || m.id).filter(Boolean));
+}
+
+export async function isMuted(uid, targetUid) {
+  if (!uid || !targetUid) return false;
+  const snap = await getDoc(muteRef(uid, targetUid)).catch(() => null);
+  return Boolean(snap?.exists());
 }
 
 /* ------------------------------------------------------------------ */
@@ -1206,7 +1282,7 @@ export async function addStory(author, { kind = "photo", url, storagePath = "", 
   return ref.id;
 }
 
-export async function listActiveStories(uids, { max = 40, includeUid = "", everyone = false } = {}) {
+export async function listActiveStories(uids, { max = 40, includeUid = "", everyone = false, excludeUids = null } = {}) {
   const constraints = [where("expiresAt", ">", new Date()), orderBy("createdAt", "desc"), limit(max)];
   const fetchFor = async (filter) => {
     try {
@@ -1227,11 +1303,15 @@ export async function listActiveStories(uids, { max = 40, includeUid = "", every
   };
 
   const all = [];
+  // `excludeUids` is the viewer's mute list: a muted account's stories stay
+  // out of the tray, exactly as their posts stay out of the feed.
+  const excluded = excludeUids instanceof Set ? excludeUids : new Set(excludeUids || []);
   if (includeUid) all.push(...(await fetchFor(where("uid", "==", includeUid))).filter((s) => s.uid === includeUid));
   const list = await fetchFor(null);
   const allowed = new Set(uids || []);
   for (const story of list) {
     if (all.some((s) => s.id === story.id)) continue;
+    if (excluded.has(story.uid)) continue;
     // `everyone` is the guest mode: no follow graph to filter by, so the tray
     // shows every active story Firestore lets it read (public accounts only —
     // private-account stories are cut by the security rules).

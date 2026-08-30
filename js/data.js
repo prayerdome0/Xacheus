@@ -421,10 +421,14 @@ export async function createVideo(author, {
 }) {
   const cap = String(caption || "").trim().slice(0, 1000);
 
-  const isPhoto = mediaType === "photo";
+  const kind = mediaType === "photo" ? "photo" : mediaType === "text" ? "text" : "video";
+  const isPhoto = kind === "photo";
+  const isText = kind === "text";
   const photos = isPhoto ? (Array.isArray(images) ? images.filter((u) => u && !String(u).startsWith("blob:")).slice(0, 6) : []) : [];
   if (isPhoto) {
     if (!photos.length) throw new Error("Add at least one photo.");
+  } else if (isText) {
+    if (!cap) throw new Error("Write something first — a text post needs words.");
   } else if (!videoUrl) {
     throw new Error("Video URL missing");
   }
@@ -437,11 +441,15 @@ export async function createVideo(author, {
     username: author.username,
     displayName: author.displayName,
     photoURL: author.photoURL || "",
-    mediaType: isPhoto ? "photo" : "video",
+    mediaType: mediaType || (isPhoto ? "photo" : "video"),
     images: photos,
     videoUrl: isPhoto ? "" : videoUrl,
     thumbnailUrl: isPhoto ? photos[0] : thumbnailUrl || "",
     caption: cap,
+    // Lowercased copy kept purely so "search posts" can do a prefix range
+    // query — Firestore has no full-text search, and this is the field the
+    // composite index in firestore.indexes.json is built on.
+    captionLower: cap.toLowerCase(),
     hashtags,
     mentions,
     soundId: soundId || null,
@@ -515,6 +523,72 @@ export function watchVideo(videoId, cb) {
   return onSnapshot(doc(db, "videos", videoId), (snap) => {
     cb(snap.exists() ? { id: snap.id, ...snap.data() } : null);
   });
+}
+
+/**
+ * Edit your own post.
+ *
+ * Only the fields listed here are sent, and `firestore.rules` allows the
+ * author to change exactly this set (plus `updatedAt`) — so a tampered tab
+ * cannot quietly rewrite counters or reassign the post to someone else.
+ */
+export async function updateVideo(uid, videoId, patch = {}) {
+  if (!uid || !videoId) throw new Error("Nothing to edit.");
+  const snap = await getDoc(doc(db, "videos", videoId));
+  if (!snap.exists()) throw new Error("That post no longer exists.");
+  if (snap.data().uid !== uid) throw new Error("You can only edit your own posts.");
+
+  const next = {};
+  if (typeof patch.caption === "string") {
+    const cap = patch.caption.trim().slice(0, 1000);
+    if (!cap) throw new Error("A caption can't be empty — delete the post instead.");
+    next.caption = cap;
+    next.captionLower = cap.toLowerCase();
+    next.hashtags = extractHashtags(cap);
+    next.mentions = extractMentions(cap);
+  }
+  if (typeof patch.thumbnailUrl === "string" && patch.thumbnailUrl) next.thumbnailUrl = patch.thumbnailUrl;
+  if (typeof patch.isPublic === "boolean") next.isPublic = patch.isPublic;
+  if (!Object.keys(next).length) return null;
+
+  next.updatedAt = serverTimestamp();
+  await updateDoc(doc(db, "videos", videoId), next);
+
+  // New hashtags trend; dropped ones are left alone (their count is a tally
+  // of posts that used the tag, and decrements from an edit would need a
+  // read of every remaining post to be correct).
+  const before = snap.data();
+  const added = (next.hashtags || []).filter((t) => !(before.hashtags || []).includes(t));
+  if (added.length) {
+    Promise.all(
+      added.map((tag) =>
+        setDoc(doc(db, "hashtags", tag), { tag, count: increment(1), lastUsedAt: serverTimestamp() }, { merge: true }).catch(() => {})
+      )
+    ).catch(() => {});
+  }
+
+  // Mentions added by the edit notify the people they now name.
+  const newMentions = (next.mentions || []).filter((m) => !(before.mentions || []).includes(m));
+  if (newMentions.length) {
+    Promise.all(
+      newMentions.map(async (name) => {
+        const target = await getProfileByUsername(name).catch(() => null);
+        if (target && target.uid !== uid) {
+          await notify(target.uid, {
+            type: "mention",
+            fromUid: uid,
+            fromName: before.displayName,
+            fromPhoto: before.photoURL || "",
+            fromUsername: before.username,
+            videoId,
+            text: (next.caption || "").slice(0, 180),
+          }).catch(() => {});
+        }
+      })
+    ).catch(() => {});
+  }
+
+  return next;
 }
 
 export async function deleteVideo(videoId, uid) {
@@ -1162,6 +1236,19 @@ export async function markNotificationsRead(uid, items) {
   await Promise.all(items.filter((i) => !i.read).map((i) => updateDoc(doc(db, "notifications", i.id), { read: true })));
 }
 
+/**
+ * Flip one notification between read and unread.
+ *
+ * `read` is the only field the rules let the recipient touch, so this is a
+ * one-key write. Marking something unread again is how you leave yourself a
+ * reminder to come back to it — the bell badge counts it straight away.
+ */
+export async function setNotificationRead(uid, id, read = true) {
+  if (!uid || !id) return false;
+  await updateDoc(doc(db, "notifications", id), { read: Boolean(read) });
+  return true;
+}
+
 /* ------------------------------------------------------------------ */
 /* content moderation: reports + bans                                  */
 /* ------------------------------------------------------------------ */
@@ -1296,14 +1383,57 @@ export async function searchUsers(term, max = 12) {
   return users.slice(0, max);
 }
 
+/**
+ * Search posts.
+ *
+ * Firestore has no full-text search, so this is two honest queries unioned:
+ * an exact hashtag match (`hashtags array-contains`) and a *prefix* match on
+ * `captionLower`. It therefore finds "#zambia" and captions starting with the
+ * typed words — it does not claim to search inside words, and the Discover UI
+ * says so.
+ */
 export async function searchVideos(term, max = 12) {
-  const q = String(term || "").trim().toLowerCase();
-  if (!q) return [];
-  // Search by caption prefix? For simplicity search hashtags
+  const raw = String(term || "").trim();
+  if (!raw) return [];
+  const q = raw.toLowerCase();
   const tag = normaliseUsername(q.replace(/^#/, ""));
-  if (!tag) return [];
-  const snap = await getDocs(query(collection(db, "videos"), where("hashtags", "array-contains", tag), orderBy("createdAt", "desc"), limit(max))).catch(() => null);
-  return snap ? snap.docs.map((d) => ({ id: d.id, ...d.data() })) : [];
+
+  const queries = [];
+  if (tag) {
+    queries.push(
+      getDocs(
+        query(collection(db, "videos"), where("hashtags", "array-contains", tag), orderBy("createdAt", "desc"), limit(max))
+      ).catch(() => null)
+    );
+  }
+  if (q && !q.startsWith("#")) {
+    queries.push(
+      getDocs(
+        query(
+          collection(db, "videos"),
+          where("captionLower", ">=", q),
+          where("captionLower", "<=", q + "\uf8ff"),
+          orderBy("captionLower"),
+          orderBy("createdAt", "desc"),
+          limit(max)
+        )
+      ).catch(() => null)
+    );
+  }
+
+  const results = await Promise.all(queries);
+  const seen = new Set();
+  const posts = [];
+  results.forEach((snap) => {
+    if (!snap) return;
+    snap.docs.forEach((d) => {
+      if (seen.has(d.id)) return;
+      seen.add(d.id);
+      posts.push({ id: d.id, ...d.data() });
+    });
+  });
+  posts.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+  return posts.slice(0, max);
 }
 
 /* ------------------------------------------------------------------ */

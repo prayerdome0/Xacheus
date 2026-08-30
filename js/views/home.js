@@ -11,6 +11,7 @@ import { emptyState, formatCount, toast } from "../ui.js";
 import { bindVideoActions, hydrateVideoStates, videoCardHtml } from "./components.js";
 import { renderStoryTray, storyViewerOpen } from "./stories.js";
 import { getPlayerOptions } from "../player.js";
+import { getMutedIds } from "../social.js";
 
 // Count a view after this much continuous playback, so drive-by scrolls
 // through the feed don't inflate the counter.
@@ -25,6 +26,14 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
   let destroyed = false;
   let observer = null;
   let storyStop = null;
+  let mutedIds = new Set();
+  // New-post handling: the feed is a live Firestore snapshot, so a brand-new
+  // post arrives while you're reading. Shoving it in under the reader would
+  // move the post they're on, so instead we hold it and offer a pill.
+  let renderedIds = new Set();
+  let pending = null; // videos waiting behind the "N new posts" pill
+  let footObserver = null;
+  let exhausted = false;
   const onVideoUpdated = (event) => applyCounts(event.detail);
 
   const html = `
@@ -37,6 +46,17 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
     </div>
 
     <section class="story-strip-host" data-story-tray hidden></section>
+
+    <div class="feed-newpill-host">
+      <button class="feed-newpill" type="button" data-act="new-posts" hidden>
+        <span class="feed-newpill-icon" aria-hidden="true">↑</span>
+        <span data-new-count>New posts</span>
+      </button>
+    </div>
+
+    <div class="feed-pull" id="feed-pull" aria-hidden="true">
+      <span class="feed-pull-arrow">↓</span><span class="feed-pull-text">Pull to refresh</span>
+    </div>
 
     <div class="video-feed" id="video-feed" aria-live="polite">
       <div class="loader-row"><span class="spinner"></span> Loading videos…</div>
@@ -76,38 +96,163 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
     });
   }
 
-  function renderVideos(root, videos) {
+  /** Muted accounts are dropped from my feed (their posts still exist for
+   *  everyone else). Blocked accounts are already filtered by the rules. */
+  function visible(videos) {
+    if (!mutedIds.size) return videos;
+    return videos.filter((v) => !mutedIds.has(v.uid));
+  }
+
+  /**
+   * Paint the feed — or hold the update back behind the "new posts" pill.
+   *
+   * `force` is used by the refresh button, the pill and pull-to-refresh, so
+   * an explicit request always paints what Firestore just returned instead of
+   * queueing it.
+   */
+  function renderVideos(root, videos, { force = false, append = false } = {}) {
     const feed = root.querySelector("#video-feed");
     if (!feed) return;
 
-    if (!videos.length) {
+    const list = visible(videos);
+
+    if (!force && !append && renderedIds.size) {
+      const fresh = list.filter((v) => !renderedIds.has(v.id));
+      if (fresh.length && window.scrollY > 400) {
+        pending = list;
+        showNewPill(root, fresh.length);
+        return;
+      }
+    }
+    pending = null;
+    hideNewPill(root);
+
+    if (!append && !list.length) {
       feed.innerHTML =
         mode === "following"
           ? emptyState("🛰️", "Your following feed is quiet", "Follow creators and their videos will appear here.", '<a class="btn btn-primary btn-sm" href="#/discover">Find creators</a>')
           : emptyState("🎬", "No videos yet", "Be the first to post a vertical video — it will show up here instantly.", '<a class="btn btn-primary btn-sm" href="#/create">Create video</a>');
+      renderedIds = new Set();
       root.querySelector("#feed-foot").innerHTML = "";
       return;
     }
 
     // If focusVideoId, bring it to top
-    let ordered = videos;
-    if (focusVideoId) {
-      const idx = videos.findIndex((v) => v.id === focusVideoId);
+    let ordered = list;
+    if (focusVideoId && !append) {
+      const idx = list.findIndex((v) => v.id === focusVideoId);
       if (idx > 0) {
-        const focused = videos[idx];
-        ordered = [focused, ...videos.slice(0, idx), ...videos.slice(idx + 1)];
+        const focused = list[idx];
+        ordered = [focused, ...list.slice(0, idx), ...list.slice(idx + 1)];
       }
     }
 
-    feed.innerHTML = ordered.map((v) => videoCardHtml(v)).join("");
-    ordered.forEach((v) => ctx.videoCache.set(v.id, v));
+    if (append) {
+      const frag = document.createElement("div");
+      frag.innerHTML = ordered.map((v) => videoCardHtml(v, { myUid: ctx.state.profile?.uid || "" })).join("");
+      feed.appendChild(frag);
+      ordered.forEach((v) => {
+        ctx.videoCache.set(v.id, v);
+        renderedIds.add(v.id);
+      });
+      applyPlaybackPrefs(feed);
+      hydrateVideoStates(frag, ctx.state.profile?.uid);
+      setupIntersection(feed);
+      return;
+    }
+
+    feed.innerHTML = ordered.map((v) => videoCardHtml(v, { myUid: ctx.state.profile?.uid || "" })).join("");
+    renderedIds = new Set();
+    ordered.forEach((v) => {
+      ctx.videoCache.set(v.id, v);
+      renderedIds.add(v.id);
+    });
     applyPlaybackPrefs(feed);
     hydrateVideoStates(feed, ctx.state.profile?.uid);
     setupIntersection(feed);
-    root.querySelector("#feed-foot").innerHTML =
-      ordered.length >= 6
-        ? '<button class="btn btn-ghost btn-block" type="button" data-act="more">Load more videos</button>'
-        : `<p class="feed-end">You're all caught up 🎉</p>`;
+    paintFoot(root);
+  }
+
+  /**
+   * The bottom of the feed: a sentinel for infinite scroll, plus a real
+   * button so paging still works for keyboard users and anywhere
+   * IntersectionObserver isn't available.
+   *
+   * `paintFoot` rewrites the foot, so the sentinel is a new node every time —
+   * which is why observing happens here rather than once at mount.
+   */
+  function paintFoot(root) {
+    const foot = root.querySelector("#feed-foot");
+    if (!foot) return;
+    foot.innerHTML = exhausted
+      ? `<p class="feed-end">You're all caught up 🎉</p>`
+      : `<button class="btn btn-ghost btn-block" type="button" data-act="more">Load more videos</button>
+         <div class="feed-sentinel" data-feed-sentinel aria-hidden="true"></div>`;
+    setupFootObserver(root);
+  }
+
+  function showNewPill(root, count) {
+    const pill = root.querySelector("[data-act=\"new-posts\"]");
+    if (!pill) return;
+    pill.querySelector("[data-new-count]").textContent = `${count} new ${count === 1 ? "post" : "posts"}`;
+    pill.hidden = false;
+  }
+
+  function hideNewPill(root) {
+    const pill = root.querySelector("[data-act=\"new-posts\"]");
+    if (pill) pill.hidden = true;
+  }
+
+  /** Scroll-driven paging: hitting the sentinel loads the next page. */
+  function setupFootObserver(root) {
+    footObserver?.disconnect();
+    const sentinel = root.querySelector("[data-feed-sentinel]");
+    if (!sentinel || loadingMore || !lastDocs.length) return;
+    footObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadMore(root, false);
+      },
+      { rootMargin: "400px 0px" }
+    );
+    footObserver.observe(sentinel);
+  }
+
+  async function loadMore(root, fromButton) {
+    if (loadingMore || exhausted || !lastDocs.length) return;
+    const trigger = root.querySelector('[data-act="more"]');
+    loadingMore = true;
+    if (trigger && fromButton) {
+      trigger.disabled = true;
+      trigger.textContent = "Loading…";
+    }
+    try {
+      const { items, docs } = await fetchVideoPage({
+        mode,
+        uid: ctx.state.profile?.uid,
+        followingIds,
+        afterDoc: lastDocs[lastDocs.length - 1],
+      });
+      const fresh = visible(items);
+      if (fresh.length) renderVideos(root, fresh, { append: true, force: true });
+      // A page with nothing in it is the only reliable end-of-feed signal.
+      // (A page that came back *short* isn't: with mute filtering, ten posts
+      // can all belong to muted authors while more pages still exist — so the
+      // button stays and the reader can ask again.)
+      if (!items.length) exhausted = true;
+      else lastDocs = docs;
+    } catch (e) {
+      console.warn("[xacheus] load more", e);
+      toast("Could not load more videos", "error");
+    } finally {
+      loadingMore = false;
+      // Repaint (and therefore re-observe the sentinel) only once
+      // `loadingMore` is false, or the guard would skip the observer.
+      paintFoot(root);
+      if (trigger && !exhausted) {
+        trigger.disabled = false;
+        trigger.textContent = "Load more videos";
+      }
+    }
   }
 
   function scheduleViewCount(video) {
@@ -243,6 +388,16 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
     if (unsubscribe) unsubscribe();
     const feed = root.querySelector("#video-feed");
     feed.innerHTML = `<div class="loader-row"><span class="spinner"></span> Loading videos…</div>`;
+    renderedIds = new Set();
+    pending = null;
+    exhausted = false;
+    hideNewPill(root);
+
+    // Mutes are read once per feed start (and refreshed by the mute event),
+    // not per card — it's one small query either way.
+    mutedIds = ctx.state.profile?.uid
+      ? await getMutedIds(ctx.state.profile.uid).catch(() => new Set())
+      : new Set();
 
     if (mode === "following") {
       if (!ctx.state.profile) {
@@ -265,6 +420,68 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
         lastDocs = docs || [];
         renderVideos(root, videos);
       },
+    });
+  }
+
+  /**
+   * Pull-to-refresh. Only armed at the very top of the page, only for touch,
+   * and it never hijacks scrolling inside a photo carousel or a comment list.
+   */
+  function wirePullToRefresh(root) {
+    const pull = root.querySelector("#feed-pull");
+    if (!pull) return;
+    let startY = null;
+    let pulling = false;
+    const THRESHOLD = 70;
+
+    const reset = () => {
+      pulling = false;
+      startY = null;
+      pull.classList.remove("is-armed", "is-ready");
+      pull.style.height = "0px";
+      pull.querySelector(".feed-pull-text").textContent = "Pull to refresh";
+      pull.querySelector(".feed-pull-arrow").textContent = "↓";
+    };
+
+    const onStart = (event) => {
+      if (window.scrollY > 0 || event.touches.length !== 1) return;
+      if (overlayOpen()) return;
+      startY = event.touches[0].clientY;
+      pulling = true;
+      pull.classList.add("is-armed");
+    };
+
+    const onMove = (event) => {
+      if (!pulling || startY === null) return;
+      const dy = event.touches[0].clientY - startY;
+      if (dy <= 0) {
+        if (pull.classList.contains("is-ready")) reset();
+        return;
+      }
+      const distance = Math.min(110, dy * 0.5);
+      pull.style.height = `${distance}px`;
+      const ready = dy > THRESHOLD;
+      pull.classList.toggle("is-ready", ready);
+      pull.querySelector(".feed-pull-text").textContent = ready ? "Release to refresh" : "Pull to refresh";
+      pull.querySelector(".feed-pull-arrow").textContent = ready ? "↑" : "↓";
+    };
+
+    const onEnd = () => {
+      if (!pulling) return;
+      const wasReady = pull.classList.contains("is-ready");
+      reset();
+      if (wasReady) start(root);
+    };
+
+    document.addEventListener("touchstart", onStart, { passive: true });
+    document.addEventListener("touchmove", onMove, { passive: true });
+    document.addEventListener("touchend", onEnd, { passive: true });
+    document.addEventListener("touchcancel", reset, { passive: true });
+    homeCleanups.push(() => {
+      document.removeEventListener("touchstart", onStart);
+      document.removeEventListener("touchmove", onMove);
+      document.removeEventListener("touchend", onEnd);
+      document.removeEventListener("touchcancel", reset);
     });
   }
 
@@ -295,41 +512,22 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
         if (trigger.dataset.act === "login") return ctx.requireAuth();
         if (trigger.dataset.act === "refresh") return start(root);
 
-        if (trigger.dataset.act === "more") {
-          if (loadingMore || !lastDocs.length) return;
-          loadingMore = true;
-          trigger.disabled = true;
-          trigger.textContent = "Loading…";
-          try {
-            const { items, docs } = await fetchVideoPage({
-              mode,
-              uid: ctx.state.profile?.uid,
-              followingIds,
-              afterDoc: lastDocs[lastDocs.length - 1],
-            });
-            const feed = root.querySelector("#video-feed");
-            if (items.length) {
-              const frag = document.createElement("div");
-              frag.innerHTML = items.map((v) => videoCardHtml(v)).join("");
-              feed.appendChild(frag);
-              items.forEach((v) => ctx.videoCache.set(v.id, v));
-              await hydrateVideoStates(frag, ctx.state.profile?.uid);
-              setupIntersection(feed);
-              lastDocs = docs;
-            }
-            trigger.disabled = false;
-            trigger.textContent = "Load more videos";
-            if (!items.length) toast("That's everything for now", "info", 2000);
-          } catch (e) {
-            console.warn("[xacheus] load more", e);
-            toast("Could not load more videos", "error");
-            trigger.disabled = false;
-            trigger.textContent = "Load more videos";
-          } finally {
-            loadingMore = false;
-          }
+        // The "N new posts" pill: paint the posts Firestore has been holding.
+        if (trigger.dataset.act === "new-posts") {
+          const queued = pending;
+          hideNewPill(root);
+          pending = null;
+          window.scrollTo({ top: 0, behavior: "smooth" });
+          if (queued) renderVideos(root, queued, { force: true });
+          else start(root);
+          return;
         }
+
+        if (trigger.dataset.act === "more") loadMore(root, true);
       });
+
+      // Pull-to-refresh on touch, and the scroll-driven page loader.
+      wirePullToRefresh(root);
 
       // Stories: the tray is real (24h media). Signed-in users see stories from
       // the people they follow (+ their own); guests see every public story.
@@ -350,9 +548,23 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
       window.addEventListener("xacheus:video-updated", onVideoUpdated);
       const onFeedRefresh = () => start(root);
       window.addEventListener("xacheus:feed-refresh", onFeedRefresh);
+      // Muting someone from their profile takes effect here without a reload.
+      const onMuteChanged = () => start(root);
+      window.addEventListener("xacheus:mute-changed", onMuteChanged);
+      // A post deleted from its own card: forget it, so the next snapshot
+      // update doesn't treat the still-cached id as "already rendered".
+      const onVideoDeleted = (event) => {
+        const id = event.detail?.videoId;
+        if (!id) return;
+        renderedIds.delete(id);
+        ctx.videoCache.delete(id);
+      };
+      window.addEventListener("xacheus:video-deleted", onVideoDeleted);
       homeCleanups.push(() => {
         window.removeEventListener("xacheus:video-updated", onVideoUpdated);
         window.removeEventListener("xacheus:feed-refresh", onFeedRefresh);
+        window.removeEventListener("xacheus:mute-changed", onMuteChanged);
+        window.removeEventListener("xacheus:video-deleted", onVideoDeleted);
       });
 
       start(root);
@@ -361,6 +573,8 @@ export function homeView(ctx, { focusVideoId = null } = {}) {
       destroyed = true;
       storyStop?.();
       storyStop = null;
+      footObserver?.disconnect();
+      footObserver = null;
       while (homeCleanups.length) homeCleanups.pop()?.();
       if (unsubscribe) unsubscribe();
       if (observer) observer.disconnect();

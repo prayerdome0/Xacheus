@@ -27,6 +27,8 @@ import {
   watchConversations,
   REPORT_REASONS,
   getProfileByUsername,
+  updateVideo,
+  deleteVideo,
 } from "../data.js";
 import {
   REACTIONS,
@@ -99,7 +101,10 @@ export function videoCardHtml(video, { saved = false, isFollowingAuthor = false,
   const author = { uid: video.uid, username: video.username, displayName: video.displayName, photoURL: video.photoURL };
   const repostedBy = repostOf?.displayName || repostOf?.username;
 
-  const mediaHtml = isPhoto
+  const isText = video.mediaType === "text";
+  const mediaHtml = isText
+    ? `<div class="text-post-body">${captionHtml || ""}</div>`
+    : isPhoto
     ? `
       <div class="photo-carousel" aria-label="Photo post">
         ${(video.images || []).map((src) => `<img src="${esc(src)}" alt="" loading="lazy" draggable="false" data-zoom />`).join("")}
@@ -113,7 +118,7 @@ export function videoCardHtml(video, { saved = false, isFollowingAuthor = false,
       <button class="video-play-toggle" type="button" aria-label="Play / Pause"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>`;
 
   return `
-  <article class="video-card ${isPhoto ? "is-photo" : ""} ${repostOf ? "is-repost" : ""}" data-video-id="${esc(video.id)}" tabindex="0">
+  <article class="video-card ${isPhoto ? "is-photo" : ""} ${isText ? "is-text" : ""} ${repostOf ? "is-repost" : ""}" data-video-id="${esc(video.id)}" tabindex="0">
     ${repostOf
       ? `<a class="repost-byline" href="#/u/${esc(repostOf.username || "")}">
           ${avatar({ photoURL: repostOf.photoURL, username: repostOf.username }, "xs")}
@@ -123,9 +128,15 @@ export function videoCardHtml(video, { saved = false, isFollowingAuthor = false,
     <div class="video-wrap">
       ${mediaHtml}
 
-      <button class="video-report" type="button" data-act="report" aria-label="Report" title="Report">
-        <svg viewBox="0 0 24 24"><path d="M5 3v18M5 4h11l-1.5 3L16 10H5"/></svg>
-      </button>
+      <div class="video-overflow">
+        ${myUid && myUid === video.uid
+          ? `<button class="video-report" type="button" data-act="own-menu" aria-label="Your post — edit or delete" title="Edit or delete">
+               <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+             </button>`
+          : `<button class="video-report" type="button" data-act="report" aria-label="Report" title="Report">
+               <svg viewBox="0 0 24 24"><path d="M5 3v18M5 4h11l-1.5 3L16 10H5"/></svg>
+             </button>`}
+      </div>
 
       <div class="video-right-actions">
         <a class="action-avatar" href="#/u/${esc(video.username)}" data-act="profile">
@@ -166,9 +177,11 @@ export function videoCardHtml(video, { saved = false, isFollowingAuthor = false,
           <strong>@${esc(video.username)}</strong>
           <span class="video-time">· ${timeAgo(video.createdAt)}</span>
         </a>
-        ${captionHtml ? `<p class="video-caption">${captionHtml}</p>` : ""}
+        ${captionHtml && !isText ? `<p class="video-caption">${captionHtml}</p>` : ""}
         ${reactionSummaryHtml(video)}
-        ${isPhoto
+        ${isText
+          ? ""
+          : isPhoto
           ? `<span class="video-sound is-static"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg><span class="marquee"><span>Photo post${video.images?.length > 1 ? ` · ${video.images.length} photos` : ""}</span></span></span>`
           : `<span class="video-sound ${isPlayingTrack(video.soundId) ? "is-playing" : ""}" data-sound-row>
               <button class="sound-play-mini" type="button" data-act="sound-play" aria-label="Play track">
@@ -404,6 +417,16 @@ export function bindVideoActions(root, ctx) {
       return;
     }
 
+    // Your own post: edit the caption, or delete it outright. Both go through
+    // the same rules as everywhere else — the author may change caption,
+    // hashtags, mentions and visibility, and only the author (or an admin)
+    // may delete.
+    if (act === "own-menu") {
+      if (!ctx.state.profile) return ctx.requireAuth();
+      openOwnPostMenu(ctx, videoId, card);
+      return;
+    }
+
     if (act === "report") {
       if (!ctx.state.profile) return ctx.requireAuth();
       openReportModal(ctx, {
@@ -453,6 +476,136 @@ export function bindVideoActions(root, ctx) {
     const card = btn.closest(".video-card");
     const video = ctx.videoCache.get(card?.dataset.videoId) || {};
     openReactionPicker(btn, (key) => commitReaction(video, btn, key));
+  }
+
+  /**
+   * Overflow menu on your own post.
+   *
+   * "Edit" rewrites the caption (and therefore re-derives the hashtags and
+   * mentions from it); "Delete" removes the post, its Storage object and the
+   * counters in one go. There is no "edit the video" — replacing the media
+   * would be a different post, and saying so beats a button that lies.
+   */
+  function openOwnPostMenu(ctx, videoId, card) {
+    const post = ctx.videoCache.get(videoId) || { id: videoId };
+    const isText = post.mediaType === "text";
+    openModal({
+      title: "Your post",
+      size: "sm",
+      body: `
+        <div class="menu-list">
+          <button class="menu-item" type="button" data-own="edit">${isText ? "Edit text" : "Edit caption"}</button>
+          <button class="menu-item" type="button" data-own="share">Share</button>
+          <button class="menu-item danger" type="button" data-own="delete">Delete post</button>
+        </div>`,
+      onMount(modal, close) {
+        modal.addEventListener("click", async (event) => {
+          const btn = event.target.closest("[data-own]");
+          if (!btn) return;
+          const action = btn.dataset.own;
+
+          if (action === "edit") {
+            close();
+            openEditPostModal(ctx, videoId, card);
+            return;
+          }
+
+          if (action === "share") {
+            close();
+            openShareModal(ctx, {
+              title: `@${post.username || "xacheus"} on Xacheus`,
+              text: (post.caption || "Watch this on Xacheus").slice(0, 120),
+              url: `${location.origin}${location.pathname}#/video/${videoId}`,
+              onShared: () => bumpVideoShare(videoId).catch(() => {}),
+            });
+            return;
+          }
+
+          if (action === "delete") {
+            const ok = await confirmDialog({
+              title: "Delete this post?",
+              body: "The post, its comments and its uploaded media are removed. This can't be undone.",
+              confirmLabel: "Delete post",
+              danger: true,
+            });
+            if (!ok) return;
+            btn.disabled = true;
+            btn.textContent = "Deleting…";
+            try {
+              await deleteVideo(videoId, ctx.state.profile.uid);
+              close();
+              toast("Post deleted", "success");
+              card?.remove();
+              // The feed's snapshot will also drop it; this just avoids the
+              // gap where a deleted post sits on screen until the next tick.
+              window.dispatchEvent(new CustomEvent("xacheus:video-deleted", { detail: { videoId } }));
+            } catch (err) {
+              toast(err?.message || "Could not delete that post", "error");
+              btn.disabled = false;
+              btn.textContent = "Delete post";
+            }
+          }
+        });
+      },
+    });
+  }
+
+  function openEditPostModal(ctx, videoId, card) {
+    const post = ctx.videoCache.get(videoId) || { id: videoId, caption: "" };
+    const isText = post.mediaType === "text";
+    openModal({
+      title: isText ? "Edit post" : "Edit caption",
+      size: "sm",
+      body: `
+        <form id="edit-post-form">
+          <label class="field">
+            <span>${isText ? "Your post" : "Caption"} <em>(#hashtags and @mentions stay linked)</em></span>
+            <textarea id="edit-caption" rows="4" maxlength="1000" required>${esc(post.caption || "")}</textarea>
+            <small class="field-hint"><span id="edit-count">${(post.caption || "").length}</span>/1000</small>
+          </label>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" type="button" data-act="cancel">Cancel</button>
+            <button class="btn btn-primary" type="submit">Save</button>
+          </div>
+        </form>`,
+      onMount(modal, close) {
+        const field = modal.querySelector("#edit-caption");
+        const counter = modal.querySelector("#edit-count");
+        field?.focus();
+        field?.addEventListener("input", () => {
+          if (counter) counter.textContent = String(field.value.length);
+        });
+        modal.querySelector('[data-act="cancel"]').addEventListener("click", () => close());
+        modal.querySelector("#edit-post-form").addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const value = field.value;
+          if (!value.trim()) return toast("Write something first.", "error");
+          const submit = modal.querySelector('button[type="submit"]');
+          submit.disabled = true;
+          submit.textContent = "Saving…";
+          try {
+            const next = await updateVideo(ctx.state.profile.uid, videoId, { caption: value });
+            // Repaint this card from what Firestore just accepted rather
+            // than from what the form held, so the two can't drift.
+            const captionNode = card?.querySelector(isText ? ".text-post-body" : ".video-caption");
+            if (captionNode) captionNode.innerHTML = richText(next?.caption || value);
+            if (ctx.videoCache.has(videoId)) {
+              const cached = ctx.videoCache.get(videoId);
+              cached.caption = next?.caption || value;
+              cached.hashtags = next?.hashtags || [];
+              cached.mentions = next?.mentions || [];
+              ctx.videoCache.set(videoId, cached);
+            }
+            toast("Post updated", "success");
+            close();
+          } catch (err) {
+            toast(err?.message || "Could not save that", "error");
+            submit.disabled = false;
+            submit.textContent = "Save";
+          }
+        });
+      },
+    });
   }
 
   function currentReaction(_c2, video, btn) {

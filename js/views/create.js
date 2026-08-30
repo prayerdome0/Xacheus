@@ -22,7 +22,7 @@ import { playQueue, toggleTrack, isCurrentTrack } from "../player.js";
 import { describeLicence, loadItemTracks, searchCatalogue } from "../music.js";
 import { addStory } from "../social.js";
 
-export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
+export function createView(ctx, { soundId: initialSoundId = "", tab: initialTab = "" } = {}) {
   let selectedFile = null;
   let selectedSound = null;
   let recordedBlob = null;
@@ -43,11 +43,12 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
     <div class="create-layout">
       <div class="create-main">
         <div class="tabs create-tabs" role="tablist">
-          <button class="tab is-active" type="button" data-ctype="video">🎬 Video</button>
-          <button class="tab" type="button" data-ctype="photo">🖼️ Photo</button>
+          <button class="tab ${initialTab === "video" || !initialTab ? "is-active" : ""}" type="button" data-ctype="video">🎬 Video</button>
+          <button class="tab ${initialTab === "photo" || initialTab === "photos" ? "is-active" : ""}" type="button" data-ctype="photo">🖼️ Photo</button>
+          <button class="tab ${initialTab === "text" ? "is-active" : ""}" type="button" data-ctype="text">✍️ Text</button>
         </div>
 
-        <div id="video-pane">
+        <div id="video-pane" ${initialTab === "photo" || initialTab === "photos" || initialTab === "text" ? "hidden" : ""}>
         <div class="create-drop" id="drop-zone">
           <div class="drop-inner" id="drop-inner">
             <div class="drop-icon">🎬</div>
@@ -115,7 +116,7 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
         </form>
         </div><!-- /video-pane -->
 
-        <div id="photo-pane" hidden>
+        <div id="photo-pane" ${initialTab === "photo" || initialTab === "photos" ? "" : "hidden"}>
           <div class="create-drop" id="photo-drop">
             <div class="drop-inner" id="photo-drop-inner">
               <div class="drop-icon">🖼️</div>
@@ -149,6 +150,20 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
             </div>
           </form>
         </div><!-- /photo-pane -->
+
+        <div id="text-pane" ${initialTab === "text" ? "" : "hidden"}>
+          <form class="create-form" id="text-form" novalidate>
+            <label class="field">
+              <span>What's on your mind? <em>— #hashtags and @mentions are linked</em></span>
+              <textarea id="text-caption" rows="6" maxlength="1000" placeholder="Share an update, ask a question, start a conversation… e.g. Who's going to the Lusaka show on Saturday? #zambia"></textarea>
+              <small class="field-hint"><span id="text-caption-count">0</span>/1000</small>
+            </label>
+            <div class="create-actions">
+              <button class="btn btn-primary btn-block" type="submit" id="text-post-btn" disabled>Post</button>
+              <p class="fine-print">Text posts carry no media or sound — they show up in the feed alongside videos and photo sets.</p>
+            </div>
+          </form>
+        </div><!-- /text-pane -->
       </div>
 
       <aside class="create-side">
@@ -168,6 +183,7 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
           <ul class="tip-list">
             <li>🎬 Vertical short videos</li>
             <li>🖼️ Photo sets (up to 6)</li>
+            <li>✍️ Text posts (updates, questions, threads)</li>
             <li>📡 Live streams with gifts & stickers</li>
           </ul>
           <a class="btn btn-outline btn-sm btn-block" href="#/live/go" style="margin-top:10px">Go live instead</a>
@@ -701,6 +717,7 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
           root.querySelectorAll(".create-tabs .tab").forEach((t) => t.classList.toggle("is-active", t === tab));
           root.querySelector("#video-pane").hidden = kind !== "video";
           root.querySelector("#photo-pane").hidden = kind !== "photo";
+          root.querySelector("#text-pane").hidden = kind !== "text";
         });
       });
 
@@ -889,6 +906,39 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
           postBtn.disabled = false;
           postBtn.textContent = "Post video";
           progressBar.hidden = true;
+        }
+      });
+
+      /* ---------------- text posts ---------------- */
+
+      const textField = root.querySelector("#text-caption");
+      const textCount = root.querySelector("#text-caption-count");
+      const textBtn = root.querySelector("#text-post-btn");
+      textField.addEventListener("input", () => {
+        const len = textField.value.length;
+        textCount.textContent = len;
+        textBtn.disabled = textField.value.trim().length === 0;
+      });
+
+      root.querySelector("#text-form").addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!ctx.state.profile) return ctx.requireAuth();
+        const body = textField.value.trim();
+        if (!body) return toast("Write something first", "error");
+        textBtn.disabled = true;
+        textBtn.textContent = "Posting…";
+        try {
+          await createVideo(ctx.state.profile, { mediaType: "text", caption: body });
+          toast("Posted", "success");
+          textField.value = "";
+          textCount.textContent = "0";
+          window.dispatchEvent(new Event("xacheus:feed-refresh"));
+          ctx.navigate("#/home");
+        } catch (err) {
+          console.warn("[xacheus] create text post", err);
+          toast(err?.message || "Could not post that", "error", 6000);
+          textBtn.disabled = false;
+          textBtn.textContent = "Post";
         }
       });
 

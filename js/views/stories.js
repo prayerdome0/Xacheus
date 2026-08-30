@@ -18,6 +18,7 @@ import {
   attachSeenState,
   deleteStory,
   getStoryViewers,
+  getMutedIds,
   listActiveStories,
   markStoryViewed,
   reactToStory,
@@ -40,8 +41,9 @@ export async function renderStoryTray(ctx, host) {
   const paint = async () => {
     if (stopped || !host.isConnected) return;
     const following = myUid ? await getFollowingIds(myUid).catch(() => []) : [];
+    const muted = myUid ? await getMutedIds(myUid).catch(() => new Set()) : new Set();
     // Guests have no follow graph, so they get every public active story.
-    const raw = await listActiveStories(following, { includeUid: myUid, max: 40, everyone: !myUid });
+    const raw = await listActiveStories(following, { includeUid: myUid, max: 40, everyone: !myUid, excludeUids: muted });
     const stories = await attachSeenState(raw, myUid);
     const byOwner = groupByOwner(stories);
     const mine = byOwner.get(myUid) || [];
@@ -119,8 +121,9 @@ function bindTray(ctx, host) {
 async function openStoryViewerForOwner(ctx, uid) {
   const following = ctx.state.profile ? await getFollowingIds(ctx.state.profile.uid).catch(() => []) : [];
   // Guest path mirrors the tray: no follow graph, so pull every public story.
+  const muted = ctx.state.profile ? await getMutedIds(ctx.state.profile.uid).catch(() => new Set()) : new Set();
   const stories = await attachSeenState(
-    await listActiveStories(following, { max: 60, everyone: !ctx.state.profile }),
+    await listActiveStories(following, { max: 60, everyone: !ctx.state.profile, excludeUids: muted }),
     ctx.state.profile?.uid || ""
   );
   const mine = stories.filter((s) => s.uid === uid);

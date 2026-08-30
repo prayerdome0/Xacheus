@@ -230,6 +230,15 @@ service cloud.firestore {
         allow delete: if isSelf(uid);
         allow update: if false;
       }
+      // Mute list: softer than a block. This is the source of truth the
+      // client reads to filter a feed, and `notifyUser` checks it before
+      // writing a notification. Only the owner can see or change it.
+      match /mutes/{mutedUid} {
+        allow read: if isSelf(uid);
+        allow create: if isSelf(uid) && mutedUid != uid && request.resource.data.uid == mutedUid;
+        allow delete: if isSelf(uid);
+        allow update: if false;
+      }
       // "Who viewed my profile": a visitor writes it, only I can read it.
       match /profileViews/{viewId} {
         allow read: if isSelf(uid);
@@ -294,6 +303,11 @@ service cloud.firestore {
               && request.resource.data.images is list
               && request.resource.data.images.size() >= 1
               && request.resource.data.images.size() <= 6)
+          // or a text post: no media at all, but the caption must carry it
+          || (request.resource.data.mediaType == 'text'
+              && request.resource.data.caption.size() > 0
+              && (!('videoUrl' in request.resource.data) || request.resource.data.videoUrl == '')
+              && (!('images' in request.resource.data) || request.resource.data.images.size() == 0))
         )
         && request.resource.data.likeCount == 0
         && request.resource.data.commentCount == 0
@@ -313,7 +327,7 @@ service cloud.firestore {
         && (
           (resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['caption','hashtags','mentions','thumbnailUrl','soundTitle','soundId','soundUrl',
+                 .hasOnly(['caption','captionLower','hashtags','mentions','thumbnailUrl','soundTitle','soundId','soundUrl',
                            'musicSource','licenceUrl','licenceLabel','sourceUrl','attribution','isPublic','updatedAt']))
           || (request.resource.data.diff(resource.data).affectedKeys()
                 .hasOnly(['likeCount','commentCount','viewCount','shareCount','repostCount','reactions'])

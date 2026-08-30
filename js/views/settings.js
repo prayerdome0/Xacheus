@@ -17,7 +17,7 @@ import {
 
 import { auth } from "../firebase.js";
 import { getProfile, purgeUserData, updateProfile } from "../data.js";
-import { NOTIFICATION_CATEGORIES, getBlockList, getUserPrefs, savePrefs, unblockUser } from "../social.js";
+import { NOTIFICATION_CATEGORIES, getBlockList, getMuteList, getUserPrefs, savePrefs, unblockUser, unmuteUser } from "../social.js";
 import { setPlayerOptions } from "../player.js";
 import { avatar, confirmDialog, emptyState, esc, openModal, timeAgo, toast } from "../ui.js";
 import { brandSlotHtml } from "../brand.js";
@@ -92,6 +92,12 @@ export function settingsView(ctx) {
     <section class="panel">
       <h2 class="panel-title">Playback &amp; data</h2>
       <div data-prefs-playback></div>
+    </section>
+
+    <section class="panel">
+      <h2 class="panel-title">Muted accounts</h2>
+      <p class="tab-note">Muting takes someone out of your feed, your story tray and your notifications without unfollowing them. They can still follow you and message you — that's what blocking is for.</p>
+      <div data-muted-list><div class="loader-row"><span class="spinner"></span> Loading…</div></div>
     </section>
 
     <section class="panel">
@@ -235,6 +241,42 @@ export function settingsView(ctx) {
     });
   }
 
+  async function paintMuted(root) {
+    const host = root.querySelector("[data-muted-list]");
+    if (!host) return;
+    const rows = await getMuteList(ctx.state.profile.uid).catch(() => []);
+    if (!rows.length) {
+      host.innerHTML = `<p class="panel-empty">You haven't muted anyone. Mute from a profile's ⋯ menu — it hides their posts and notifications without unfollowing them.</p>`;
+      return;
+    }
+    const people = await Promise.all(rows.map((r) => getProfile(r.uid || r.id).catch(() => null)));
+    host.innerHTML = `<div class="block-list">${people
+      .map((p, i) =>
+        p
+          ? `<div class="block-row">
+               ${avatar(p, "md")}
+               <span class="block-main"><strong>${esc(p.displayName || p.username)}</strong><em>@${esc(p.username)} · muted ${timeAgo(rows[i].createdAt)}</em></span>
+               <button class="btn btn-outline btn-sm" type="button" data-unmute="${esc(rows[i].id)}">Unmute</button>
+             </div>`
+          : `<div class="block-row"><span class="block-main"><em>Deleted account · muted ${timeAgo(rows[i].createdAt)}</em></span><button class="btn btn-outline btn-sm" type="button" data-unmute="${esc(rows[i].id)}">Unmute</button></div>`
+      )
+      .join("")}</div>`;
+    host.querySelectorAll("[data-unmute]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await unmuteUser(ctx.state.profile.uid, btn.dataset.unmute);
+          toast("Unmuted", "success");
+          paintMuted(root);
+          window.dispatchEvent(new CustomEvent("xacheus:mute-changed", { detail: { uid: btn.dataset.unmute, muted: false } }));
+        } catch (err) {
+          toast(err?.message || "Could not unmute that account", "error");
+          btn.disabled = false;
+        }
+      });
+    });
+  }
+
   return {
     html,
     title: "Settings",
@@ -242,6 +284,7 @@ export function settingsView(ctx) {
       prefs = await getUserPrefs(ctx.state.profile.uid).catch(() => ({ notifications: {}, privacy: {}, playback: {} }));
       setPlayerOptions(prefs.playback || {});
       paintPrefs(root);
+      paintMuted(root);
       paintBlocked(root);
 
       root.addEventListener("change", async (event) => {

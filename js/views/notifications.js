@@ -8,7 +8,7 @@
  * Nothing here is synthetic: if you have no notifications the list is empty.
  */
 
-import { markNotificationsRead, watchNotifications } from "../data.js";
+import { markNotificationsRead, setNotificationRead, watchNotifications } from "../data.js";
 import { acceptFollowRequest, deleteNotification, declineFollowRequest } from "../social.js";
 import { avatar, confirmDialog, emptyState, esc, timeAgo, toast } from "../ui.js";
 
@@ -149,6 +149,7 @@ export function notificationsView(ctx) {
           </span>
           <span class="notif-side">
             ${isRequest ? `<span class="notif-request" data-request-row><button class="btn btn-sm btn-primary" type="button" data-req="accept">Accept</button><button class="btn btn-sm btn-ghost" type="button" data-req="decline">Decline</button></span>` : ""}
+            <button class="icon-btn" type="button" data-act="toggle-read" title="${item.read ? "Mark as unread" : "Mark as read"}" aria-label="${item.read ? "Mark as unread" : "Mark as read"}">${item.read ? "◌" : "●"}</button>
             <button class="icon-btn" type="button" data-act="delete-notif" title="Delete" aria-label="Delete notification">🗑</button>
           </span>
           <span class="notif-flag" ${item.read ? "hidden" : ""} title="Unread"></span>
@@ -168,6 +169,29 @@ export function notificationsView(ctx) {
           event.stopPropagation();
           await handleRequest(btn.dataset.req, item, node);
         });
+      });
+      node.querySelector('[data-act="toggle-read"]').addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const next = !item.read;
+        // Paint straight away: the bell badge and the unread dot follow the
+        // same local state, so the toggle feels instant and the snapshot
+        // confirms it a moment later.
+        item.read = next;
+        node.classList.toggle("is-unread", !next);
+        node.querySelector(".notif-flag").hidden = next;
+        const btn = node.querySelector('[data-act="toggle-read"]');
+        btn.textContent = next ? "◌" : "●";
+        btn.title = next ? "Mark as unread" : "Mark as read";
+        btn.setAttribute("aria-label", btn.title);
+        paintBadges();
+        try {
+          await setNotificationRead(ctx.state.profile.uid, item.id, next);
+        } catch (err) {
+          item.read = !next;
+          toast(err?.message || "Could not update that", "error");
+          render(root);
+        }
       });
       node.querySelector('[data-act="delete-notif"]').addEventListener("click", async (event) => {
         event.preventDefault();

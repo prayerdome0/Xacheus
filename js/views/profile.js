@@ -1115,9 +1115,10 @@ function closeModalAfter(close) {
 /* ------------------------------------------------------------------ */
 
 async function openMoreMenu(ctx, profile, isMine, access) {
-  const { isBlocking } = await import("../social.js");
+  const { isBlocking, isMuted, muteUser, unmuteUser } = await import("../social.js");
   const status = ctx.state.profile && !isMine ? await isBlocking(ctx.state.profile.uid, profile.uid).catch(() => ({ blocked: false, blockedBy: false })) : { blocked: false, blockedBy: false };
   const blocked = Boolean(status.blocked);
+  const muted = ctx.state.profile && !isMine ? await isMuted(ctx.state.profile.uid, profile.uid).catch(() => false) : false;
   openModal({
     title: `@${profile.username}`,
     size: "sm",
@@ -1131,10 +1132,11 @@ async function openMoreMenu(ctx, profile, isMine, access) {
              <button class="menu-item" type="button" data-menu="history">Profile view history</button>`
           : `
             <button class="menu-item" type="button" data-menu="report">Report account</button>
+            <button class="menu-item" type="button" data-menu="mute">${muted ? "Unmute" : "Mute"} @${esc(profile.username)}</button>
             <button class="menu-item danger" type="button" data-menu="block">${blocked ? "Unblock" : "Block"} @${esc(profile.username)}</button>
-            ${access?.locked ? "" : `<button class="menu-item" type="button" data-menu="mute">Mute notifications from this account</button>`}
           `}
-      </div>`,
+      </div>
+      ${isMine || muted ? "" : `<p class="menu-note">Muting hides @${esc(profile.username)}'s posts from your feed and stops their notifications. They can still follow you and message you — use Block for that.</p>`}`,
     onMount(modal, close) {
       modal.addEventListener("click", async (event) => {
         const btn = event.target.closest("[data-menu]");
@@ -1191,8 +1193,20 @@ async function openMoreMenu(ctx, profile, isMine, access) {
           return;
         }
         if (action === "mute") {
-          toast("Account-wide muting isn't built yet — blocking works today.", "info", 4200);
-          closeModalAfter(close);
+          try {
+            if (muted) {
+              await unmuteUser(ctx.state.profile.uid, profile.uid);
+              toast(`Unmuted @${profile.username}`, "success");
+            } else {
+              await muteUser(ctx.state.profile.uid, profile);
+              toast(`Muted @${profile.username} — their posts and notifications are off. They can still follow and message you.`, "success", 5200);
+            }
+            closeModalAfter(close);
+            // The feed filters on this list, so let it re-read it.
+            window.dispatchEvent(new CustomEvent("xacheus:mute-changed", { detail: { uid: profile.uid, muted: !muted } }));
+          } catch (err) {
+            toast(err?.message || "Could not change that", "error");
+          }
           return;
         }
         if (action === "history") {
