@@ -40,24 +40,66 @@ const MESSAGES = {
   "auth/account-exists-with-different-credential": "That email is already registered with a different sign-in method.",
   "auth/operation-not-allowed": "That sign-in method is disabled in the Firebase console.",
   "auth/unauthorized-domain": "This domain isn't allowed in Firebase Auth settings yet.",
+  "auth/invalid-verification-code": "Invalid verification code. Please try again.",
+  "auth/invalid-verification-id": "Invalid verification ID. Please try again.",
+  "auth/app-deleted": "This app has been deleted. Please contact support.",
+  "auth/app-not-authorized": "This app is not authorized to use Firebase Authentication.",
+  "auth/argument-error": "Invalid authentication argument.",
+  "auth/invalid-api-key": "Invalid API key. Check your Firebase configuration.",
+  "auth/user-disabled": "This account has been disabled.",
+  "auth/user-token-expired": "Your session has expired. Please sign in again.",
+  "auth/requires-recent-login": "Please sign in again to complete this action.",
 };
 
 export function friendlyAuthError(error) {
   const raw = String(error?.message || "");
-  if (error?.code === "unavailable" || raw.includes("client is offline")) {
+  const code = error?.code || "";
+  
+  // Network and offline errors
+  if (code === "unavailable" || raw.includes("client is offline") || raw.includes("offline")) {
     return "Couldn't reach the database. Check your connection (or disable VPN/ad-blocker) and try again.";
   }
-  if (error?.code === "failed-precondition" && raw.includes("Firestore")) {
+  
+  // Firestore specific errors
+  if (code === "failed-precondition" && raw.includes("Firestore")) {
     return "Cloud Firestore isn't reachable. Make sure the database is created and try again.";
   }
-  if (error?.code === "permission-denied") {
+  
+  if (code === "permission-denied" || code === "firestore/permission-denied") {
     const message = String(error?.message || "");
     if (message.includes("has not been used in project") || message.includes("disabled")) {
       return "Cloud Firestore is not enabled yet. Enable it in Google Cloud Console → Cloud Firestore API, create the database, then try again.";
     }
-    return "Firestore rejected this write. Deploy firestore.rules (npm run deploy), then try again.";
+    if (message.includes("missing or insufficient permissions")) {
+      return "Firestore rejected this write. Deploy firestore.rules (npm run deploy), then try again.";
+    }
+    return "You don't have permission to perform this action.";
   }
-  return MESSAGES[error?.code] || error?.message || "Something went wrong. Please try again.";
+  
+  // Authentication errors
+  if (code === "auth/invalid-api-key") {
+    return "Invalid Firebase configuration. Check your API key.";
+  }
+  
+  if (code === "auth/user-disabled") {
+    return "This account has been disabled. Please contact support.";
+  }
+  
+  if (code === "auth/user-token-expired" || code === "auth/requires-recent-login") {
+    return "Your session has expired. Please sign in again.";
+  }
+  
+  // Check for specific error messages
+  if (raw.includes("FirebaseError")) {
+    // Extract more specific error if available
+    const match = raw.match(/FirebaseError: \[code\] = (\w+)/);
+    if (match) {
+      return MESSAGES[match[1]] || error?.message || "Something went wrong. Please try again.";
+    }
+  }
+  
+  // Return mapped message or fallback
+  return MESSAGES[code] || error?.message || "Something went wrong. Please try again.";
 }
 
 const HIGHLIGHTS = [
@@ -317,8 +359,14 @@ export function mountAuth(host, { onAuthenticated }) {
     setDeferProfileCreation(true);
     try {
       const result = await signInWithPopup(auth, googleProvider);
-      const isNew = !result.user.metadata?.lastSignInTime || result.user.metadata.creationTime === result.user.metadata.lastSignInTime;
-      const profile = await ensureProfile(result.user);
+      // More robust check for new user
+      const metadata = result.user.metadata || {};
+      const isNew = !metadata.lastSignInTime || 
+                   metadata.creationTime === metadata.lastSignInTime ||
+                   (metadata.creationTime && new Date(metadata.creationTime) > new Date(Date.now() - 60000));
+      
+      const profile = await ensureProfile(result.user).catch(() => null);
+      
       if (isNew || !profile) {
         const seedUsername = await suggestUsername(
           result.user.displayName || (result.user.email || "").split("@")[0] || "user"
@@ -343,7 +391,8 @@ export function mountAuth(host, { onAuthenticated }) {
       if (error?.code === "auth/popup-closed-by-user") return;
       if (error?.code === "auth/cancelled-popup-request") return;
       console.warn("[xacheus] google sign-in", error);
-      toast(friendlyAuthError(error), "error", 6000);
+      const message = friendlyAuthError(error);
+      toast(message, "error", 6000);
       if (error?.code === "auth/unauthorized-domain") {
         toast("Add this preview domain under Firebase Console → Authentication → Settings → Authorized domains.", "error", 9000);
       }
@@ -391,13 +440,20 @@ export function mountAuth(host, { onAuthenticated }) {
       } else {
         // Profile already existed (e.g. returning user editing handle): update
         // the mutable fields. Role is immutable for non-admins by design.
-        await updateProfile(current.uid, {
+        const updateData = {
           displayName,
           bio,
           displayNameLower: displayName.toLowerCase(),
-        }).catch(() => {});
+        };
+        await updateProfile(current.uid, updateData).catch((err) => {
+          console.warn("[xacheus] profile update failed", err);
+          throw err;
+        });
         const { changeUsername } = await import("./data.js");
-        await changeUsername(current.uid, username).catch(() => {});
+        await changeUsername(current.uid, username).catch((err) => {
+          console.warn("[xacheus] username change failed", err);
+          throw err;
+        });
       }
 
       await afterAuth(current, { displayName, username, bio });
@@ -418,6 +474,12 @@ export function mountAuth(host, { onAuthenticated }) {
     const email = String(data.get("email") || "").trim();
     const password = String(data.get("password") || "");
     if (!email || !password) return toast("Enter your email and password.", "error");
+    
+    // Basic email validation
+    if (!email.includes("@") || !email.includes(".")) {
+      return toast("Please enter a valid email address.", "error");
+    }
+    
     setBusy(true, "Logging in…");
     try {
       const result = await signInWithEmailAndPassword(auth, email, password);
@@ -425,6 +487,7 @@ export function mountAuth(host, { onAuthenticated }) {
       setBusy(false);
     } catch (error) {
       setBusy(false);
+      console.warn("[xacheus] login failed", error);
       toast(friendlyAuthError(error), "error", 5000);
     }
   }
@@ -461,19 +524,30 @@ export function mountAuth(host, { onAuthenticated }) {
       setPendingProfileDefaults({ displayName, username, role, bio: "" });
 
       const result = await createUserWithEmailAndPassword(auth, email, password);
-      await updateAuthProfile(result.user, { displayName }).catch(() => {});
+      await updateAuthProfile(result.user, { displayName }).catch((err) => {
+        console.warn("[xacheus] display name update failed", err);
+      });
 
       await afterAuth(result.user, { displayName, username, role, bio: "" });
-      sendEmailVerification(result.user).catch(() => {});
-      setTimeout(() => {
-        if (auth.currentUser && !auth.currentUser.emailVerified) {
-          toast("Check your inbox to verify your email.", "info", 6000);
-        }
-      }, 1200);
+      
+      // Send verification email
+      try {
+        await sendEmailVerification(result.user);
+        setTimeout(() => {
+          if (auth.currentUser && !auth.currentUser.emailVerified) {
+            toast("Check your inbox to verify your email.", "info", 6000);
+          }
+        }, 1200);
+      } catch (err) {
+        console.warn("[xacheus] email verification failed", err);
+        // Don't fail the signup if verification email fails
+      }
+      
       setBusy(false);
     } catch (error) {
       setPendingProfileDefaults(null);
       setBusy(false);
+      console.warn("[xacheus] signup failed", error);
       toast(friendlyAuthError(error), "error", 5000);
     }
   }
@@ -482,16 +556,24 @@ export function mountAuth(host, { onAuthenticated }) {
     event.preventDefault();
     const form = event.target;
     const email = String(new FormData(form).get("email") || "").trim();
-    if (!email.includes("@")) return toast("Enter a valid email address.", "error");
+    if (!email.includes("@") || !email.includes(".")) {
+      return toast("Enter a valid email address.", "error");
+    }
     setBusy(true, "Sending…");
     try {
       await sendPasswordResetEmail(auth, email);
       setBusy(false);
-      toast(`Reset link sent to ${email}`, "success", 6000);
+      toast(`Reset link sent to ${email}. Check your inbox.`, "success", 6000);
       show("login", email);
     } catch (error) {
       setBusy(false);
-      toast(friendlyAuthError(error), "error", 5000);
+      console.warn("[xacheus] password reset failed", error);
+      // Don't reveal if email exists or not for security
+      if (error?.code === "auth/user-not-found") {
+        toast("If this email exists in our system, you'll receive a reset link.", "info", 6000);
+      } else {
+        toast(friendlyAuthError(error), "error", 5000);
+      }
     }
   }
 
