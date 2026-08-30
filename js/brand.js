@@ -49,9 +49,21 @@ export const BRAND_ART = {
 /** The file the plate is decided from (the canonical logo artwork). */
 export const BRAND_SOURCE = "assets/logo.png";
 
+/**
+ * Written by tools/build-brand.py: the plate decision, as data.
+ *
+ * Reading it is the preferred path, because it makes the answer independent of a
+ * canvas decode succeeding and, since `.json` is served network-first by sw.js,
+ * independent of a cached bitmap from before a logo change. Measuring the
+ * artwork stays as the fallback for anything this build does not know about
+ * (`window.XacheusBrand.use("assets/somewhere-else.png")`).
+ */
+export const BRAND_MANIFEST = "assets/brand-manifest.json";
+
 let current = {
   plate: cached()?.plate || "light",
   accent: cached()?.accent || "#0a63e8",
+  origin: cached()?.origin || "default",
   inkLum: cached()?.inkLum ?? null,
   measured: false,
 };
@@ -299,10 +311,16 @@ export function onBrandPlate(fn) {
   return () => listeners.delete(fn);
 }
 
-export function applyPlate({ plate = current.plate, accent = current.accent, measured = current.measured, inkLum = current.inkLum } = {}) {
+export function applyPlate({
+  plate = current.plate,
+  accent = current.accent,
+  measured = current.measured,
+  inkLum = current.inkLum,
+  origin = current.origin,
+} = {}) {
   const root = document.documentElement;
   const next = plate === "dark" ? "dark" : "light";
-  current = { plate: next, accent, inkLum, measured };
+  current = { plate: next, accent, inkLum, measured, origin };
 
   root.dataset.logoPlate = next;
   root.style.setProperty("--logo-plate", toHex(PLATE[next].rgb));
@@ -368,23 +386,71 @@ export function brandSlotHtml({ role = "mark", size = "md", linked = true, extra
     : `<span class="brand brand--${role} brand--${size}">${inner}</span>`;
 }
 
+/** Fetch the build-time plate decision, or null if it is unavailable/unusable. */
+export async function readManifest(url = BRAND_MANIFEST) {
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data || (data.plate !== "light" && data.plate !== "dark")) return null;
+    return data;
+  } catch {
+    return null; // offline with nothing cached, hosting that rewrites 404s to
+    // index.html, a blocked request — all mean "fall back to measuring"
+  }
+}
+
+/**
+ * Adopt the artwork mapping the build produced, so a regenerated logo with new
+ * filenames is followed without touching this file.
+ */
+function adoptArt(art) {
+  if (!art || typeof art !== "object") return;
+  for (const role of Object.keys(BRAND_ART)) {
+    const next = art[role];
+    if (!next || typeof next.onLight !== "string" || typeof next.onDark !== "string") continue;
+    BRAND_ART[role].onLight = next.onLight;
+    BRAND_ART[role].onDark = next.onDark;
+  }
+}
+
 /**
  * Measure once per session and apply.
  *
  * The cached plate is applied immediately (no wrong-variant flash), then the
- * real measurement overrides it — so replacing `assets/logo.png` with, say, a
- * white mark flips every plate on the next load without a code change.
+ * build's measurement — `assets/brand-manifest.json` — overrides it, and a
+ * canvas measurement of `BRAND_SOURCE` covers the case where that file is
+ * missing or stale. Replacing `assets/logo.png` with, say, a white mark and
+ * re-running the build flips every plate on the next load without a code change.
  */
 export async function initBrand({ src = BRAND_SOURCE } = {}) {
   const hit = cached();
   if (hit?.plate) applyPlate({ plate: hit.plate, accent: hit.accent, inkLum: hit.inkLum });
+
+  const manifest = await readManifest();
+  if (manifest) {
+    adoptArt(manifest.art);
+    const meta = {
+      src: manifest.source || src,
+      plate: manifest.plate,
+      accent: manifest.accent || null,
+      inkLum: typeof manifest.inkLum === "number" ? manifest.inkLum : null,
+      origin: "manifest",
+      contrast: manifest.contrast || null,
+    };
+    store(meta);
+    applyPlate({ plate: meta.plate, accent: meta.accent, inkLum: meta.inkLum, measured: true, origin: "manifest" });
+    syncBrandSlots();
+    document.dispatchEvent(new CustomEvent("xacheus:brand-plate", { detail: brandPlate() }));
+    return brandPlate();
+  }
 
   const meta = await measureImage(src);
   if (!meta) {
     applyPlate({ measured: false });
     return brandPlate();
   }
-  applyPlate({ plate: meta.plate, accent: meta.accent, inkLum: meta.inkLum, measured: true });
+  applyPlate({ plate: meta.plate, accent: meta.accent, inkLum: meta.inkLum, measured: true, origin: "measured" });
   syncBrandSlots();
   document.dispatchEvent(new CustomEvent("xacheus:brand-plate", { detail: brandPlate() }));
   return brandPlate();

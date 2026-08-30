@@ -87,6 +87,44 @@ for (const m of shell.matchAll(/"(\.\/assets\/[\w.-]+)"/g)) {
 }
 if (/logo1\.png/.test(shell)) note("sw.js caches assets/logo1.png, which nothing loads at runtime (281 KB)");
 
+/* 6 — the build-time plate decision must exist, agree with the ink, and ship. */
+let brandManifest = null;
+try {
+  brandManifest = JSON.parse(read("assets/brand-manifest.json"));
+} catch {
+  note("assets/brand-manifest.json is missing — run `python3 tools/build-brand.py`");
+}
+if (brandManifest) {
+  const { plate, inkLum, accent, art } = brandManifest;
+  if (plate !== "light" && plate !== "dark") note(`brand-manifest.json has an unusable plate: ${JSON.stringify(plate)}`);
+  // A regenerated logo without a re-run build is the classic way this drifts.
+  if (typeof inkLum === "number") {
+    const expect = inkLum < 0.55 ? "light" : "dark";
+    const onLight = 1.05 / (inkLum + 0.05);
+    const onDark = (inkLum + 0.05) / 0.0712;
+    const ruledOk = (expect === "light" ? onLight : onDark) >= 3;
+    const want = ruledOk ? expect : onLight >= onDark ? "light" : "dark";
+    if (plate !== want) {
+      note(`brand-manifest.json is stale: L=${inkLum} implies the ${want} plate, file says ${plate} — re-run the build`);
+    }
+  }
+  if (accent && !/^#[0-9a-f]{6}$/i.test(accent)) note(`brand-manifest.json accent is not a hex colour: ${accent}`);
+  for (const [role, pair] of Object.entries(art || {})) {
+    for (const [which, path] of Object.entries(pair)) {
+      try {
+        read(path);
+      } catch {
+        note(`brand-manifest.json points ${role}.${which} at ${path}, which does not exist`);
+      }
+    }
+  }
+  if (!shell.includes("./assets/brand-manifest.json")) note("sw.js SHELL does not cache ./assets/brand-manifest.json — the plate breaks offline");
+  if (!/brand-manifest\.json/.test(brand)) note("js/brand.js no longer reads assets/brand-manifest.json");
+  if (!/assets\/(logo|icon|apple-touch-icon|favicon|brand-card)/.test(sw)) {
+    note("sw.js must serve brand artwork network-first, or a replaced logo stays invisible for a week");
+  }
+}
+
 /* Ink colours baked into the assets must stay legible on their plate. */
 const plateLight = (styles.match(/--logo-plate:\s*(#[0-9a-f]{3,8})/i) || [])[1];
 const plateDark = (styles.match(/html\[data-logo-plate="dark"\][^}]*?--logo-plate:\s*(#[0-9a-f]{3,8})/is) || [])[1];

@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import math
 import struct
+import datetime
+import json
 import sys
 import zlib
 from pathlib import Path
@@ -291,6 +293,18 @@ def render(alpha, label, bbox, variant: str, pad_ratio: float = TRIM_PAD_RATIO):
     return out_w, out_h, out
 
 
+def dominant_accent(ink_pixels) -> str:
+    """Hex of the most saturated ink pixel — the colour that tints the plate."""
+    best, best_score = None, -1
+    for r, g, b in (tuple(px[:3]) for px in ink_pixels):
+        score = max(r, g, b) - min(r, g, b)
+        if score > best_score and srgb_luminance((r, g, b)) > 0.06:
+            best_score, best = score, (r, g, b)
+    if best is None:
+        return None
+    return "#{:02x}{:02x}{:02x}".format(*best)
+
+
 def analyse(path: Path):
     width, height, pixels = read_png(path)
     alpha, label, bbox, strategy = extract_ink(pixels, width, height)
@@ -307,6 +321,9 @@ def analyse(path: Path):
                 # Reconstruct what the ink actually looks like over its own
                 # background, so luminance reflects the artwork, not the matte.
                 lum_sum += srgb_luminance((r, g, b)) * (a / 255)
+            else:
+                # Alpha strategy: a pixel this opaque *is* the ink.
+                lum_sum += srgb_luminance((r, g, b))
             counts[label[y][x]] += 1
             total += 1
     ink_lum = lum_sum / max(1, total)
@@ -347,6 +364,43 @@ def plate_for(ink_lum: float) -> str:
     if (on_light if ruled == "light" else on_dark) >= MIN_PLATE_CONTRAST:
         return ruled
     return "light" if on_light >= on_dark else "dark"
+
+
+def build_manifest(entries: dict, plate: str, accent: str) -> None:
+    """
+    assets/brand-manifest.json — the decided plate, as data.
+
+    Without this the browser has to download the source artwork and measure it on
+    a canvas before it knows which background the logo needs. That works, but it
+    means the answer depends on a decode succeeding, on a same-origin canvas not
+    being tainted, and on a cache that can lag behind a replaced logo. The app
+    reads this file first (it is small and served network-first) and only falls
+    back to measuring when someone points it at an art file this build does not
+    know about.
+    """
+    target = ROOT / "assets" / "brand-manifest.json"
+    wordmark, mark = entries.get("wordmark"), entries.get("mark")
+    payload = {
+        "version": 1,
+        "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "plate": plate,
+        "accent": accent,
+        "source": SOURCES["mark"].name if mark else SOURCES["wordmark"].name,
+        "inkLum": round(wordmark["ink_lum"], 4) if wordmark else None,
+        "contrast": {
+            "light": round(wordmark["on_light"], 2) if wordmark else None,
+            "dark": round(wordmark["on_dark"], 2) if wordmark else None,
+        },
+        "art": {
+            "mark": {"onLight": "assets/icon.svg", "onDark": "assets/icon-dark.svg"},
+            "wordmark": {
+                "onLight": "assets/logo-wordmark.png",
+                "onDark": "assets/logo-wordmark-dark.png",
+            },
+        },
+    }
+    target.write_text(json.dumps(payload, indent=2) + "\n")
+    print(f"wrote {target.relative_to(ROOT)}  plate={plate} accent={accent}")
 
 
 def build_social_card(entry: dict, plate: str) -> None:
@@ -413,6 +467,9 @@ def main(argv) -> int:
         on_dark = contrast_ratio(entry["ink_lum"], srgb_luminance(PLATE_DARK))
         entry["plate"] = plate_for(entry["ink_lum"])
         entry["on_light"], entry["on_dark"] = on_light, on_dark
+        entry["accent"] = dominant_accent(
+            px[:3] for rows in entry["pixels"] for px in rows if px[3] >= 200
+        )
         print(
             f"  {key:9s} {entry['path'].name:16s} {entry['size'][0]}x{entry['size'][1]} [{entry['strategy']}] L={entry['ink_lum']:.3f}  navy={entry['counts']['navy']:>7}px  blue={entry['counts']['blue']:>6}px"
             f"  contrast on white={on_light:5.2f}:1  on near-black={on_dark:5.2f}:1  -> {plate_for(entry['ink_lum'])} plate"
@@ -450,8 +507,9 @@ def main(argv) -> int:
 
     print(f"\nchosen plate for this artwork: {plate} (data-logo-plate=\"{plate}\")")
 
+    build_manifest({"wordmark": w, "mark": m}, plate, w.get("accent") or m.get("accent") if m else None)
     build_social_card(w, plate)
-    print("the runtime picks the same variant per image — see js/brand.js")
+    print("the runtime reads assets/brand-manifest.json first, then measures as a fallback")
     return 0
 
 

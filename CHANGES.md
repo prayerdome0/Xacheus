@@ -331,6 +331,24 @@ wordmark's tagline is unreadable at that size), share-preview card, settings
 footer. `.logo-plate--*` modifiers own sizing; the watermark keeps a solid
 `background` fallback before `color-mix()`.
 
+### Freshness (why a logo fix could look like it did nothing)
+- `/assets/**` was served `max-age=604800` and the service worker cached images
+  cache-first, so a *replaced* logo file could stay invisible for a week on both
+  the CDN and the device. Brand artwork (`logo*`, `icon*`, `apple-touch-icon`,
+  `favicon*`, `brand-card`) is now network-first in `sw.js` alongside app code,
+  while user content images keep the cache-first path — they are immutable per
+  upload.
+- `tools/build-brand.py` writes `assets/brand-manifest.json` (plate, accent, ink
+  luminance, measured contrasts, artwork paths) and `initBrand()` reads it first,
+  so the common path is a 400-byte network-first JSON instead of a canvas decode
+  of a 116 KB source file. Canvas measurement remains the fallback, which is what
+  `XacheusBrand.use("some/file.png")` still exercises.
+- `index.html` (which carries the pre-paint plate script) is now `no-cache` in
+  `firebase.json`; it previously inherited the 1-hour default.
+- `tools/check-brand.mjs` fails if the manifest is missing, unusable, points at a
+  file that does not exist, is inconsistent with its own measured luminance (i.e.
+  someone edited the logo without re-running the build), or is not in the shell.
+
 ### Also
 - `styles.css`: old brand rules (`.brand-logo`, `.brand-wordmark`, `.brand-lg`,
   fixed-size `.brand-auth-logo`, which was clipping the hero artwork) replaced by

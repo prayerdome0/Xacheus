@@ -16,7 +16,7 @@
  * Structural checks for the slots themselves live in tools/check-brand.mjs, and
  * measurement of the shipped files in `python3 tools/build-brand.py --check`.
  */
-import { analysePixels, plateForLuminance, MIN_PLATE_CONTRAST } from "../js/brand.js";
+import { analysePixels, plateForLuminance, readManifest, MIN_PLATE_CONTRAST } from "../js/brand.js";
 
 let fails = 0;
 const ok = (cond, msg) => {
@@ -105,6 +105,27 @@ for (const [name, fn, want] of IMAGE_CASES) {
 /* The mark's own border must never be mistaken for ink. */
 const framed = analysePixels(synth(80, art([14, 30, 51, 255], [255, 255, 255, 255])), 80, 80);
 ok(framed && framed.background === "#ffffff", `white matte should be reported as the background, got ${framed && framed.background}`);
+
+/* --------------------------------------------------------------------------
+ * 3. the build-time manifest, which the app reads before it measures anything
+ * -------------------------------------------------------------------------- */
+console.log("\nreadManifest()");
+const realFetch = globalThis.fetch;
+const respond = async (body, ok = true) => {
+  globalThis.fetch = async () => ({ ok, status: ok ? 200 : 404, json: async () => JSON.parse(body) });
+  return readManifest("assets/brand-manifest.json");
+};
+ok(
+  (await respond('{"plate":"dark","inkLum":0.9,"accent":"#1990f2","art":{}}'))?.plate === "dark",
+  "a usable manifest should be adopted"
+);
+ok((await respond('{"plate":"sepia"}')) === null, "an unknown plate value should be rejected, not trusted");
+ok((await respond("not json")) === null, "unparseable JSON should resolve to null");
+globalThis.fetch = async () => {
+  throw new TypeError("Failed to fetch");
+};
+ok((await readManifest("assets/brand-manifest.json")) === null, "a network failure must resolve to null so measuring still runs");
+globalThis.fetch = realFetch;
 
 console.log(fails ? `\n${fails} FAILURE(S)` : "\nplate rule holds: dark ink -> white plate, light ink -> black plate, never below the legibility floor");
 process.exit(fails ? 1 : 0);

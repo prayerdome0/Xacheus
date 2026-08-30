@@ -141,7 +141,12 @@ This is decided by measurement, not by a hardcoded colour per page:
    logo visible, not to honour a swatch. Measured today: **16.77:1** (navy ink on white)
    and **17.15:1** (the light build on near-black) — the wrong pairings sit at
    ~1.2:1, i.e. invisible.
-3. The result is cached in `localStorage` under `xacheus.brand.plate.v1` (keyed
+3. `tools/build-brand.py` writes that same decision to `assets/brand-manifest.json`,
+   and `initBrand()` reads it first — so the normal path needs no canvas at all,
+   and it cannot be pinned to an old bitmap (the file is `.json`, which `sw.js`
+   serves network-first, as it does for the logo artwork itself). Measuring the
+   image is the fallback for anything the build does not know about.
+4. The result is cached in `localStorage` under `xacheus.brand.plate.v1` (keyed
    by file + pixel size, so replacing the artwork re-measures) and applied to
    `<html data-logo-plate>` by a tiny inline script *before first paint*, so the
    logo never flashes onto the wrong background. The same cache also sets
@@ -181,9 +186,11 @@ node tools/plate-rule.test.mjs         # the rule itself, on synthetic ink/backg
 ```
 
 New logo file? Drop it in `assets/`, point `BRAND_SOURCE` (and `SOURCES` in the
-tool) at it, run both commands, reload. Nothing else is hardcoded: the plate
-follows the artwork. In a console you can also force a re-measure with
-`window.XacheusBrand.use("assets/logo-new.png")`.
+tool) at it, run `python3 tools/build-brand.py`, and reload — the build writes
+both ink variants and the plate decision, and nothing else is hardcoded. In a
+console, `XacheusBrand.report()` shows what was decided and where it came from
+(`origin: "manifest"` or `"measured"`), and `XacheusBrand.use("assets/new.png")`
+measures an untracked file on the spot.
 
 ---
 
