@@ -115,7 +115,7 @@ function shell(innerHtml) {
       <section class="auth-hero" aria-label="About Xacheus">
         <div class="auth-hero-inner">
           <a class="brand brand-lg" href="#/home" aria-label="Xacheus home">
-            <img class="brand-logo" src="assets/icon.svg" alt="Xacheus" />
+            <img class="brand-logo" src="assets/icon-dark.svg" alt="Xacheus" />
           </a>
           <h1>Zambia's short video community.</h1>
           <p class="auth-hero-text">

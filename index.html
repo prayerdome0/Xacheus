@@ -10,9 +10,45 @@
     />
     <title>Xacheus — Short Video Platform</title>
 
-    <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="assets/icon.svg" />
+    <!-- Favicons. The SVG mark is two-tone, so serve the light-ink build to
+         browsers reporting a dark UI and the navy build otherwise. -->
+    <link
+      rel="icon"
+      href="assets/icon.svg"
+      type="image/svg+xml"
+      media="(prefers-color-scheme: light)"
+    />
+    <link
+      rel="icon"
+      href="assets/icon-dark.svg"
+      type="image/svg+xml"
+      media="(prefers-color-scheme: dark)"
+    />
+    <link rel="alternate icon" href="assets/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="assets/favicon-32.png" type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" sizes="180x180" href="assets/apple-touch-icon.png" />
+    <link rel="mask-icon" href="assets/icon.svg" color="#0546e0" />
+
     <link rel="manifest" href="manifest.json" />
+
+    <!-- iOS standalone / install metadata -->
+    <meta name="application-name" content="Xacheus" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Xacheus" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Xacheus" />
+    <meta property="og:title" content="Xacheus — Short Video Platform" />
+    <meta
+      property="og:description"
+      content="Zambia's short vertical video community — real videos, free sounds, churches, opportunities. Built for creators."
+    />
+    <meta property="og:image" content="assets/logo-wordmark.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Xacheus — Short Video Platform" />
+    <meta name="twitter:image" content="assets/logo-wordmark.png" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,7 +63,7 @@
 
     <div id="boot" class="boot">
       <div class="boot-inner">
-        <img class="brand-logo boot-mark" src="assets/icon.svg" alt="Xacheus" width="56" height="56" />
+        <img class="brand-logo boot-mark" src="assets/icon-dark.svg" alt="Xacheus" width="56" height="56" />
         <p>Loading Xacheus…</p>
         <span class="spinner"></span>
       </div>
@@ -70,7 +106,7 @@
           screen.hidden = false;
           screen.innerHTML =
             '<div class="boot-inner">' +
-            '<img class="brand-logo boot-mark" src="assets/icon.svg" alt="Xacheus" width="56" height="56" />' +
+            '<img class="brand-logo boot-mark" src="assets/icon-dark.svg" alt="Xacheus" width="56" height="56" />' +
             "<h2>Xacheus could not start</h2>" +
             '<p class="boot-error">' +
             String(message).replace(/[<>&]/g, "") +
@@ -130,13 +166,8 @@
       })();
     </script>
 
+    <!-- Service worker registration, install prompt and update flow all live
+         in js/pwa.js, wired up from js/app.js. -->
     <script type="module" src="js/app.js"></script>
-    <script>
-      if ("serviceWorker" in navigator) {
-        window.addEventListener("load", () => {
-          navigator.serviceWorker.register("sw.js").catch(() => {});
-        });
-      }
-    </script>
   </body>
 </html>

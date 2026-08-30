@@ -3,7 +3,7 @@
  * Caches app shell, never caches Firebase or Cloudinary.
  */
 
-const CACHE_NAME = "xacheus-video-v5";
+const CACHE_NAME = "xacheus-video-v6";
 const SHELL = [
   "./",
   "./index.html",
@@ -12,6 +12,7 @@ const SHELL = [
   "./js/firebase.js",
   "./js/data.js",
   "./js/ui.js",
+  "./js/pwa.js",
   "./js/auth.js",
   "./js/cloudinary.js",
   "./js/views/components.js",
@@ -25,7 +26,18 @@ const SHELL = [
   "./js/views/live.js",
   "./js/views/settings.js",
   "./js/views/admin.js",
+  "./manifest.json",
   "./assets/icon.svg",
+  "./assets/icon-dark.svg",
+  "./assets/icon-192.png",
+  "./assets/icon-512.png",
+  "./assets/icon-maskable-192.png",
+  "./assets/icon-maskable-512.png",
+  "./assets/apple-touch-icon.png",
+  "./assets/favicon-32.png",
+  "./assets/favicon.ico",
+  "./assets/logo-wordmark.png",
+  "./assets/logo-wordmark-dark.png",
 ];
 
 const NEVER_CACHE = [
@@ -38,15 +50,32 @@ const NEVER_CACHE = [
 ];
 
 self.addEventListener("install", (event) => {
+  // Individual puts, so one missing shell file can't fail the whole install.
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)).catch(() => null)
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(
+        SHELL.map((url) =>
+          cache.add(new Request(url, { cache: "reload" })).catch(() => null)
+        )
+      )
+    )
   );
-  self.skipWaiting();
+});
+
+// The page asks us to activate immediately when the user accepts an update.
+self.addEventListener("message", (event) => {
+  if (event.data === "SKIP_WAITING" || event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))).then(() => self.clients.claim())
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))))
+      .then(() => self.registration.navigationPreload?.enable?.())
+      .then(() => self.clients.claim())
   );
 });
 
