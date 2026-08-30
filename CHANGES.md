@@ -261,6 +261,89 @@ All changes are backward compatible:
 - `uploadImage` now defaults to `strict: true` so a failed upload can never persist a `blob:` URL.
 - Deleting a video or sound also best-effort removes its media object from Storage.
 
+## Logo visibility — the brand plate
+
+The reported bug: the logo sat on backgrounds that swallowed it (navy ink on the
+dark app shell in the top bar, on profile covers, in the sidebar, on the auth
+hero). Requirement: dark logo → light background, light logo → dark background,
+everywhere, consistently.
+
+### Rule, not colour-per-page
+- The plate is **measured from the artwork** instead of being picked per screen,
+  so a new logo file automatically gets the right plate. `js/brand.js` samples
+  the image on a canvas, separates ink from background (the artwork's own border
+  defines the matte — a mostly-unpainted border means the file is already
+  ink-on-transparent), averages the ink's WCAG relative luminance, and picks:
+  `inkLum < 0.55` → light plate `#ffffff`, else dark plate `#05060a`.
+- Both pairings were verified against the actual artwork: **16.77:1** (navy ink
+  on white) and **17.15:1** (light build on near-black); the inverted pairings
+  are ~1.2:1, i.e. invisible. All above WCAG AA and AAA for a logo.
+- A mid-tone logo whose luminance sits between the two plates would otherwise land
+  on a low-contrast surface, so `plateForLuminance()` falls back to whichever plate
+  reads better when the ruled one cannot reach 3:1. `tools/plate-rule.test.mjs`
+  pins that behaviour (`L=0.45` → dark plate; `L=0.3` → still white, because white
+  gives exactly 3.0:1 there, which is the legibility floor for a graphic).
+- The decision is theme-independent: dark mode and light mode both show the same
+  plate, because the plate is the logo's own surface, not the page's.
+
+### Assets (new)
+- `assets/logo-wordmark.png` / `assets/logo-wordmark-dark.png` — 702×149,
+  transparent ink in the two brand colours, produced by `tools/build-brand.py`.
+  The source PNGs (`logo.png`, `logo1.png`) ship as ink over a ~27 % alpha noise
+  wash, which is exactly what made them look like a gray rectangle when dropped
+  on a solid background; the wash is now stripped at build time.
+- `assets/brand-card.png` — 1200×630 link-preview card with the plate baked in
+  (social previews cannot run CSS). `og:image` / `twitter:image` now point here
+  instead of at `assets/logo1.png`.
+- PWA icons and favicons were measured too: `icon-192/512`, the maskables,
+  `apple-touch-icon` and the favicon PNGs are already navy ink on white, i.e.
+  already on the correct plate — nothing was regenerated. `assets/icon.svg`
+  (transparent ink) and `assets/icon-dark.svg` are the two runtime variants.
+- `manifest.json`: the `assets/logo.png` icon entry was removed (raw artwork with
+  a translucent wash is not a PWA icon; `icon-192/512` are), and
+  `background_color` became `#ffffff` so the install splash puts the logo on its
+  measured plate instead of floating a white square on `#0a0b12`. `theme_color`
+  stays `#0a0b12` (that colours browser chrome, not the logo).
+
+### Tooling + runtime (new)
+- `tools/build-brand.py` — stdlib-only PNG read/write (no Pillow in this repo's
+  environment), does the wash removal, trim, ink snap and luminance report;
+  `--check` measures and **fails if any artwork drops below 4.5:1 on its chosen
+  plate, or if the other plate would read better** (catches inverted logic).
+- `tools/check-brand.mjs` — structural guard: no bare `<img src="assets/logo…">`
+  outside a plate, every slot emits both inks, every `.logo-plate--*` used in JS
+  is styled, the pre-paint script is still in `index.html`, and `sw.js` caches
+  every brand file the runtime loads.
+- `js/brand.js` — `analysePixels` / `measureImage` / `plateForLuminance` /
+  `relativeLuminance` / `contrastRatio` / `brandSlotHtml` / `syncBrandSlots` /
+  `applyPlate` / `initBrand` / `report`, cached in `localStorage` under
+  `xacheus.brand.plate.v1` keyed by file + size so a replaced artwork
+  re-measures, and broadcast to `xacheus:brand-plate`. `window.XacheusBrand.use(src)`
+  re-measures a candidate file live.
+- `index.html` applies the cached plate in an inline script before first paint
+  (no FOUC); `app.js` calls `initBrand()` during boot and `syncBrandSlots()`
+  after every view render so hand-written markup is corrected too.
+
+### Slots now plated
+`index.html` boot + boot-failure, top bar wordmark, sidebar mark, account-menu
+row, auth hero, profile cover corner (`.logo-plate--watermark`, the *mark* — a
+wordmark's tagline is unreadable at that size), share-preview card, settings
+footer. `.logo-plate--*` modifiers own sizing; the watermark keeps a solid
+`background` fallback before `color-mix()`.
+
+### Also
+- `styles.css`: old brand rules (`.brand-logo`, `.brand-wordmark`, `.brand-lg`,
+  fixed-size `.brand-auth-logo`, which was clipping the hero artwork) replaced by
+  the plate system.
+- `sw.js`: cache bumped `xacheus-video-v8` → `v9`; `SHELL` gained `js/brand.js`
+  and lost `assets/logo1.png` (281 KB the runtime never loads), and `js/music.js`,
+  `js/player.js`, `js/social.js` were added — they were missing from the shell
+  list since Phase 2, so the offline app could not have booted from cache.
+- Verified statically here: `node --check` on all modules, import audit, the
+  7-case plate harness (black/green/navy ink → white plate, white/pale ink →
+  black plate), both new tools, and an HTTP pass over every changed file.
+  **Not** yet opened in a browser — that pass is still on the user's side.
+
 ## Deployment
 
 ```bash

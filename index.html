@@ -45,10 +45,11 @@
       property="og:description"
       content="Zambia's short vertical video community — real videos, free sounds, churches, opportunities. Built for creators."
     />
-    <meta property="og:image" content="assets/logo1.png" />
+    <meta property="og:image" content="assets/brand-card.png" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Xacheus — Short Video Platform" />
-    <meta name="twitter:image" content="assets/logo1.png" />
+    <meta name="twitter:image" content="assets/brand-card.png" />
+    <meta name="twitter:image:alt" content="Xacheus — Create • Watch • Connect" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -57,13 +58,40 @@
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
+
+    <script>
+      /**
+       * Brand plate, applied before first paint.
+       *
+       * The logo's plate colour is decided by measuring the logo artwork
+       * (js/brand.js). That measurement is cached, and this pre-paint read of
+       * the cache is what stops the logo from rendering on the wrong background
+       * for a frame. If there is no cache yet, js/brand.js measures the file and
+       * corrects the attribute — this script never has to know the answer.
+       */
+      (function () {
+        try {
+          var raw = localStorage.getItem("xacheus.brand.plate.v1");
+          var cached = raw ? JSON.parse(raw) : null;
+          var plate = cached && cached.plate === "dark" ? "dark" : "light";
+          document.documentElement.dataset.logoPlate = plate;
+          if (cached && cached.accent) document.documentElement.style.setProperty("--logo-accent", cached.accent);
+        } catch (err) {
+          document.documentElement.dataset.logoPlate = "light";
+        }
+      })();
+    </script>
   </head>
   <body>
     <a class="skip-link" href="#view">Skip to content</a>
 
     <div id="boot" class="boot">
       <div class="boot-inner">
-        <img class="brand-logo boot-mark" src="assets/logo.png" alt="Xacheus" width="56" height="56" />
+        <span class="logo-plate logo-plate--mark logo-plate--lg" data-brand-slot="mark">
+          <img class="logo-ink logo-ink--dark" src="assets/icon.svg" alt="" width="512" height="512" />
+          <img class="logo-ink logo-ink--light" src="assets/icon-dark.svg" alt="" width="512" height="512" aria-hidden="true" />
+          <span class="sr-only">Xacheus</span>
+        </span>
         <p>Loading Xacheus…</p>
         <span class="spinner"></span>
       </div>
@@ -106,7 +134,10 @@
           screen.hidden = false;
           screen.innerHTML =
             '<div class="boot-inner">' +
-            '<img class="brand-logo boot-mark" src="assets/logo.png" alt="Xacheus" width="56" height="56" />' +
+            '<span class="logo-plate logo-plate--mark logo-plate--lg">' +
+            '<img class="logo-ink logo-ink--dark" src="assets/icon.svg" alt="" width="512" height="512" />' +
+            '<img class="logo-ink logo-ink--light" src="assets/icon-dark.svg" alt="" width="512" height="512" aria-hidden="true" />' +
+            "</span>" +
             "<h2>Xacheus could not start</h2>" +
             '<p class="boot-error">' +
             String(message).replace(/[<>&]/g, "") +

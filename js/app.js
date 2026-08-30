@@ -23,6 +23,7 @@ import {
 } from "./data.js";
 import { PRESENCE_HEARTBEAT_MS, getUserPrefs, goOffline, heartbeat } from "./social.js";
 import { mountPlayer, setPlayerOptions } from "./player.js";
+import { brandSlotHtml, initBrand, syncBrandSlots } from "./brand.js";
 import { avatar, clear, esc, formatCount, openModal, toast } from "./ui.js";
 import { friendlyAuthError, mountAuth } from "./auth.js";
 import { canInstall, initPwa, isIos, onPwaChange, promptInstall } from "./pwa.js";
@@ -180,9 +181,7 @@ function buildShell() {
   shell.innerHTML = `
     <header class="topbar">
       <div class="topbar-inner">
-        <a class="brand topbar-brand" href="#/home" aria-label="Xacheus home">
-          <img class="brand-logo brand-wordmark" src="assets/logo1.png" alt="Xacheus" />
-        </a>
+        ${brandSlotHtml({ role: "wordmark", size: "md", extraClass: "topbar-brand" })}
 
         <div class="topbar-tabs" id="topbar-tabs">
           <button class="top-tab ${state.feedMode === "foryou" ? "is-active" : ""}" data-feed="foryou">For You</button>
@@ -211,9 +210,7 @@ function buildShell() {
 
     <div class="layout layout-video">
       <nav class="sidebar sidebar-video" aria-label="Primary">
-        <a class="brand sidebar-brand" href="#/home" aria-label="Xacheus home">
-          <img class="brand-logo" src="assets/logo.png" alt="Xacheus" />
-        </a>
+        <div class="sidebar-brand">${brandSlotHtml({ role: "mark", size: "lg", extraClass: "sidebar-mark" })}</div>
         ${sideNav.map((item) => navItem(item)).join("")}
         <div class="sidebar-me" data-role="sidebar-me"></div>
         <div class="sidebar-foot">
@@ -325,6 +322,7 @@ function toggleAccountMenu(anchor) {
   const rect = anchor.getBoundingClientRect();
   const isAdmin = isAdminProfile(state.profile);
   menu.innerHTML = `
+    <div class="account-brand">${brandSlotHtml({ role: "wordmark", size: "sm", linked: false })}</div>
     <div class="account-head">
       ${avatar(state.profile, "md")}
       <div>
@@ -542,6 +540,7 @@ function render() {
   document.title = `${view.title || "Home"} · Xacheus`;
   markActiveNav(segments[0]);
 
+  syncBrandSlots(viewHost);
   try {
     view.mount?.(viewHost);
   } catch (error) {
@@ -747,6 +746,9 @@ function finishBoot() {
 
 function boot() {
   applyTheme();
+  // The logo's plate is decided by measuring the logo, so do that as early as
+  // possible; the pre-paint script in index.html already applied the cache.
+  initBrand().catch(() => {});
   initPwa();
   // The install prompt can arrive at any time after load; re-sync when it does.
   onPwaChange(syncInstallUi);

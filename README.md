@@ -105,6 +105,9 @@ js/social.js          reactions, prefs, privacy gates, blocks, profile media,
 js/music.js           Internet Archive client (search, item tracks, licences)
 js/player.js          the one <audio> element everything shares
 js/storage.js         Storage uploads (image/video/audio/story/chat) + metadata
+js/brand.js           logo plate: measures the artwork, decides light or dark plate
+tools/build-brand.py  regenerates the brand PNGs + the social card from the artwork
+tools/check-brand.mjs structural guard for every logo slot (see below)
 js/views/*.js         home, profile, mediaViewer, stories, messages, sounds,
                       create, discover, notifications, settings, admin, live,
                       components (shared cards, modals, pickers)
@@ -115,6 +118,72 @@ firestore.indexes.json 31 composite indexes matching the queries above
 
 Naming note: `videos` is the *posts* collection (it predates photo posts) and
 `profileMedia` is the per-profile photo/video gallery. Both are intentional.
+
+---
+
+## Logo visibility (the brand plate)
+
+The rule the app follows: **the logo never sits on a background that swallows
+it.** Dark ink (black, or a deep green) gets a light plate; light ink (white)
+gets a dark plate. That is contrast, not theme — the logo looks the same in dark
+mode and light mode, because the surface behind the logo is its own plate.
+
+This is decided by measurement, not by a hardcoded colour per page:
+
+1. `js/brand.js` loads the artwork (`assets/logo.png`), samples it on a canvas,
+   separates ink from background (the artwork's own border defines the matte),
+   and computes the ink's WCAG relative luminance.
+2. `inkLum < 0.55` → **light plate** (`#ffffff`), otherwise → **dark plate**
+   (`#05060a`). One threshold is what makes both "black logo on white" and
+   "white logo on black" fall out of the same rule. One guard sits on top of it:
+   if the ruled plate would leave a mid-tone logo below 3:1 (WCAG's floor for a
+   graphic), the more legible plate is used instead — the rule exists to make the
+   logo visible, not to honour a swatch. Measured today: **16.77:1** (navy ink on white)
+   and **17.15:1** (the light build on near-black) — the wrong pairings sit at
+   ~1.2:1, i.e. invisible.
+3. The result is cached in `localStorage` under `xacheus.brand.plate.v1` (keyed
+   by file + pixel size, so replacing the artwork re-measures) and applied to
+   `<html data-logo-plate>` by a tiny inline script *before first paint*, so the
+   logo never flashes onto the wrong background. The same cache also sets
+   `--logo-accent`, which Safari's tab icon and the plate's focus ring use.
+
+Every place the logo appears goes through one builder, so the rule can't be
+applied in one screen and forgotten in another:
+
+| slot | where | helper |
+| --- | --- | --- |
+| boot screen + boot-failure screen | `index.html` | `.logo-plate` markup with both inks |
+| top bar wordmark, sidebar mark, account-menu row | `js/app.js` | `brandSlotHtml()` |
+| auth hero | `js/auth.js` | `brandSlotHtml({ size: "xl" })` |
+| profile cover corner | `js/views/profile.js` | `brandSlotHtml()` + `.logo-plate--watermark` |
+| share-preview card | `js/views/components.js` | `brandSlotHtml()` |
+| settings footer | `js/views/settings.js` | `brandSlotHtml()` |
+| PWA icons, favicons, social card | `manifest.json`, `index.html`, `assets/` | already ink-on-plate by build |
+
+`brandSlotHtml()` emits **both** ink variants inside the plate and lets CSS pick
+(`.logo-ink--light` is shown only under `html[data-logo-plate="dark"]`), which
+is why there is no "wait for the measurement" gap in any slot.
+
+The assets are derived, not hand-painted — `assets/logo.png` / `assets/logo1.png`
+ship as ink over a translucent noise wash, so `tools/build-brand.py` strips that
+wash, trims, snaps the ink to the brand colours, and writes:
+
+- `assets/logo-wordmark.png` — navy ink for the light plate
+- `assets/logo-wordmark-dark.png` — light ink for the dark plate
+- `assets/brand-card.png` — 1200×630 link-preview card, plate baked in (a social
+  preview can't run CSS, so it gets the decision as pixels)
+
+```bash
+python3 tools/build-brand.py --check   # measure only: fails if any logo is below AA on its own plate
+python3 tools/build-brand.py           # regenerate the three files above
+node tools/check-brand.mjs             # no bare logo tags, both inks shipped, plate classes styled, SW cache complete
+node tools/plate-rule.test.mjs         # the rule itself, on synthetic ink/background pairs
+```
+
+New logo file? Drop it in `assets/`, point `BRAND_SOURCE` (and `SOURCES` in the
+tool) at it, run both commands, reload. Nothing else is hardcoded: the plate
+follows the artwork. In a console you can also force a re-measure with
+`window.XacheusBrand.use("assets/logo-new.png")`.
 
 ---
 

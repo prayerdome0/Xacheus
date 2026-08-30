@@ -242,8 +242,23 @@ p {
 }
 
 /* ------------------------------------------------------------------ */
-/* brand                                                               */
-/* ------------------------------------------------------------------ */
+/* brand — the logo always sits on a plate whose colour is decided by the logo
+   ink, not by the theme: dark/saturated ink -> light plate, light ink -> dark
+   plate. js/brand.js measures the artwork and sets html[data-logo-plate];
+   both ink variants are in the DOM and CSS picks the readable one.            */
+
+:root {
+  --logo-plate: #ffffff;
+  --logo-plate-line: rgba(8, 10, 16, 0.14);
+  --logo-plate-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 8px 22px rgba(0, 0, 0, 0.16);
+  --logo-plate-radius: 11px;
+  --logo-accent: #0a63e8;
+}
+html[data-logo-plate="dark"] {
+  --logo-plate: #05060a;
+  --logo-plate-line: rgba(255, 255, 255, 0.18);
+  --logo-plate-shadow: 0 1px 0 rgba(255, 255, 255, 0.08) inset, 0 10px 26px rgba(0, 0, 0, 0.5);
+}
 
 .brand {
   display: inline-flex;
@@ -252,44 +267,86 @@ p {
   font-weight: 800;
   letter-spacing: -0.02em;
   font-size: 1.12rem;
+  color: inherit;
+  text-decoration: none;
 }
-.brand-logo {
+.logo-plate {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  padding: 5px 9px;
+  border-radius: var(--logo-plate-radius);
+  background: var(--logo-plate);
+  border: 1px solid var(--logo-plate-line);
+  box-shadow: var(--logo-plate-shadow);
+  line-height: 0;
+  transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.logo-plate .logo-ink {
   display: block;
-  width: 32px;
-  height: 32px;
-  flex: none;
+  width: 100%;
+  height: auto;
   object-fit: contain;
-  border-radius: 6px;
 }
-/* Wide wordmark build — keeps its aspect ratio in the topbar/sidebar. */
-.brand-wordmark {
-  width: 118px;
-  height: 32px;
-  border-radius: 4px;
+.logo-plate .logo-ink--light { display: none; }
+html[data-logo-plate="dark"] .logo-plate .logo-ink--dark { display: none; }
+html[data-logo-plate="dark"] .logo-plate .logo-ink--light { display: block; }
+
+.brand:hover .logo-plate { transform: translateY(-1px); }
+.brand:focus-visible .logo-plate,
+.logo-plate a:focus-visible {
+  outline: 2px solid var(--logo-accent);
+  outline-offset: 2px;
 }
+
+/* the mark is square: padding becomes an even frame */
+.logo-plate--mark { padding: 5px; }
+.logo-plate--mark .logo-ink { width: 26px; }
+.logo-plate--sm.logo-plate--mark .logo-ink { width: 20px; }
+.logo-plate--md.logo-plate--mark .logo-ink { width: 28px; }
+.logo-plate--lg.logo-plate--mark { padding: 7px; border-radius: 14px; }
+.logo-plate--lg.logo-plate--mark .logo-ink { width: 44px; }
+.logo-plate--xl.logo-plate--mark { padding: 10px; border-radius: 18px; }
+.logo-plate--xl.logo-plate--mark .logo-ink { width: 64px; }
+
+/* the wordmark keeps its own aspect ratio inside a wider plate */
+.logo-plate--wordmark { padding: 6px 11px; }
+.logo-plate--wordmark .logo-ink { width: 118px; }
+.logo-plate--sm.logo-plate--wordmark .logo-ink { width: 92px; }
+.logo-plate--md.logo-plate--wordmark .logo-ink { width: 118px; }
+.logo-plate--lg.logo-plate--wordmark { padding: 8px 14px; border-radius: 14px; }
+.logo-plate--lg.logo-plate--wordmark .logo-ink { width: 150px; }
+.logo-plate--xl.logo-plate--wordmark { padding: 12px 18px; border-radius: 18px; }
+.logo-plate--xl.logo-plate--wordmark .logo-ink { width: min(238px, 58vw); }
 @media (max-width: 767px) {
-  .brand-wordmark {
-    width: 96px;
-    height: 27px;
-  }
+  .logo-plate--wordmark .logo-ink { width: 100px; }
+  .logo-plate--lg.logo-plate--wordmark .logo-ink { width: 118px; }
 }
-/* Boot-screen mark is 56px; keep it larger than the default 32px brand mark. */
-.brand-logo.boot-mark {
-  width: 56px;
-  height: 56px;
+
+/* Compat: any hand-written <img class="brand-logo"> still reads as artwork
+   inside a plate rather than as a raw box. Nothing in the app needs an explicit
+   size any more — .logo-plate--* modifiers own that. */
+.logo-plate .brand-logo,
+.logo-plate img[class] { display: block; max-width: 100%; object-fit: contain; }
+
+.logo-lockup { display: inline-flex; align-items: center; gap: 10px; }
+.logo-lockup em { font-style: normal; font-size: 0.78rem; color: var(--muted); letter-spacing: 0.02em; }
+
+/* Where the logo is a watermark rather than a control, keep it quiet but still
+   on its own plate so contrast never depends on what is behind it. */
+.logo-plate--watermark {
+  padding: 7px;
+  border-radius: 12px;
+  box-shadow: none;
+  /* Fallback first, then the translucent plate: a browser without color-mix()
+     still gets a solid, legible background instead of none. */
+  background: var(--logo-plate);
+  background: color-mix(in srgb, var(--logo-plate) 88%, transparent);
 }
-.brand-lg {
-  font-size: 1.5rem;
-}
-.brand-lg .brand-logo {
-  width: 46px;
-  height: 46px;
-  border-radius: 9px;
-}
-.brand-auth-logo {
-  width: 224px;
-  height: 82px;
-}
+/* A cover can be any photo, so the watermark is the mark, not the wordmark:
+   the tagline would be unreadable at this size. */
+.logo-plate--watermark .logo-ink { width: 30px; }
+.logo-plate--watermark:hover .logo-ink { transform: scale(1.06); }
 
 /* ------------------------------------------------------------------ */
 /* buttons                                                             */
@@ -2805,6 +2862,12 @@ html.light .panel {
   display: grid;
   gap: 20px;
 }
+/* The plate carries its own light/dark surface, so the hero only has to place
+   it — never recolour the logo. */
+.auth-hero .brand {
+  justify-self: start;
+  max-width: 100%;
+}
 .auth-hero h1 {
   font-size: 2.4rem;
   line-height: 1.15;
@@ -4563,3 +4626,18 @@ body.has-player #view { padding-bottom: 96px; }
   .notif-thumb { max-width: 84px; }
   .notif [data-act="delete-notif"] { opacity: 0.7; }
 }
+
+/* logo placements that are not controls */
+.profile-brand {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0.94;
+}
+.share-preview-brand { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.share-preview-brand em { font-style: normal; font-size: 0.7rem; letter-spacing: 0.08em; color: var(--faint); text-transform: lowercase; }
+.account-brand { padding: 12px 14px 8px; }
+.settings-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: center; color: var(--muted); font-size: 0.84rem; }
+.boot-inner .logo-plate { margin-bottom: 4px; }

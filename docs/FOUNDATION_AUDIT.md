@@ -108,3 +108,20 @@ counters) and must be validated by deploying them and exercising the app.
    the notification must not be created at all.
 10. **Rules negative test** — from the console, try writing another user's
     profile or a stranger's `likedVideos`; both must be denied.
+
+11. **Logo plate, both ways** — on every screen the logo appears (top bar,
+    sidebar, account menu, auth hero, profile cover corner, share preview,
+    settings footer, boot screen, and the installed/PWA splash) it must sit on
+    its own light plate, and stay readable in both light and dark mode. Then
+    force the other variant from the console — `XacheusBrand.apply({ plate:
+    "dark" })` — and confirm the light ink appears on the near-black plate with
+    no broken/blank images anywhere, and `XacheusBrand.report()` shows the
+    measured `inkLum` plus `measured: true`.
+12. **Plate survives a refresh** — reload the profile and the auth screen twice:
+    `document.documentElement.dataset.logoPlate` must already be correct in the
+    first frame (that is the pre-paint script reading
+    `localStorage["xacheus.brand.plate.v1"]`), i.e. no flash of the logo on the
+    wrong background. Replacing `assets/logo.png` with a white mark and reloading
+    must flip every plate by itself (`XacheusBrand.use("assets/logo.png")` does
+    the same on demand), and `node tools/check-brand.mjs` +
+    `python3 tools/build-brand.py --check` must stay green.

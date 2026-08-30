@@ -20,6 +20,7 @@ import { getProfile, purgeUserData, updateProfile } from "../data.js";
 import { NOTIFICATION_CATEGORIES, getBlockList, getUserPrefs, savePrefs, unblockUser } from "../social.js";
 import { setPlayerOptions } from "../player.js";
 import { avatar, confirmDialog, emptyState, esc, openModal, timeAgo, toast } from "../ui.js";
+import { brandSlotHtml } from "../brand.js";
 
 export function settingsView(ctx) {
   const me = ctx.state.profile;
@@ -125,7 +126,8 @@ export function settingsView(ctx) {
     </section>
 
     <p class="settings-foot">
-      Xacheus · Built in Zambia 🌍 · <a class="link" href="#/home">Back to feed</a>
+      ${brandSlotHtml({ role: "wordmark", size: "sm", linked: false })}
+      <span>Built in Zambia 🌍 · <a class="link" href="#/home">Back to feed</a></span>
     </p>`;
 
   function formatRoleDesc(role) {

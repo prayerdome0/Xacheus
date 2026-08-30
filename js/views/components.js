@@ -56,6 +56,7 @@ import {
   toast,
 } from "../ui.js";
 import { isCurrentTrack, isPlayingTrack, playQueue, toggleTrack } from "../player.js";
+import { brandSlotHtml } from "../brand.js";
 
 export function liveThumb(live) {
   if (live?.thumbnailUrl) return `<img src="${esc(live.thumbnailUrl)}" alt="" loading="lazy" />`;
@@ -737,6 +738,10 @@ export function openShareModal(ctx, { title = "Xacheus", text = "", url, onShare
     body: `
       <div class="share-sheet">
         <div class="share-preview">
+          <div class="share-preview-brand">
+            ${brandSlotHtml({ role: "mark", size: "sm", linked: false })}
+            <em>xacheus · create · watch · connect</em>
+          </div>
           <strong>${esc(title)}</strong>
           <p>${esc(text || shareUrl)}</p>
           <code>${esc(shareUrl)}</code>

@@ -55,6 +55,7 @@ import { uploadImage } from "../storage.js";
 import { openReportModal, userRowHtml, videoCardHtml, bindVideoActions, hydrateVideoStates } from "./components.js";
 import { closeMediaViewer, openMediaViewer } from "./mediaViewer.js";
 import { playQueue, toggleTrack, isCurrentTrack } from "../player.js";
+import { brandSlotHtml } from "../brand.js";
 import { watchPresence } from "../social.js";
 import { soundRowHtml } from "./sounds.js";
 
@@ -133,6 +134,7 @@ export function profileView(ctx, { username, tab = "posts", media = "" } = {}) {
           style="${profile.coverURL ? `background-image:url(${JSON.stringify(esc(profile.coverURL))});background-size:cover;background-position:center` : ""}">
           ${profile.coverURL ? "" : `<span class="cover-empty">Add a cover photo</span>`}
           ${isMine ? `<span class="cover-edit" data-act="edit-cover">Edit</span>` : ""}
+          ${brandSlotHtml({ role: "mark", size: "md", linked: false, extraClass: "logo-plate--watermark profile-brand" })}
         </button>
 
         <div class="profile-identity">
