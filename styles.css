@@ -3610,6 +3610,8 @@ html.light .panel {
 .comments-list { max-height: 50vh; max-height: 50dvh; overflow-y: auto; display: grid; gap: 8px; }
 .comment-form { display: flex; gap: 8px; }
 .comment-form input { flex: 1; }
+/* Guest variant: no account yet, so the composer is a single sign-in button. */
+.comment-form--guest { display: block; padding-top: 2px; }
 
 /* Profile hero */
 .profile-hero { display: grid; gap: 0; }

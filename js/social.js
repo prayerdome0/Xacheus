@@ -1206,7 +1206,7 @@ export async function addStory(author, { kind = "photo", url, storagePath = "", 
   return ref.id;
 }
 
-export async function listActiveStories(uids, { max = 40, includeUid = "" } = {}) {
+export async function listActiveStories(uids, { max = 40, includeUid = "", everyone = false } = {}) {
   const constraints = [where("expiresAt", ">", new Date()), orderBy("createdAt", "desc"), limit(max)];
   const fetchFor = async (filter) => {
     try {
@@ -1232,7 +1232,10 @@ export async function listActiveStories(uids, { max = 40, includeUid = "" } = {}
   const allowed = new Set(uids || []);
   for (const story of list) {
     if (all.some((s) => s.id === story.id)) continue;
-    if (allowed.has(story.uid) || story.uid === includeUid) all.push(story);
+    // `everyone` is the guest mode: no follow graph to filter by, so the tray
+    // shows every active story Firestore lets it read (public accounts only —
+    // private-account stories are cut by the security rules).
+    if (everyone || allowed.has(story.uid) || story.uid === includeUid) all.push(story);
   }
   return all.sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
 }

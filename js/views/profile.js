@@ -765,11 +765,14 @@ export function profileView(ctx, { username, tab = "posts", media = "" } = {}) {
       const load = async () => {
         if (!username) {
           if (!ctx.state.profile) {
+            // A guest tapping the Profile tab gets the sign-in moment, not an
+            // error — browsing everything else stays open without an account.
             root.querySelector("#profile-root").innerHTML = emptyState(
-              "👤",
-              "Not signed in",
-              "Log in to open your profile.",
-              '<button class="btn btn-primary btn-sm" type="button" data-act="login">Log in</button>'
+              "👋",
+              "Sign in to Xacheus",
+              "Create a free account to post videos, follow creators, comment and message — your profile lives here once you do.",
+              '<button class="btn btn-primary btn-sm" type="button" data-act="login">Log in or sign up</button>' +
+                '<a class="btn btn-ghost btn-sm" href="#/discover">Keep browsing as guest</a>'
             );
             root.querySelector("[data-act='login']")?.addEventListener("click", () => ctx.requireAuth());
             return;

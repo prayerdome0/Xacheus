@@ -1,3 +1,36 @@
+# Guest browsing — watch everything without an account
+
+## Date: 2026-08-30
+
+The security rules already let signed-out visitors read public content; this
+pass removes the UI gates that were blocking them. Guests can now watch the
+feed, stories, profiles, comments, sounds and live streams. Interactions
+(like, comment, follow, save, gift, chat, upload) still prompt sign-in, and
+private accounts stay locked by rules, not just by hidden buttons.
+
+- `js/views/home.js` — the story tray is no longer hidden from guests;
+  `renderStoryTray` owns its visibility and hides itself when empty.
+- `js/social.js` — `listActiveStories` gains `everyone` mode: with no follow
+  graph to filter by, guests get every active story Firestore will read
+  (public accounts only; private-account stories stay rule-locked).
+- `js/views/stories.js` — tray + per-owner viewer use `everyone` for guests;
+  the viewer already prompted sign-in for reactions/replies.
+- `js/views/components.js` — **comments modal opens for guests**: the thread
+  is fully readable, the composer becomes a "Log in to comment" button, and
+  reply/like/report still prompt sign-in. Delete stays owner-only
+  (`canDelete` now also requires being signed in).
+- `js/views/profile.js` — the Profile tab for a guest is a proper sign-in
+  card ("Keep browsing as guest" included) instead of a terse error.
+- `styles.css` — `.comment-form--guest` for the single-button composer.
+- Already guest-ready (verified, unchanged): For You feed, Following tab
+  (login empty-state), Discover search/trending, public profiles + media
+  viewer, Music catalogue + player, Live watching (chat shows "Log in to
+  chat, gift and react"), share-by-link, report/login prompts everywhere.
+- Not changed on purpose: `bumpVideoView` is a write, so a guest's playback
+  does not increment view counts — anonymous counter writes would be
+  trivially abusable.
+- `sw.js` cache bumped `v10 → v11` (all touched modules are precached).
+
 # Mobile design pass — phones first, safe areas everywhere
 
 ## Date: 2026-08-30
