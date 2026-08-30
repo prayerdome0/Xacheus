@@ -1,11 +1,13 @@
 rules_version = '2';
 
-// Xacheus — Production-oriented Firestore rules (Phase 1: video platform)
+// Xacheus — Production-oriented Firestore rules (short video platform).
 // Deploy: firebase deploy --only firestore:rules
 // Principles:
 // - public read for videos, users, sounds, hashtags so guests can browse
 // - writes scoped to owner, counters via ±1 only where needed
 // - role field cannot be escalated by client; only admin can change roles
+// - banned accounts cannot publish new content (see canWrite / isBanned)
+// - reports are create-only for users and admin-read/resolvable
 // - never expose secrets; all protection here
 
 service cloud.firestore {
@@ -21,7 +23,15 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
     function isAdmin() {
-      return signedIn() && existingUser().role == "admin";
+      return signedIn() && existingUser() != null && existingUser().role == "admin";
+    }
+    function isBanned() {
+      // Safe for brand-new users whose doc may not exist yet.
+      return signedIn() && existingUser() != null && existingUser().banned == true;
+    }
+    // The gate for all content writes by an established user: signed-in AND not banned.
+    function canWrite() {
+      return signedIn() && !isBanned();
     }
     function shortText(v, max) {
       return v is string && v.size() <= max;
@@ -33,7 +43,8 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if true;
 
-      allow create: if isSelf(uid)
+      allow create: if signedIn()
+        && request.auth.uid == uid
         && request.resource.data.uid == uid
         && request.resource.data.keys().hasAll(['uid','username','displayName','createdAt'])
         && request.resource.data.username is string
@@ -43,22 +54,22 @@ service cloud.firestore {
         && (!('role' in request.resource.data) || request.resource.data.role in ["user","creator","business","church"]);
 
       // Owners can edit profile but not role, uid, counters directly
-      allow update: if isSelf(uid)
+      allow update: if canWrite()
+        && request.auth.uid == uid
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['displayName','displayNameLower','username','bio','location',
                        'website','photoURL','coverURL','theme','private','updatedAt']);
 
-      // Admin can change role and verified status
+      // Admin can change role, verified, and ban state
       allow update: if isAdmin()
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['role','verified','updatedAt'])
+             .hasOnly(['role','verified','banned','updatedAt'])
         && request.resource.data.role in ["user","creator","business","church","admin"];
 
-      // Counters: any signed-in user can bump by ±1 (follow, video count etc)
-      // This is needed because follow bumps other user's counter.
-      allow update: if signedIn()
+      // Counters: any signed-in (non-banned) user can bump by ±1
+      allow update: if canWrite()
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.diff(resource.data).affectedKeys()
              .hasOnly(['followersCount','followingCount','videosCount','postsCount','likesCount']);
@@ -66,23 +77,29 @@ service cloud.firestore {
       allow delete: if isSelf(uid) || isAdmin();
 
       match /likedVideos/{videoId} {
-        allow read, write: if isSelf(uid);
+        allow read: if isSelf(uid);
+        allow write: if isSelf(uid);
       }
       match /savedVideos/{videoId} {
-        allow read, write: if isSelf(uid);
+        allow read: if isSelf(uid);
+        allow write: if isSelf(uid);
       }
       match /favoriteSounds/{soundId} {
-        allow read, write: if isSelf(uid);
+        allow read: if isSelf(uid);
+        allow write: if isSelf(uid);
       }
       // legacy liked/saved for posts
       match /liked/{postId} {
-        allow read, write: if isSelf(uid);
+        allow read: if isSelf(uid);
+        allow write: if isSelf(uid);
       }
       match /reposted/{postId} {
-        allow read, write: if isSelf(uid);
+        allow read: if isSelf(uid);
+        allow write: if isSelf(uid);
       }
       match /saved/{postId} {
-        allow read, write: if isSelf(uid);
+        allow read: if isSelf(uid);
+        allow write: if isSelf(uid);
       }
     }
 
@@ -101,11 +118,11 @@ service cloud.firestore {
     match /videos/{videoId} {
       allow read: if true;
 
-      allow create: if signedIn()
+      allow create: if canWrite()
         && request.resource.data.uid == request.auth.uid
         && shortText(request.resource.data.caption, 1000)
         && (
-          // video post
+          // video post (url is a Firebase Storage download URL)
           (request.resource.data.videoUrl is string && request.resource.data.videoUrl.size() > 0)
           // photo post (1-6 images)
           || (request.resource.data.mediaType == 'photo'
@@ -118,7 +135,7 @@ service cloud.firestore {
         && request.resource.data.viewCount == 0;
 
       // Author can edit caption, hashtags, thumbnail, etc. but not counters
-      allow update: if signedIn()
+      allow update: if canWrite()
         && (
           (resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
@@ -127,14 +144,14 @@ service cloud.firestore {
                .hasOnly(['likeCount','commentCount','viewCount','shareCount'])
         );
 
-      allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow delete: if canWrite() && (resource.data.uid == request.auth.uid || isAdmin());
 
       match /comments/{commentId} {
         allow read: if true;
-        allow create: if signedIn()
+        allow create: if canWrite()
           && request.resource.data.uid == request.auth.uid
           && shortText(request.resource.data.text, 500);
-        allow delete: if signedIn()
+        allow delete: if canWrite()
           && (resource.data.uid == request.auth.uid
               || get(/databases/$(database)/documents/videos/$(videoId)).data.uid == request.auth.uid
               || isAdmin());
@@ -146,7 +163,7 @@ service cloud.firestore {
     /* ---------------------------------------------------------------- */
     match /sounds/{soundId} {
       allow read: if true;
-      allow create: if signedIn()
+      allow create: if canWrite()
         && request.resource.data.artistUid == request.auth.uid
         && shortText(request.resource.data.title, 80)
         && request.resource.data.audioUrl is string
@@ -154,7 +171,7 @@ service cloud.firestore {
         && request.resource.data.useCount == 0;
 
       // Owner or admin can edit; anyone signed in can bump counters
-      allow update: if signedIn()
+      allow update: if canWrite()
         && (
           (resource.data.artistUid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
@@ -164,7 +181,7 @@ service cloud.firestore {
           || isAdmin()
         );
 
-      allow delete: if signedIn() && (resource.data.artistUid == request.auth.uid || isAdmin());
+      allow delete: if canWrite() && (resource.data.artistUid == request.auth.uid || isAdmin());
     }
 
     /* ---------------------------------------------------------------- */
@@ -173,12 +190,12 @@ service cloud.firestore {
     match /follows/{uid} {
       match /following/{targetUid} {
         allow read: if true;
-        allow create, delete: if isSelf(uid);
+        allow create, delete: if canWrite() && request.auth.uid == uid;
       }
       match /followers/{followerUid} {
         allow read: if true;
-        allow create: if signedIn() && followerUid == request.auth.uid;
-        allow delete: if signedIn() && (followerUid == request.auth.uid || isSelf(uid));
+        allow create: if canWrite() && followerUid == request.auth.uid;
+        allow delete: if canWrite() && (followerUid == request.auth.uid || request.auth.uid == uid);
       }
     }
 
@@ -187,7 +204,7 @@ service cloud.firestore {
     /* ---------------------------------------------------------------- */
     match /notifications/{nid} {
       allow read: if signedIn() && resource.data.toUid == request.auth.uid;
-      allow create: if signedIn()
+      allow create: if canWrite()
         && request.resource.data.fromUid == request.auth.uid
         && request.resource.data.toUid != request.auth.uid
         && request.resource.data.type in ['like','comment','follow','mention','repost','message','gift']
@@ -195,7 +212,7 @@ service cloud.firestore {
       allow update: if signedIn()
         && resource.data.toUid == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
-      allow delete: if signedIn() && resource.data.toUid == request.auth.uid;
+      allow delete: if canWrite() && resource.data.toUid == request.auth.uid;
     }
 
     /* ---------------------------------------------------------------- */
@@ -203,18 +220,38 @@ service cloud.firestore {
     /* ---------------------------------------------------------------- */
     match /hashtags/{tag} {
       allow read: if true;
-      allow create, update: if signedIn();
+      allow create, update: if canWrite();
       allow delete: if false;
     }
 
     match /posts/{postId} {
       allow read: if true;
       allow create: if false; // legacy, no new posts via old collection
-      allow update, delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow update, delete: if canWrite() && resource.data.uid == request.auth.uid;
       match /comments/{cid} {
         allow read: if true;
         allow create, delete: if false;
       }
+    }
+
+    /* ---------------------------------------------------------------- */
+    /* reports (content moderation)                                      */
+    /* ---------------------------------------------------------------- */
+    match /reports/{reportId} {
+      allow read: if signedIn()
+        && (resource.data.reporterUid == request.auth.uid || isAdmin());
+      allow create: if canWrite()
+        && request.resource.data.reporterUid == request.auth.uid
+        && request.resource.data.targetType in ['video','user','comment','sound','live']
+        && shortText(request.resource.data.reason, 160)
+        && request.resource.data.details is string
+        && request.resource.data.details.size() <= 500
+        && request.resource.data.status == 'open'
+        && request.resource.data.resolvedBy == '';
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status','resolvedBy','resolvedAt']);
+      allow delete: if isAdmin();
     }
 
     /* ---------------------------------------------------------------- */
@@ -229,7 +266,7 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin() || (signedIn() && request.resource.data.uid == request.auth.uid);
       match /sermons/{sid} {
         allow read: if true;
-        allow write: if signedIn() && get(/databases/$(database)/documents/churches/$(id)).data.uid == request.auth.uid;
+        allow write: if canWrite() && get(/databases/$(database)/documents/churches/$(id)).data.uid == request.auth.uid;
       }
     }
     match /products/{id} {
@@ -238,12 +275,12 @@ service cloud.firestore {
     }
 
     /* ---------------------------------------------------------------- */
-    /* lives (client-only live streaming via Cloudinary segments)        */
+    /* lives (client-only live streaming via Firebase Storage segments)  */
     /* ---------------------------------------------------------------- */
     match /lives/{liveId} {
       allow read: if true;
 
-      allow create: if signedIn()
+      allow create: if canWrite()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.status == 'live'
         && shortText(request.resource.data.title, 120)
@@ -252,7 +289,7 @@ service cloud.firestore {
         && request.resource.data.segmentCount == 0;
 
       // Broadcaster controls stream state; signed-in viewers may bump counters only.
-      allow update: if signedIn()
+      allow update: if canWrite()
         && (
           (resource.data.uid == request.auth.uid
             && request.resource.data.diff(resource.data).affectedKeys()
@@ -261,12 +298,12 @@ service cloud.firestore {
                .hasOnly(['viewerCount','giftCount','giftCoins','likeCount','shareCount'])
         );
 
-      allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isAdmin());
+      allow delete: if canWrite() && (resource.data.uid == request.auth.uid || isAdmin());
 
       match /segments/{sid} {
         allow read: if true;
         // Only the broadcaster publishes segments.
-        allow create: if signedIn()
+        allow create: if canWrite()
           && request.resource.data.seq is number
           && request.resource.data.url is string
           && request.resource.data.url.size() > 0
@@ -276,13 +313,13 @@ service cloud.firestore {
 
       match /chat/{mid} {
         allow read: if true;
-        allow create: if signedIn()
+        allow create: if canWrite()
           && request.resource.data.uid == request.auth.uid
           && request.resource.data.text is string
           && request.resource.data.text.size() > 0
           && request.resource.data.text.size() <= 300;
         // Viewer can delete own message; stream host or admin can moderate.
-        allow delete: if signedIn()
+        allow delete: if canWrite()
           && (resource.data.uid == request.auth.uid
               || get(/databases/$(database)/documents/lives/$(liveId)).data.uid == request.auth.uid
               || isAdmin());
@@ -292,7 +329,7 @@ service cloud.firestore {
       // Paid gifts — anyone signed in can send; immutable once written.
       match /gifts/{gid} {
         allow read: if true;
-        allow create: if signedIn()
+        allow create: if canWrite()
           && request.resource.data.uid == request.auth.uid
           && request.resource.data.giftId is string
           && request.resource.data.coins is number
@@ -306,7 +343,7 @@ service cloud.firestore {
       // Floating reactions — high frequency, free, immutable.
       match /reactions/{rid} {
         allow read: if true;
-        allow create: if signedIn()
+        allow create: if canWrite()
           && request.resource.data.uid == request.auth.uid
           && request.resource.data.emoji is string
           && request.resource.data.emoji.size() <= 8;
@@ -322,7 +359,7 @@ service cloud.firestore {
         return signedIn() && request.auth.uid in data.participants;
       }
       allow read: if participantOf(resource.data);
-      allow create: if signedIn()
+      allow create: if canWrite()
         && request.auth.uid in request.resource.data.participants
         && request.resource.data.participants.size() == 2
         && request.resource.data.lastMessage is string

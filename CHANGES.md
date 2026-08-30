@@ -124,3 +124,42 @@ All changes are backward compatible:
 - Logo files maintain the same names and locations
 - JavaScript changes only enhance existing functionality
 - No breaking changes to the API or user flow
+
+# Xacheus — Production Upgrade (Firebase Storage, Moderation, Branding)
+
+## Date: 2026-08-30
+
+## What changed
+
+### 1. Media moved from Cloudinary to Firebase Storage
+- New `js/storage.js`: `uploadImage` / `uploadVideo` / `uploadAudio` / `removeObject`.
+- All call sites (create video/photo, profile avatar/cover, sounds, live segments/posters) now upload to Firebase Storage under `uploads/{uid}/{kind}/{file}`.
+- `uploadVideo` now generates a real client-side poster frame and uploads it to `uploads/{uid}/thumbnails`, so video cards always have a thumbnail.
+- Removed `js/cloudinary.js`; `cloudinaryPublicId` field replaced by `storagePath`.
+- New `storage.rules` (production): public read, owner-scoped writes matched by the uid in the path, content-type + size limits. `firebase.json` now targets `storage`.
+
+### 2. Branding uses only logo.png / logo1.png
+- Removed all text wordmark branding from the topbar (`brand-text` span removed, replaced by the `logo1.png` wordmark image).
+- Boot screen, sidebar, auth hero and social preview image now use `assets/logo.png` (square mark) and `assets/logo1.png` (wordmark).
+- The SVG `content: url(...)` override in `.brand-logo` was removed so the element uses its real `src`.
+- Added optimized web copies: `assets/logo.png` (320×320) and `assets/logo1.png` (768×284). Root `logo.png`/`logo1.png` are ignored by hosting.
+
+### 3. Content reporting + admin moderation
+- **Report** actions added to every video card, profile page and sound detail (new reusable `openReportModal` in `js/views/components.js`).
+- Reports are written to `reports/{id}` with a one-open-report-per-user-per-target guard (`js/data.js` `submitReport`).
+- Admin panel expanded (`js/views/admin.js`): Users (role, verify, **ban/unban**), Videos, **Comments** (cross-video collection-group + delete), **Reports** (review/resolve/reopen/delete), Sounds, **Stats** (platform counts).
+- Firestore rules gained `canWrite`/`isBanned` so **banned accounts cannot post, comment, follow, notify, go live or report**; the `reports` collection is create-by-user, admin-read/resolvable.
+- Added `storage.rules` and wired `firebase deploy --only firestore:rules,firestore:indexes,storage,hosting`.
+
+### 4. Upload hardening
+- Client-side file validation (type + size) added to avatar/cover and kept for video/photo/sound uploads.
+- `uploadImage` now defaults to `strict: true` so a failed upload can never persist a `blob:` URL.
+- Deleting a video or sound also best-effort removes its media object from Storage.
+
+## Deployment
+
+```bash
+firebase use xacheus-7c98b
+firebase deploy --only firestore:rules,firestore:indexes,storage,hosting
+```
+Enable **Firebase Storage** in the console before first deploy.

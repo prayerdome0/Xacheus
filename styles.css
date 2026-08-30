@@ -258,13 +258,25 @@ p {
   width: 32px;
   height: 32px;
   flex: none;
-  /* The mark is two-tone: its navy half vanishes on the dark chrome, so the
-     light-ink build is the default and the light theme swaps back to navy.
-     The element's src is the dark-theme build, so this degrades gracefully. */
-  content: url("assets/icon-dark.svg");
+  object-fit: contain;
+  border-radius: 6px;
 }
-html.light .brand-logo {
-  content: url("assets/icon.svg");
+/* Wide wordmark build — keeps its aspect ratio in the topbar/sidebar. */
+.brand-wordmark {
+  width: 118px;
+  height: 32px;
+  border-radius: 4px;
+}
+@media (max-width: 767px) {
+  .brand-wordmark {
+    width: 96px;
+    height: 27px;
+  }
+}
+/* Boot-screen mark is 56px; keep it larger than the default 32px brand mark. */
+.brand-logo.boot-mark {
+  width: 56px;
+  height: 56px;
 }
 .brand-lg {
   font-size: 1.5rem;
@@ -272,6 +284,11 @@ html.light .brand-logo {
 .brand-lg .brand-logo {
   width: 46px;
   height: 46px;
+  border-radius: 9px;
+}
+.brand-auth-logo {
+  width: 224px;
+  height: 82px;
 }
 
 /* ------------------------------------------------------------------ */
@@ -3590,4 +3607,119 @@ html.is-offline .nav-create {
   .boot-mark {
     animation: none;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Report / moderation UI + admin additions                            */
+/* ------------------------------------------------------------------ */
+
+/* Report flag overlay on video cards (top-left, clear of volume). */
+.video-report {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 0;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+.video-report:hover {
+  background: rgba(0, 0, 0, 0.65);
+  transform: scale(1.05);
+}
+.video-report svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.notice-info {
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  line-height: 1.5;
+}
+
+/* Admin rows */
+.admin-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+.admin-row-main > div {
+  min-width: 0;
+}
+.admin-row-main .avatar {
+  flex: none;
+}
+.admin-row-main strong {
+  font-size: 0.95rem;
+}
+.admin-row-main em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 0.87rem;
+}
+.admin-row-main small {
+  color: var(--faint);
+}
+.admin-row-main code {
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+.admin-row.is-unread {
+  border-left: 3px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 7%, var(--surface-2));
+}
+.badge-red { background: var(--danger); color: #fff; }
+.badge-open { background: var(--warn); color: #10131c; }
+.badge-resolved { background: var(--surface-3); color: var(--muted); }
+
+/* Stats */
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  padding: 20px 16px;
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+.stat-card.stat-warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+}
+.stat-value {
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-card.stat-warn .stat-value { color: var(--warn); }
+.stat-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 600;
 }

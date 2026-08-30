@@ -3,20 +3,24 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
+  "storage": {
+    "rules": "storage.rules"
+  },
   "hosting": {
     "public": ".",
     "ignore": [
       "firebase.json",
       "firestore.rules",
       "firestore.indexes.json",
+      "storage.rules",
       "README.md",
       "CHANGES.md",
       "package.json",
+      "logo.png",
+      "logo1.png",
       "**/.*",
       "**/node_modules/**",
-      "tools/**",
-      "logo.png",
-      "logo1.png"
+      "tools/**"
     ],
     "rewrites": [{ "source": "**", "destination": "/index.html" }],
     "headers": [

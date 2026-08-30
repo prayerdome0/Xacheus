@@ -1,8 +1,8 @@
-# Xacheus — Short Video Platform (Phase 1)
+# Xacheus — Short Video Platform
 
-Xacheus is a **real production-oriented short vertical video platform** (TikTok-style), not a mockup. Built with vanilla JS, Firebase Auth, Firestore and Cloudinary for media.
+Xacheus is a **real production-oriented short vertical video platform** (TikTok-style), not a mockup. Built with vanilla JS, Firebase Auth, Firestore and **Firebase Storage** for media.
 
-This is **Phase 1** — real auth, profiles with roles, vertical video feed, Cloudinary uploads, likes, comments, follows, notifications, direct messages, **live streaming (Go Live)**, **photo posts**, create (record/upload), captions, hashtags, and a **free sounds system** (no copyrighted YouTube tracks).
+It has real auth, profiles with roles, vertical video feed, **Firebase Storage uploads**, likes, comments, follows, notifications, direct messages, **live streaming (Go Live)**, **photo posts**, create (record/upload), captions, hashtags, a **free sounds system** (no copyrighted YouTube tracks), **content reporting + admin moderation**, and **image assets only from `logo.png` / `logo1.png`** (no text wordmark branding).
 
 ---
 
@@ -15,15 +15,15 @@ This is **Phase 1** — real auth, profiles with roles, vertical video feed, Clo
 - Handle reservation via `usernames/{handle}` — unique, lowercase, 3-20 chars
 - Admin panel visible **only if Firestore `role == "admin"`** (client checks `isAdminProfile`, rules enforce admin-only writes)
 
-### Media — Firebase + Cloudinary
-- Cloud name: `dhad95cch`
-- Upload preset: `xacheus` (unsigned, no extra folders per instruction)
-- Uses `auto` resource type so images, videos, audio all work via same preset
-- No secrets in frontend — only cloudName + preset
-- `js/cloudinary.js` has:
-  - `uploadImage(file)` → URL
-  - `uploadVideo(file)` → { url, thumbnailUrl, duration, width, height, publicId }
-  - `uploadAudio(file)` → { url, duration }
+### Media — Firebase Storage
+- All user media (images, photos, videos, audio, live segments, thumbnails) uploads to **Firebase Storage** under `uploads/{uid}/{kind}/{file}`.
+- `js/storage.js` has:
+  - `uploadImage(file, { strict })` → URL (throws when `strict`, default true)
+  - `uploadVideo(file)` → { url, path, duration, width, height, thumbnailUrl }
+  - `uploadAudio(file)` → { url, path, duration }
+  - `removeObject(path)` → cleanup on delete
+- Client-generated video poster frames are uploaded to `uploads/{uid}/thumbnails`, so video cards always get a real thumbnail.
+- No secrets in frontend. Access is controlled by `storage.rules` (deployed with `firebase deploy`).
 
 ### Video Feed — No Fake Videos
 - Collection `videos/{videoId}` — real Firestore docs only
@@ -73,7 +73,7 @@ This is **Phase 1** — real auth, profiles with roles, vertical video feed, Clo
 ### Profiles
 - `/#/u/{username}` — cover, avatar, role badge, verified, bio, location, website, followers/following/videos/likes counts
 - Tabs: Videos (user's videos), Liked (likedVideos), Followers, Following
-- Edit profile: avatar/cover via Cloudinary, displayName, handle (with reservation), bio, location, website — role change only via admin
+- Edit profile: avatar/cover via Firebase Storage, displayName, handle (with reservation), bio, location, website — role change only via admin
 
 ### Notifications / Inbox
 - `/#/notifications` — likes, comments, follows, mentions — unread dot, mark read after 1.5s, tabs all/likes/comments/follows
@@ -92,7 +92,7 @@ This is **Phase 1** — real auth, profiles with roles, vertical video feed, Clo
 - `shareCount` increments on Web Share API success (mobile share sheet) or link copy fallback
 
 ### Live Streaming (Go Live)
-- **Client-only architecture** — no streaming service needed: `MediaRecorder` records ~4s segments, each is uploaded to Cloudinary as an independent WebM, and Firestore tracks the segment cursor (`lives/{liveId}.latestSeq`)
+- **Client-only architecture** — no streaming service needed: `MediaRecorder` records ~4s segments, each is uploaded to Firebase Storage as an independent WebM, and Firestore tracks the segment cursor (`lives/{liveId}.latestSeq`)
 - `/#/live` — list of active broadcasts (LIVE badge, viewer counts, poster thumbnails); streams whose broadcaster vanished (no heartbeat for 90s) are hidden automatically
 - `/#/live/go` — broadcaster: live camera preview, optional title, on-air clock, viewer count, chunk counter, and live chat; heartbeat every 20s; End Stream (plus best-effort cleanup on tab close)
 - `/#/live/{id}` — viewer: segment playlist player (joins ~1 segment behind live), tap-for-sound, drift protection (skips ahead if the broadcaster outpaces playback), live chat, and replay of published segments after the stream ends
@@ -107,10 +107,17 @@ This is **Phase 1** — real auth, profiles with roles, vertical video feed, Clo
 - Rules: photo branch requires `mediaType == 'photo'` and 1–6 `images` instead of a `videoUrl`
 - `uploadImage(..., { strict: true })` — photo posts and live posters fail hard instead of silently storing local blob URLs
 
-### Admin Panel
+### Content Reporting + Admin Moderation
+- Every video card, profile and sound has a **Report** action. Reports are written to `reports/{id}` (one open report per user per target) for the moderation team.
 - `/#/admin` — visible only if `profile.role == "admin"`
-- Tabs: Users (change role, verify/unverify), Videos (delete), Sounds (delete)
-- Rules: only admin can change `role`, `verified`, delete any video/sound
+- Tabs:
+  - **Users** — change role, verify/unverify, **ban/unban** accounts
+  - **Videos** — delete any video
+  - **Comments** — collection-group list of comments across all videos; delete any
+  - **Reports** — review open reports, link to the target, resolve/reopen, delete
+  - **Sounds** — delete any sound
+  - **Stats** — platform counts (users, videos, comments, sounds, lives, notifications, open reports, banned accounts)
+- Rules: only admin can change `role`, `verified`, `banned`, delete any video/sound/comment, resolve reports; **banned accounts cannot post, comment, follow, notify, go live or report**.
 
 ### Settings
 - Theme: dark/light/system persisted
@@ -133,13 +140,18 @@ videos/{videoId}
   - uid, username, displayName, photoURL
   - mediaType: "video" | "photo", images[] (photo posts, 1-6)
   - videoUrl, thumbnailUrl, caption, hashtags[], mentions[]
-  - soundId, soundTitle, soundUrl, duration, width, height, cloudinaryPublicId
+  - soundId, soundTitle, soundUrl, duration, width, height, storagePath
   - likeCount, commentCount, viewCount, shareCount, isPublic, createdAt, updatedAt
   - comments/{cid}: uid, username, displayName, photoURL, text, createdAt
 
 sounds/{soundId}
-  - title, artist, artistUid, audioUrl, coverUrl, duration, genre, useCount
+  - title, artist, artistUid, audioUrl, storagePath, coverUrl, duration, genre, useCount
   - isFree, isOriginal, createdAt, lastUsedAt
+
+reports/{reportId}
+  - reporterUid, reporterName, reporterUsername
+  - targetType (video|user|comment|sound|live), targetId, targetOwnerUid
+  - reason, details, status (open|resolved), resolvedBy, resolvedAt, createdAt
 
 follows/{uid}/following/{targetUid}
 follows/{uid}/followers/{followerUid}
@@ -153,7 +165,7 @@ lives/{liveId}
   - uid, username, displayName, photoURL, title
   - status (live|ended), viewerCount, latestSeq, segmentCount
   - thumbnailUrl, startedAt, lastPingAt (heartbeat), endedAt
-  - segments/{sid}: seq, url (Cloudinary WebM), duration, createdAt
+  - segments/{sid}: seq, url (Firebase Storage WebM), duration, createdAt
   - chat/{mid}: uid, username, displayName, photoURL, text, createdAt
 
 conversations/{cid}  (cid = sorted "uidA__uidB")
@@ -180,8 +192,9 @@ conversations/{cid}  (cid = sorted "uidA__uidB")
 Deploy:
 ```bash
 firebase use xacheus-7c98b
-firebase deploy --only firestore:rules,firestore:indexes
+firebase deploy --only firestore:rules,firestore:indexes,storage,hosting
 ```
+(Enable **Firebase Storage** in the console first. Media writes are owner-scoped by `storage.rules`.)
 
 Indexes in `firestore.indexes.json`:
 - conversations: participants contains+lastMessageAt desc
@@ -205,18 +218,18 @@ npm run dev   # http://0.0.0.0:5173
 
 ---
 
-## Cloudinary
+## Firebase Storage
 
-- Cloud: `dhad95cch`
-- Preset: `xacheus` unsigned
-- Endpoint: `https://api.cloudinary.com/v1_1/dhad95cch/auto/upload`
-- No folders per instruction
+- Bucket: the project's default bucket (`xacheus-7c98b.firebasestorage.app`).
+- Media lives at `uploads/{uid}/{kind}/{file}`.
+- Storage rules in `storage.rules` allow public read and owner-scoped writes
+  (matched against the uploader's uid in the path), with content-type + size limits.
 
 ---
 
 ## Roadmap
 
-- **Phase 1 (now)**: Auth, profiles+roles, video feed, Cloudinary, likes/comments/follows/notifications, create (record/upload), sounds (free)
+- **Phase 1 (now)**: Auth, profiles+roles, video feed, Firebase Storage, likes/comments/follows/notifications, create (record/upload), sounds (free)
 - **Phase 2**: Discover (trending videos/sounds), opportunities (jobs/services posted by admins), churches/communities (sermons/updates)
 - **Phase 3**: Business accounts, advertising
 - **Phase 4**: Marketplace — discover products from videos

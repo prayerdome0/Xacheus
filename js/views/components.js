@@ -9,9 +9,10 @@ import {
   getSavedVideoIds,
   isFollowing,
   toggleFollow,
+  submitReport,
+  REPORT_REASONS,
 } from "../data.js";
 import { avatar, esc, formatCount, gradientFor, timeAgo, toast, openModal, confirmDialog, copyText, richText } from "../ui.js";
-import { uploadAudio } from "../cloudinary.js";
 
 export function liveThumb(live) {
   if (live?.thumbnailUrl) return `<img src="${esc(live.thumbnailUrl)}" alt="" loading="lazy" />`;
@@ -65,6 +66,10 @@ export function videoCardHtml(video, { liked = false, saved = false, isFollowing
   <article class="video-card ${isPhoto ? "is-photo" : ""}" data-video-id="${esc(video.id)}" tabindex="0">
     <div class="video-wrap">
       ${mediaHtml}
+
+      <button class="video-report" type="button" data-act="report" aria-label="Report" title="Report">
+        <svg viewBox="0 0 24 24"><path d="M5 3v18M5 4h11l-1.5 3L16 10H5"/></svg>
+      </button>
 
       <div class="video-right-actions">
         <a class="action-avatar" href="#/u/${esc(video.username)}" data-act="profile">
@@ -246,6 +251,17 @@ export function bindVideoActions(root, ctx) {
       return;
     }
 
+    if (act === "report") {
+      if (!ctx.state.profile) return ctx.requireAuth();
+      openReportModal(ctx, {
+        targetType: "video",
+        targetId: videoId,
+        targetOwnerUid: video.uid || "",
+        targetLabel: video.caption ? `@${video.username}: ${video.caption.slice(0, 80)}` : `@${video.username}'s video`,
+      });
+      return;
+    }
+
     if (act === "follow") {
       if (!ctx.state.profile) return ctx.requireAuth();
       if (video.uid === ctx.state.profile.uid) return;
@@ -343,6 +359,66 @@ function openCommentsModal(ctx, video) {
       });
 
       root.addEventListener("modal:close", () => unsub?.());
+    },
+  });
+}
+
+/**
+ * Reusable content-moderation report dialog. Used from video cards,
+ * profiles, sounds and the comments modal.
+ */
+export function openReportModal(ctx, { targetType, targetId, targetOwnerUid = "", targetLabel = "" }) {
+  if (!ctx.state.profile) return ctx.requireAuth();
+  const reasons = REPORT_REASONS || [];
+  openModal({
+    title: "Report",
+    size: "sm",
+    body: `
+      <form id="report-form" class="form-grid">
+        <p class="modal-text">Report this ${esc(targetType)}. Our moderation team reviews every report.</p>
+        ${targetLabel ? `<p class="notice-info">${esc(targetLabel)}</p>` : ""}
+        <label class="field">
+          <span>Reason</span>
+          <select id="report-reason" required>
+            <option value="" disabled selected>Choose a reason…</option>
+            ${reasons.map((r) => `<option value="${esc(r)}">${esc(r)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Details <em>(optional)</em></span>
+          <textarea id="report-details" rows="3" maxlength="500" placeholder="Anything that helps us review this…"></textarea>
+        </label>
+        <button class="btn btn-primary btn-block" type="submit">Submit report</button>
+      </form>`,
+    onMount(root, close) {
+      const form = root.querySelector("#report-form");
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const reason = root.querySelector("#report-reason").value;
+        const details = root.querySelector("#report-details").value.trim();
+        if (!reason) return toast("Pick a reason to report.", "error");
+        const btn = form.querySelector("button[type='submit']");
+        btn.disabled = true;
+        btn.textContent = "Submitting…";
+        try {
+          await submitReport({
+            reporterUid: ctx.state.profile.uid,
+            reporterName: ctx.state.profile.displayName,
+            reporterUsername: ctx.state.profile.username,
+            targetType,
+            targetId,
+            targetOwnerUid,
+            reason,
+            details,
+          });
+          toast("Thanks — our team will review this.", "success", 4000);
+          close();
+        } catch (error) {
+          toast(error?.message || "Could not submit report.", "error", 5000);
+          btn.disabled = false;
+          btn.textContent = "Submit report";
+        }
+      });
     },
   });
 }

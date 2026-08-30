@@ -2,9 +2,9 @@
 
 import { getProfileByUsername, watchUserVideos, getFollowers, getFollowing, isFollowing, toggleFollow, watchProfile, isAdminProfile } from "../data.js";
 import { avatar, esc, formatCount, emptyState, toast, openModal } from "../ui.js";
-import { uploadImage } from "../cloudinary.js";
+import { uploadImage } from "../storage.js";
 import { updateProfile, changeUsername } from "../data.js";
-import { postThumb } from "./components.js";
+import { postThumb, openReportModal } from "./components.js";
 
 export function profileView(ctx, { username, tab = "videos" } = {}) {
   const isOwn = ctx.state.profile && ctx.state.profile.username === username;
@@ -41,7 +41,7 @@ export function profileView(ctx, { username, tab = "videos" } = {}) {
         <div class="profile-identity">
           <span class="avatar avatar-xl">${avatar(profile, "xl")}</span>
           <div class="profile-actions">
-            ${isOwnProfile ? `<button class="btn btn-outline btn-sm" type="button" data-act="edit">Edit profile</button>` : `<button class="btn btn-primary btn-sm" type="button" data-act="follow" data-uid="${esc(profile.uid)}">Follow</button><a class="btn btn-outline btn-sm" href="#/dm/${esc(profile.username)}">Message</a><a class="btn btn-outline btn-sm" href="#/discover?q=${esc(profile.username)}">Videos</a>`}
+            ${isOwnProfile ? `<button class="btn btn-outline btn-sm" type="button" data-act="edit">Edit profile</button>` : `<button class="btn btn-primary btn-sm" type="button" data-act="follow" data-uid="${esc(profile.uid)}">Follow</button><a class="btn btn-outline btn-sm" href="#/dm/${esc(profile.username)}">Message</a><a class="btn btn-outline btn-sm" href="#/discover?q=${esc(profile.username)}">Videos</a><button class="btn btn-ghost btn-sm" type="button" data-act="report">Report</button>`}
           </div>
         </div>
 
@@ -88,6 +88,14 @@ export function profileView(ctx, { username, tab = "videos" } = {}) {
 
     container.querySelector("[data-act='back']")?.addEventListener("click", () => history.back());
     container.querySelector("[data-act='edit']")?.addEventListener("click", () => openEditProfile(ctx, profile));
+    container.querySelector("[data-act='report']")?.addEventListener("click", () => {
+      openReportModal(ctx, {
+        targetType: "user",
+        targetId: profile.uid,
+        targetOwnerUid: profile.uid,
+        targetLabel: `@${profile.username} (${profile.displayName})`,
+      });
+    });
     container.querySelector("[data-act='follow']")?.addEventListener("click", async (e) => {
       if (!ctx.state.profile) return ctx.requireAuth();
       const btn = e.target;
@@ -243,23 +251,42 @@ export function profileView(ctx, { username, tab = "videos" } = {}) {
         modalRoot.querySelector(".edit-avatar").addEventListener("click", () => avatarInput.click());
         modalRoot.querySelector(".edit-cover").addEventListener("click", () => coverInput.click());
 
+        const validateImage = (file) => {
+          if (!file) return "Choose an image file.";
+          if (!file.type.startsWith("image/")) return "Please pick an image file.";
+          if (file.size > 10 * 1024 * 1024) return "Images must be under 10MB.";
+          return null;
+        };
+
         avatarInput.addEventListener("change", async () => {
           const file = avatarInput.files?.[0];
-          if (!file) return;
+          const problem = validateImage(file);
+          if (problem) return toast(problem, "error");
           toast("Uploading avatar…", "info");
-          const url = await uploadImage(file);
-          newPhotoURL = url;
-          modalRoot.querySelector(".edit-avatar").innerHTML = `<img src="${esc(url)}" alt="Avatar" style="width:60px;height:60px;border-radius:50%;object-fit:cover" /><span class="edit-overlay">Change</span><input type="file" id="avatar-input" accept="image/*" hidden />`;
-          toast("Avatar updated — save to keep", "success");
+          try {
+            const url = await uploadImage(file);
+            if (!url) throw new Error("Could not upload avatar.");
+            newPhotoURL = url;
+            modalRoot.querySelector(".edit-avatar").innerHTML = `<img src="${esc(url)}" alt="Avatar" style="width:60px;height:60px;border-radius:50%;object-fit:cover" /><span class="edit-overlay">Change</span><input type="file" id="avatar-input" accept="image/*" hidden />`;
+            toast("Avatar updated — save to keep", "success");
+          } catch (error) {
+            toast(error?.message || "Could not upload avatar.", "error");
+          }
         });
 
         coverInput.addEventListener("change", async () => {
           const file = coverInput.files?.[0];
-          if (!file) return;
+          const problem = validateImage(file);
+          if (problem) return toast(problem, "error");
           toast("Uploading cover…", "info");
-          const url = await uploadImage(file);
-          newCoverURL = url;
-          toast("Cover updated — save to keep", "success");
+          try {
+            const url = await uploadImage(file);
+            if (!url) throw new Error("Could not upload cover.");
+            newCoverURL = url;
+            toast("Cover updated — save to keep", "success");
+          } catch (error) {
+            toast(error?.message || "Could not upload cover.", "error");
+          }
         });
 
         form.addEventListener("submit", async (e) => {
