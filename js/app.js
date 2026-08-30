@@ -13,8 +13,9 @@ import {
   watchProfile,
   isAdminProfile,
 } from "./data.js";
-import { avatar, clear, esc, formatCount, toast } from "./ui.js";
+import { avatar, clear, esc, formatCount, openModal, toast } from "./ui.js";
 import { friendlyAuthError, mountAuth } from "./auth.js";
+import { canInstall, initPwa, isIos, onPwaChange, promptInstall } from "./pwa.js";
 import { homeView } from "./views/home.js";
 import { discoverView } from "./views/discover.js";
 import { createView } from "./views/create.js";
@@ -151,7 +152,7 @@ function buildShell() {
     <header class="topbar">
       <div class="topbar-inner">
         <a class="brand" href="#/home" aria-label="Xacheus home">
-          <img class="brand-logo" src="assets/icon.svg" alt="Xacheus" />
+          <img class="brand-logo" src="assets/icon-dark.svg" alt="Xacheus" />
           <span class="brand-text">Xacheus</span>
         </a>
 
@@ -183,11 +184,15 @@ function buildShell() {
     <div class="layout layout-video">
       <nav class="sidebar sidebar-video" aria-label="Primary">
         <a class="brand sidebar-brand" href="#/home" aria-label="Xacheus home">
-          <img class="brand-logo" src="assets/icon.svg" alt="Xacheus" />
+          <img class="brand-logo" src="assets/icon-dark.svg" alt="Xacheus" />
         </a>
         ${sideNav.map((item) => navItem(item)).join("")}
         <div class="sidebar-me" data-role="sidebar-me"></div>
         <div class="sidebar-foot">
+          <button class="install-btn" type="button" data-act="install" hidden>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+            <span>Install app</span>
+          </button>
           <p>Built in Zambia 🌍</p>
         </div>
       </nav>
@@ -252,6 +257,10 @@ function wireShell() {
       return;
     }
 
+    if (act === "install") {
+      runInstall();
+      return;
+    }
     if (act === "theme") {
       const next = state.theme === "light" ? "dark" : "light";
       ctx.setThemePref(next);
@@ -265,6 +274,18 @@ function wireShell() {
     if (!menu || menu.hidden) return;
     if (event.target.closest("#account-menu") || event.target.closest('[data-act="me"]')) return;
     menu.hidden = true;
+  });
+
+  syncInstallUi();
+}
+
+/** Show the sidebar install button only when an install is actually possible. */
+function syncInstallUi() {
+  const installable = canInstall();
+  document.querySelectorAll('.install-btn[data-act="install"]').forEach((node) => {
+    node.hidden = !installable;
+    // iOS has no native prompt — the button opens instructions instead.
+    node.title = isIos() ? "Add Xacheus to your home screen" : "Install Xacheus";
   });
 }
 
@@ -286,6 +307,7 @@ function toggleAccountMenu(anchor) {
     <a class="account-item" href="#/u/${esc(state.profile.username)}">View profile</a>
     <a class="account-item" href="#/settings">Settings</a>
     ${isAdmin ? `<a class="account-item" href="#/admin">Admin panel</a>` : ""}
+    ${canInstall() ? `<button class="account-item" type="button" data-act="install">Install app</button>` : ""}
     <button class="account-item" type="button" data-act="signout">Sign out</button>`;
 
   menu.hidden = false;
@@ -293,7 +315,10 @@ function toggleAccountMenu(anchor) {
   menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
 
   menu.onclick = async (event) => {
-    if (event.target.closest('[data-act="signout"]')) {
+    if (event.target.closest('[data-act="install"]')) {
+      menu.hidden = true;
+      await runInstall();
+    } else if (event.target.closest('[data-act="signout"]')) {
       menu.hidden = true;
       await signOut(auth).catch(() => {});
       toast("Signed out", "success");
@@ -301,6 +326,28 @@ function toggleAccountMenu(anchor) {
       menu.hidden = true;
     }
   };
+}
+
+/**
+ * Install the PWA. Chrome/Edge/Android get the native prompt; iOS Safari never
+ * fires `beforeinstallprompt`, so it gets the manual Add-to-Home-Screen steps.
+ */
+async function runInstall() {
+  const outcome = await promptInstall();
+  if (outcome === "ios") {
+    openModal({
+      title: "Install Xacheus",
+      body: `
+        <p class="muted">Add Xacheus to your home screen for full-screen video and faster launches.</p>
+        <ol class="install-steps">
+          <li>Tap the <strong>Share</strong> button in Safari's toolbar.</li>
+          <li>Scroll down and choose <strong>Add to Home Screen</strong>.</li>
+          <li>Tap <strong>Add</strong>.</li>
+        </ol>`,
+    });
+  } else if (outcome === "unavailable") {
+    toast("Xacheus is already installed, or your browser can't install apps.", "info");
+  }
 }
 
 function setBadge(key, count) {
@@ -593,6 +640,9 @@ function finishBoot() {
 
 function boot() {
   applyTheme();
+  initPwa();
+  // The install prompt can arrive at any time after load; re-sync when it does.
+  onPwaChange(syncInstallUi);
   window.matchMedia("(prefers-color-scheme: light)").addEventListener?.("change", () => {
     if (state.themePref === "system") applyTheme();
   });
