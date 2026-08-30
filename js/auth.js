@@ -115,7 +115,12 @@ function shell(innerHtml) {
       <section class="auth-hero" aria-label="About Xacheus">
         <div class="auth-hero-inner">
           <a class="brand brand-lg" href="#/home" aria-label="Xacheus home">
-            <img class="brand-logo brand-wordmark brand-auth-logo" src="assets/logo1.png" alt="Xacheus" />
+            <img
+              class="brand-logo brand-wordmark brand-auth-logo"
+              data-logo="wordmark"
+              src="${document.documentElement.classList.contains("light") ? "assets/logo-wordmark.png" : "assets/logo-wordmark-light.png"}"
+              alt="Xacheus"
+            />
           </a>
           <h1>Zambia's short video community.</h1>
           <p class="auth-hero-text">

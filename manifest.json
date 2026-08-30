@@ -11,7 +11,7 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "assets/logo.png",
+      "src": "assets/logo-plate.png",
       "sizes": "320x320",
       "type": "image/png",
       "purpose": "any"

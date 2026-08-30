@@ -3,7 +3,7 @@
  * Caches app shell, never caches Firebase or File Storage.
  */
 
-const CACHE_NAME = "xacheus-video-v7";
+const CACHE_NAME = "xacheus-video-v8";
 const SHELL = [
   "./",
   "./index.html",
@@ -27,8 +27,11 @@ const SHELL = [
   "./js/views/settings.js",
   "./js/views/admin.js",
   "./manifest.json",
-  "./assets/logo.png",
-  "./assets/logo1.png",
+  "./assets/logo-plate.png",
+  "./assets/logo-mark.png",
+  "./assets/logo-mark-dark.png",
+  "./assets/logo-wordmark.png",
+  "./assets/logo-wordmark-light.png",
   "./assets/icon-192.png",
   "./assets/icon-512.png",
   "./assets/icon-maskable-192.png",

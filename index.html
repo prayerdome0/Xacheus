@@ -63,7 +63,7 @@
 
     <div id="boot" class="boot">
       <div class="boot-inner">
-        <img class="brand-logo boot-mark" src="assets/logo.png" alt="Xacheus" width="56" height="56" />
+        <img class="brand-logo boot-mark" data-logo="mark" src="assets/logo-mark-dark.png" alt="Xacheus" width="56" height="56" />
         <p>Loading Xacheus…</p>
         <span class="spinner"></span>
       </div>
@@ -97,6 +97,15 @@
           return document.getElementById("boot");
         }
 
+        function bootMarkSrc() {
+          // Dark logo ink on light surfaces, light ink on dark surfaces.
+          // Default is dark (the <html> starts with class="dark") — if the app
+          // never booted, applyTheme never ran and "dark" is correct.
+          return document.documentElement.classList.contains("light")
+            ? "assets/logo-mark.png"
+            : "assets/logo-mark-dark.png";
+        }
+
         function failure(message, detail) {
           var screen = bootScreen();
           if (reported || !screen || screen.hidden || screen.dataset.failed === "1") return;
@@ -106,7 +115,7 @@
           screen.hidden = false;
           screen.innerHTML =
             '<div class="boot-inner">' +
-            '<img class="brand-logo boot-mark" src="assets/logo.png" alt="Xacheus" width="56" height="56" />' +
+            '<img class="brand-logo boot-mark" data-logo="mark" src="' + bootMarkSrc() + '" alt="Xacheus" width="56" height="56" />' +
             "<h2>Xacheus could not start</h2>" +
             '<p class="boot-error">' +
             String(message).replace(/[<>&]/g, "") +

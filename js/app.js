@@ -59,6 +59,31 @@ const ICONS = {
   admin: '<path d="M12 2l2.5 5 5.5.8-4 3.9.9 5.3L12 14.8l-4.9 2.2.9-5.3-4-3.9 5.5-.8L12 2z"/>',
 };
 
+/**
+ * Logo artwork follows the surface it sits on so it always has contrast:
+ *   - dark ink (navy X + blue) on light surfaces  -> assets/logo-mark.png
+ *   - light ink on dark surfaces                  -> assets/logo-mark-dark.png
+ * The same rule applies to the XACHEUS wordmark (transparent variants).
+ */
+const LOGO_VARIANTS = {
+  mark: { light: "assets/logo-mark.png", dark: "assets/logo-mark-dark.png" },
+  wordmark: { light: "assets/logo-wordmark.png", dark: "assets/logo-wordmark-light.png" },
+};
+
+/**
+ * Point every rendered logo at the variant that matches the current theme.
+ * Called by applyTheme, so a live theme switch re-tints the topbar, sidebar,
+ * boot screen and any other logo on screen in the same frame.
+ */
+function syncLogoVariants() {
+  const theme = document.documentElement.classList.contains("light") ? "light" : "dark";
+  document.querySelectorAll("img[data-logo]").forEach((img) => {
+    const type = img.dataset.logo;
+    const src = LOGO_VARIANTS[type]?.[theme];
+    if (src && img.getAttribute("src") !== src) img.src = src;
+  });
+}
+
 const state = {
   user: null,
   profile: null,
@@ -119,6 +144,8 @@ function applyTheme() {
   document.querySelectorAll("[data-theme-icon]").forEach((node) => {
     node.textContent = prefersLight ? "🌙" : "☀️";
   });
+  // Keep every logo on a background-appropriate ink variant.
+  syncLogoVariants();
 }
 
 /* shell */
@@ -152,7 +179,7 @@ function buildShell() {
     <header class="topbar">
       <div class="topbar-inner">
         <a class="brand topbar-brand" href="#/home" aria-label="Xacheus home">
-          <img class="brand-logo brand-wordmark" src="assets/logo1.png" alt="Xacheus" />
+          <img class="brand-logo brand-wordmark" data-logo="wordmark" src="${LOGO_VARIANTS.wordmark[state.theme === "light" ? "light" : "dark"]}" alt="Xacheus" />
         </a>
 
         <div class="topbar-tabs" id="topbar-tabs">
@@ -183,7 +210,7 @@ function buildShell() {
     <div class="layout layout-video">
       <nav class="sidebar sidebar-video" aria-label="Primary">
         <a class="brand sidebar-brand" href="#/home" aria-label="Xacheus home">
-          <img class="brand-logo" src="assets/logo.png" alt="Xacheus" />
+          <img class="brand-logo" data-logo="mark" src="${LOGO_VARIANTS.mark[state.theme === "light" ? "light" : "dark"]}" alt="Xacheus" />
         </a>
         ${sideNav.map((item) => navItem(item)).join("")}
         <div class="sidebar-me" data-role="sidebar-me"></div>
