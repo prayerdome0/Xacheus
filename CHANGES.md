@@ -103,6 +103,46 @@ displayed songs the app could not license or count.
 
 ---
 
+# Logo Visibility — theme-matched transparent variants (PR #19)
+
+## Date: 2026-08-30
+
+> **Status: superseded by the measured brand plate above.** This section came in
+> from `main` while the plate work was on its own branch, and it fixes the same
+> report the same way at heart (never let the logo sit on a background that
+> swallows it). The two mechanisms were merged into one: the plate decides the
+> surface, so there is exactly one code path that touches logo contrast.
+>
+> **Kept from PR #19** — `assets/logo-plate.png`, a 320×320 white rounded-plate
+> mark, now the `purpose: "any"` app icon in `manifest.json` (a plate icon is a
+> better answer for launchers than the raw artwork that was there before), and
+> cached in the service-worker shell.
+>
+> **Removed in the merge** — `LOGO_VARIANTS` / `syncLogoVariants()` in `js/app.js`,
+> the `img[data-logo]` attributes, the boot-screen `bootMarkSrc()` helper, and
+> `assets/logo-wordmark-light.png`. A theme-driven swap cannot answer the case
+> this app actually has: a logo on a *profile cover*, which is somebody's photo
+> and matches no theme. It also left two light-ink wordmarks in the repo, one of
+> them extracted without antialiasing (hard, staircased edges), which invites a
+> future edit to rewire the dead mechanism. The plate path instead measures the
+> artwork itself (`assets/brand-manifest.json`, canvas fallback) and sizes every
+> slot from one builder.
+
+## What PR #19 did (as merged into `main`)
+
+- Logo art made transparent and rendered in the ink variant matching the theme:
+  dark artwork (navy X + blue wordmark) on light theme, light artwork on dark.
+- New assets: `assets/logo-wordmark.png` (dark ink), `assets/logo-wordmark-light.png`
+  (light ink), `assets/logo-plate.png` (white plate for app icons); reuses
+  `assets/logo-mark.png` / `assets/logo-mark-dark.png`.
+- Applied to topbar, sidebar, boot screen, boot-failure screen, auth overlay and
+  the PWA manifest icon; `applyTheme()` called `syncLogoVariants()` so a live
+  theme switch re-tinted every `img[data-logo]` in the same frame.
+- Service-worker cache bumped to `v8` (now `v9`, which also picks up the plate
+  assets and the brand manifest).
+
+---
+
 # Firebase Authentication Fixes and Real Logo Implementation
 
 ## Date: 2026-08-29

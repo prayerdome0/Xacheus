@@ -38,6 +38,7 @@ const SHELL = [
   "./assets/icon-dark.svg",
   "./assets/brand-card.png",
   "./assets/brand-manifest.json",
+  "./assets/logo-plate.png",
   "./assets/icon-192.png",
   "./assets/icon-512.png",
   "./assets/icon-maskable-192.png",
