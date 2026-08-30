@@ -43,10 +43,12 @@ import {
   startAfter,
   updateDoc,
   where,
+  writeBatch,
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
-import { db } from "./firebase.js";
+import { auth, db } from "./firebase.js";
 import { removeObject } from "./storage.js";
+import { soundIdForTrack, trackToSoundDoc } from "./music.js";
 
 export const PAGE_SIZE = 20;
 export const VIDEO_PAGE_SIZE = 10;
@@ -311,7 +313,83 @@ export async function changeUsername(uid, nextRaw) {
   if (current.username && current.username !== next) {
     await deleteDoc(doc(db, "usernames", current.username)).catch(() => {});
   }
+
+  // Handles are denormalised onto content, so a rename must follow it through
+  // — otherwise @mentions, comments and DM previews keep the dead handle and
+  // every profile link built from it 404s.
+  const previous = current.username || "";
+  if (previous) {
+    await propagateUsername(uid, previous, next).catch((err) => {
+      console.warn("[profile] username propagation failed", err);
+    });
+  }
   return next;
+}
+
+/** Rewrite cached @handles on this account's content after a rename. */
+async function propagateUsername(uid, previous, next) {
+  const targets = [];
+  const collect = async (collPath) => {
+    try {
+      const snap = await getDocs(query(collection(db, ...collPath.split("/")), where("uid", "==", uid), limit(200)));
+      snap.forEach((d) => targets.push({ ref: d.ref, data: d.data() }));
+    } catch (err) {
+      console.warn(`[profile] rename scan skipped ${collPath}`, err);
+    }
+  };
+
+  await collect("videos");
+  await collect("profileMedia");
+  await collect("stories");
+  await collect("reposts");
+
+  let batch = writeBatch(db);
+  let count = 0;
+  const flush = async () => {
+    if (!count) return;
+    await batch.commit().catch(() => {});
+    batch = writeBatch(db);
+    count = 0;
+  };
+  for (const target of targets) {
+    const patch = { username: next };
+    const text = String(target.data.text || target.data.caption || "");
+    if (text.includes(`@${previous}`)) patch[target.data.text ? "text" : "caption"] = text.split(`@${previous}`).join(`@${next}`);
+    batch.update(target.ref, patch);
+    count += 1;
+    if (count >= 400) await flush();
+  }
+  await flush();
+
+  // Conversation previews + DM bubbles store senderUsername.
+  try {
+    const convs = await getDocs(query(collection(db, "conversations"), where("participants", "array-contains", uid), limit(100)));
+    let cb = writeBatch(db);
+    let c = 0;
+    for (const conv of convs.docs) {
+      if (conv.data().lastSenderId === uid && String(conv.data().lastMessage || "").includes(`@${previous}`)) {
+        cb.update(conv.ref, { lastMessage: String(conv.data().lastMessage).split(`@${previous}`).join(`@${next}`) });
+        c += 1;
+      }
+      const msgSnap = await getDocs(
+        query(collection(db, "conversations", conv.id, "messages"), where("senderId", "==", uid), limit(100))
+      ).catch(() => null);
+      msgSnap?.forEach((m) => {
+        if (m.data().senderUsername === previous) {
+          cb.update(m.ref, { senderUsername: next });
+          c += 1;
+        }
+      });
+      if (c >= 400) {
+        await cb.commit().catch(() => {});
+        cb = writeBatch(db);
+        c = 0;
+      }
+    }
+    if (c) await cb.commit().catch(() => {});
+  } catch (err) {
+    console.warn("[profile] conversation rename skipped", err);
+  }
 }
 
 export function isAdminProfile(profile) {
@@ -335,6 +413,11 @@ export async function createVideo(author, {
   width = 0,
   height = 0,
   storagePath = "",
+  musicSource = "",
+  licenceUrl = "",
+  licenceLabel = "",
+  sourceUrl = "",
+  attribution = "",
 }) {
   const cap = String(caption || "").trim().slice(0, 1000);
 
@@ -372,7 +455,17 @@ export async function createVideo(author, {
     commentCount: 0,
     viewCount: 0,
     shareCount: 0,
+    repostCount: 0,
+    reactions: { love: 0, like: 0, amen: 0, laugh: 0, wow: 0, support: 0 },
     isPublic: true,
+    // Provenance for attached music. External tracks are licensed elsewhere
+    // (Internet Archive), so a post must always be able to show where the
+    // audio came from and under what terms.
+    musicSource: musicSource || (soundId ? "xacheus" : ""),
+    licenceUrl: licenceUrl || "",
+    licenceLabel: licenceLabel || "",
+    sourceUrl: sourceUrl || "",
+    attribution: attribution || "",
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
@@ -510,6 +603,26 @@ export async function getLikedVideoIds(uid, videoIds) {
   return liked;
 }
 
+/**
+ * The videos an account has liked (its own `likedVideos` list, or anyone's when
+ * the profile's "show liked posts" privacy switch is on).
+ */
+export async function getLikedVideos(uid, max = 30) {
+  if (!uid) return [];
+  let ids = [];
+  try {
+    const snap = await getDocs(
+      query(collection(db, "users", uid, "likedVideos"), orderBy("createdAt", "desc"), limit(max))
+    );
+    ids = snap.docs.map((d) => ({ id: d.id, reaction: d.data().reaction || "like" }));
+  } catch {
+    const snap = await getDocs(query(collection(db, "users", uid, "likedVideos"), limit(max))).catch(() => null);
+    ids = (snap?.docs || []).map((d) => ({ id: d.id, reaction: d.data().reaction || "like" }));
+  }
+  const videos = await Promise.all(ids.map((row) => getVideo(row.id).then((v) => (v ? { ...v, myReaction: row.reaction } : null))));
+  return videos.filter(Boolean);
+}
+
 export async function toggleVideoLike(uid, actor, video) {
   const ref = doc(db, "users", uid, "likedVideos", video.id);
   const snap = await getDoc(ref);
@@ -595,6 +708,9 @@ export async function addVideoComment(uid, actor, video, text) {
     displayName: actor.displayName,
     photoURL: actor.photoURL || "",
     text: body,
+    parentId: null,
+    likeCount: 0,
+    replyCount: 0,
     createdAt: serverTimestamp(),
   });
   await updateDoc(doc(db, "videos", video.id), { commentCount: increment(1) });
@@ -612,14 +728,18 @@ export async function addVideoComment(uid, actor, video, text) {
 }
 
 /* ------------------------------------------------------------------ */
-/* sounds & songs                                                      */
+/* sounds & songs (real audio only)                                    */
 /* ------------------------------------------------------------------ */
-
-/**
- * Curated royalty-free catalogue (always available offline of Firestore).
- * Sources: Mixkit free music + SoundHelix demos — attribution-free for app use.
- * No copyrighted YouTube rips.
+/*
+ * `sounds` holds audio Xacheus actually serves: uploads from members and
+ * catalogue tracks imported from the Internet Archive (see js/music.js).
+ * There is deliberately no hard-coded "sample songs" list any more — every
+ * row here comes from Firestore, and the browse/search screens query the live
+ * catalogue. The old curated list pointed at files that no longer resolve, so
+ * keeping it would have meant shipping a player that only pretends to work.
  */
+
+/** Chips used by the sound library + the create-sheet genre filter. */
 export const SOUND_GENRES = Object.freeze([
   "all",
   "lofi",
@@ -637,367 +757,41 @@ export const SOUND_GENRES = Object.freeze([
   "original",
 ]);
 
-export const CURATED_FREE_SOUNDS = [
-  {
-    id: "free_001",
-    title: "Lo-Fi Chill",
-    artist: "Mixkit Free",
-    genre: "lofi",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3",
-    coverUrl: "",
-    duration: 95,
-    bpm: 118,
-    isFree: true,
-    isOriginal: false,
-    useCount: 42,
-  },
-  {
-    id: "free_002",
-    title: "Afrobeat Drive",
-    artist: "Mixkit Free",
-    genre: "afrobeat",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-hip-hop-02-738.mp3",
-    coverUrl: "",
-    duration: 88,
-    bpm: 96,
-    isFree: true,
-    isOriginal: false,
-    useCount: 38,
-  },
-  {
-    id: "free_003",
-    title: "Gospel Light",
-    artist: "Mixkit Free",
-    genre: "gospel",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-spirit-in-the-woods-piano-ambient-68.mp3",
-    coverUrl: "",
-    duration: 110,
-    bpm: 72,
-    isFree: true,
-    isOriginal: false,
-    useCount: 55,
-  },
-  {
-    id: "free_004",
-    title: "Zambian Sunset",
-    artist: "Zed Beats Free",
-    genre: "afro",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-serene-view-443.mp3",
-    coverUrl: "",
-    duration: 100,
-    bpm: 90,
-    isFree: true,
-    isOriginal: false,
-    useCount: 29,
-  },
-  {
-    id: "free_005",
-    title: "Upbeat Pop Energy",
-    artist: "Mixkit Free",
-    genre: "pop",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-driving-ambition-32.mp3",
-    coverUrl: "",
-    duration: 92,
-    bpm: 124,
-    isFree: true,
-    isOriginal: false,
-    useCount: 61,
-  },
-  {
-    id: "free_006",
-    title: "Night Ride",
-    artist: "SoundHelix",
-    genre: "electronic",
-    audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
-    coverUrl: "",
-    duration: 372,
-    bpm: 128,
-    isFree: true,
-    isOriginal: false,
-    useCount: 17,
-  },
-  {
-    id: "free_007",
-    title: "Deep Focus",
-    artist: "SoundHelix",
-    genre: "ambient",
-    audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
-    coverUrl: "",
-    duration: 372,
-    bpm: 80,
-    isFree: true,
-    isOriginal: false,
-    useCount: 22,
-  },
-  {
-    id: "free_008",
-    title: "City Lights",
-    artist: "Mixkit Free",
-    genre: "lofi",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-dreaming-big-31.mp3",
-    coverUrl: "",
-    duration: 98,
-    bpm: 85,
-    isFree: true,
-    isOriginal: false,
-    useCount: 33,
-  },
-  {
-    id: "free_009",
-    title: "Dance Floor",
-    artist: "Mixkit Free",
-    genre: "dance",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-hazy-after-hours-132.mp3",
-    coverUrl: "",
-    duration: 105,
-    bpm: 122,
-    isFree: true,
-    isOriginal: false,
-    useCount: 44,
-  },
-  {
-    id: "free_010",
-    title: "Soft Acoustic",
-    artist: "Mixkit Free",
-    genre: "acoustic",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-a-very-happy-christmas-897.mp3",
-    coverUrl: "",
-    duration: 90,
-    bpm: 100,
-    isFree: true,
-    isOriginal: false,
-    useCount: 19,
-  },
-  {
-    id: "free_011",
-    title: "Cinematic Rise",
-    artist: "Mixkit Free",
-    genre: "cinematic",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-valley-sunset-127.mp3",
-    coverUrl: "",
-    duration: 115,
-    bpm: 70,
-    isFree: true,
-    isOriginal: false,
-    useCount: 27,
-  },
-  {
-    id: "free_012",
-    title: "Hip-Hop Bounce",
-    artist: "Mixkit Free",
-    genre: "hiphop",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-life-is-a-dream-837.mp3",
-    coverUrl: "",
-    duration: 94,
-    bpm: 92,
-    isFree: true,
-    isOriginal: false,
-    useCount: 48,
-  },
-  {
-    id: "free_013",
-    title: "Jazz Lounge",
-    artist: "SoundHelix",
-    genre: "jazz",
-    audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-    coverUrl: "",
-    duration: 360,
-    bpm: 110,
-    isFree: true,
-    isOriginal: false,
-    useCount: 14,
-  },
-  {
-    id: "free_014",
-    title: "Sunday Praise",
-    artist: "Mixkit Free",
-    genre: "gospel",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-beautiful-dream-493.mp3",
-    coverUrl: "",
-    duration: 108,
-    bpm: 78,
-    isFree: true,
-    isOriginal: false,
-    useCount: 36,
-  },
-  {
-    id: "free_015",
-    title: "Lusaka Nights",
-    artist: "Zed Beats Free",
-    genre: "afrobeat",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-cat-walk-863.mp3",
-    coverUrl: "",
-    duration: 96,
-    bpm: 108,
-    isFree: true,
-    isOriginal: false,
-    useCount: 31,
-  },
-  {
-    id: "free_016",
-    title: "Electro Pulse",
-    artist: "SoundHelix",
-    genre: "electronic",
-    audioUrl: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3",
-    coverUrl: "",
-    duration: 340,
-    bpm: 130,
-    isFree: true,
-    isOriginal: false,
-    useCount: 21,
-  },
-  {
-    id: "free_017",
-    title: "Warm Morning",
-    artist: "Mixkit Free",
-    genre: "ambient",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-sleepy-cat-135.mp3",
-    coverUrl: "",
-    duration: 102,
-    bpm: 68,
-    isFree: true,
-    isOriginal: false,
-    useCount: 25,
-  },
-  {
-    id: "free_018",
-    title: "Party Starter",
-    artist: "Mixkit Free",
-    genre: "dance",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-games-worldbeat-466.mp3",
-    coverUrl: "",
-    duration: 88,
-    bpm: 126,
-    isFree: true,
-    isOriginal: false,
-    useCount: 40,
-  },
-  {
-    id: "free_019",
-    title: "Street Flow",
-    artist: "Mixkit Free",
-    genre: "hiphop",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-raising-me-higher-34.mp3",
-    coverUrl: "",
-    duration: 99,
-    bpm: 94,
-    isFree: true,
-    isOriginal: false,
-    useCount: 35,
-  },
-  {
-    id: "free_020",
-    title: "Golden Hour",
-    artist: "Mixkit Free",
-    genre: "cinematic",
-    audioUrl: "https://assets.mixkit.co/music/preview/mixkit-sun-and-his-daughter-580.mp3",
-    coverUrl: "",
-    duration: 112,
-    bpm: 75,
-    isFree: true,
-    isOriginal: false,
-    useCount: 28,
-  },
-];
-
-const CURATED_BY_ID = Object.fromEntries(CURATED_FREE_SOUNDS.map((s) => [s.id, s]));
-
-function isCuratedId(id) {
-  return Boolean(id && String(id).startsWith("free_"));
-}
-
-function mergeSounds(dbList = [], { includeCurated = true, genre = "", onlyFree = false, onlyOriginal = false } = {}) {
-  const map = new Map();
-  if (includeCurated) {
-    CURATED_FREE_SOUNDS.forEach((s) => map.set(s.id, { ...s }));
-  }
-  dbList.forEach((s) => {
-    if (!s?.id) return;
-    // DB wins over curated for same id; otherwise add.
-    map.set(s.id, { ...s });
-  });
-  let list = [...map.values()];
-  if (onlyFree) list = list.filter((s) => s.isFree);
-  if (onlyOriginal) list = list.filter((s) => s.isOriginal);
-  if (genre && genre !== "all") {
-    const g = genre.toLowerCase();
-    list = list.filter((s) => String(s.genre || "").toLowerCase() === g);
-  }
-  list.sort((a, b) => (b.useCount || 0) - (a.useCount || 0) || String(a.title).localeCompare(String(b.title)));
-  return list;
-}
-
-function matchSoundQuery(sound, term) {
-  const q = String(term || "").trim().toLowerCase();
-  if (!q) return true;
-  const hay = [sound.title, sound.artist, sound.artistUsername, sound.genre, sound.id]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-  return hay.includes(q) || q.split(/\s+/).every((t) => hay.includes(t));
-}
-
-/** List sounds — merges Firestore + curated free catalogue. */
-export async function getSounds({
-  limitCount = 40,
-  onlyFree = false,
-  onlyOriginal = false,
-  genre = "",
-  includeCurated = true,
-} = {}) {
-  let dbList = [];
+/** Firestore sounds — optional genre / free / original filters. */
+export async function getSounds({ limitCount = 40, genre = "", onlyFree = false, onlyOriginal = false } = {}) {
+  const filters = [];
+  if (genre && genre !== "all") filters.push(where("genre", "==", genre));
+  if (onlyOriginal) filters.push(where("isOriginal", "==", true));
+  if (onlyFree) filters.push(where("isFree", "==", true));
   try {
-    let q = query(collection(db, "sounds"), orderBy("useCount", "desc"), limit(Math.max(limitCount, 40)));
-    if (onlyFree) {
-      q = query(
-        collection(db, "sounds"),
-        where("isFree", "==", true),
-        orderBy("useCount", "desc"),
-        limit(Math.max(limitCount, 40))
-      );
-    } else if (onlyOriginal) {
-      q = query(
-        collection(db, "sounds"),
-        where("isOriginal", "==", true),
-        orderBy("useCount", "desc"),
-        limit(Math.max(limitCount, 40))
-      );
-    }
-    const snap = await getDocs(q);
-    dbList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  } catch (error) {
-    // Fallback without composite index / order.
+    const snap = await getDocs(query(collection(db, "sounds"), ...filters, orderBy("useCount", "desc"), limit(limitCount)));
+    return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch {
+    // Missing composite index shouldn't mean an empty library: read and sort here.
     try {
-      const snap = await getDocs(query(collection(db, "sounds"), limit(80)));
-      dbList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const snap = await getDocs(query(collection(db, "sounds"), ...filters, limit(limitCount)));
+      return snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (Number(b.useCount) || 0) - (Number(a.useCount) || 0));
     } catch {
-      dbList = [];
+      return [];
     }
   }
-  return mergeSounds(dbList, { includeCurated, genre, onlyFree, onlyOriginal }).slice(0, limitCount);
 }
 
-/** Live trending list (useCount desc) with curated fallback. */
-export function watchTrendingSounds(onData, pageSize = 30) {
-  return onSnapshot(
-    query(collection(db, "sounds"), orderBy("useCount", "desc"), limit(pageSize)),
-    (snap) => {
-      const dbList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      onData(mergeSounds(dbList).slice(0, pageSize));
-    },
-    () => onData(mergeSounds([]).slice(0, pageSize))
-  );
-}
-
-/** Newest originals + free catalogue. */
 export function watchSounds(onData, pageSize = 40) {
   return onSnapshot(
     query(collection(db, "sounds"), orderBy("createdAt", "desc"), limit(pageSize)),
-    (snap) => {
-      const dbList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      onData(mergeSounds(dbList).slice(0, pageSize + CURATED_FREE_SOUNDS.length));
-    },
-    () => onData(mergeSounds([]))
+    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    () => onData([])
+  );
+}
+
+export function watchTrendingSounds(onData, pageSize = 20) {
+  return onSnapshot(
+    query(collection(db, "sounds"), orderBy("useCount", "desc"), limit(pageSize)),
+    (snap) => onData(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+    () => onData([])
   );
 }
 
@@ -1011,7 +805,8 @@ export async function createSound(author, {
   isFree = false,
   bpm = 0,
   storagePath = "",
-}) {
+  licenceUrl = "",
+} = {}) {
   if (!author?.uid) throw new Error("Sign in to upload a sound.");
   if (!title || !audioUrl) throw new Error("Sound needs a title and audio file.");
   if (String(audioUrl).startsWith("blob:")) throw new Error("Audio upload incomplete — try again.");
@@ -1029,8 +824,12 @@ export async function createSound(author, {
     genre: g,
     useCount: 0,
     favoriteCount: 0,
+    playCount: 0,
     isFree: Boolean(isFree),
     isOriginal: true,
+    licenceUrl: String(licenceUrl || "").slice(0, 200),
+    external: false,
+    deleted: false,
     createdAt: serverTimestamp(),
     lastUsedAt: serverTimestamp(),
   };
@@ -1038,10 +837,45 @@ export async function createSound(author, {
   return { id: ref.id, ...payload };
 }
 
-/** Single sound by id (curated or Firestore). */
+/**
+ * Import a catalogue track as a `sounds` document so it behaves like any other
+ * sound: use counts, favourites, "posts using this sound" and a real detail
+ * page. `trackToSoundDoc` keeps the archive item id, the file name and the
+ * licence next to the audio, and the original artist stays in `artist` — the
+ * importing member is recorded as `artistUid` because they are the curator of
+ * that entry, and that is also what the security rules require.
+ */
+export async function attachCatalogueSound(author, track) {
+  if (!author?.uid) throw new Error("Sign in first.");
+  if (!track?.audioUrl) throw new Error("That track has no audio file.");
+  const base = trackToSoundDoc(track);
+  const id = soundIdForTrack(track);
+  const ref = doc(db, "sounds", id);
+  const snap = await getDoc(ref).catch(() => null);
+  if (snap && snap.exists()) {
+    return { id, ...snap.data() };
+  }
+  await setDoc(ref, {
+    ...base,
+    title: String(base.title).slice(0, 80),
+    artistUid: author.uid,
+    artistUsername: author.username || "",
+    coverUrl: track.artwork || "",
+    useCount: 0,
+    favoriteCount: 0,
+    playCount: 0,
+    isFree: Boolean(base.licenceReusable),
+    bpm: 0,
+    sourceFile: track.file || "",
+    createdAt: serverTimestamp(),
+    lastUsedAt: serverTimestamp(),
+  });
+  return { id, ...base, artistUid: author.uid };
+}
+
+/** Single sound by id. */
 export async function getSound(soundId) {
   if (!soundId) return null;
-  if (CURATED_BY_ID[soundId]) return { ...CURATED_BY_ID[soundId] };
   try {
     const snap = await getDoc(doc(db, "sounds", soundId));
     return snap.exists() ? { id: snap.id, ...snap.data() } : null;
@@ -1050,26 +884,28 @@ export async function getSound(soundId) {
   }
 }
 
-/** Search free + DB catalogue by title / artist / genre. */
+export async function getSoundsByIds(ids) {
+  const list = [...new Set((ids || []).filter(Boolean))].slice(0, 30);
+  const docs = await Promise.all(list.map((id) => getSound(id)));
+  return docs.filter(Boolean);
+}
+
+/** Search the Firestore library by title / artist / genre. */
 export async function searchSounds(term, { limitCount = 40, genre = "" } = {}) {
-  const all = await getSounds({ limitCount: 120, genre, includeCurated: true });
-  const q = String(term || "").trim();
+  const all = await getSounds({ limitCount: 120, genre });
+  const q = String(term || "").trim().toLowerCase();
   if (!q) return all.slice(0, limitCount);
   return all.filter((s) => matchSoundQuery(s, q)).slice(0, limitCount);
 }
 
 /** Sounds for a genre chip. */
 export async function getSoundsByGenre(genre, limitCount = 40) {
-  return getSounds({ limitCount, genre: genre === "all" ? "" : genre, includeCurated: true });
+  return getSounds({ limitCount, genre: genre === "all" ? "" : genre });
 }
 
-/** Distinct genres present in catalogue. */
+/** Genre chips for the library (the catalogue adds its own mood filters). */
 export function getSoundGenres() {
-  const set = new Set(SOUND_GENRES.filter((g) => g !== "all" && g !== "original"));
-  CURATED_FREE_SOUNDS.forEach((s) => {
-    if (s.genre) set.add(String(s.genre).toLowerCase());
-  });
-  return ["all", ...[...set].sort(), "original"];
+  return [...SOUND_GENRES];
 }
 
 /** Videos that used a given soundId. */
@@ -1081,7 +917,6 @@ export async function getVideosBySound(soundId, max = 30) {
     );
     return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   } catch {
-    // Index may not exist yet — unordered fallback.
     try {
       const snap = await getDocs(query(collection(db, "videos"), where("soundId", "==", soundId), limit(max)));
       return snap.docs
@@ -1095,25 +930,53 @@ export async function getVideosBySound(soundId, max = 30) {
 
 /** Bump useCount when a video is posted with this sound. */
 export async function bumpSoundUse(soundId) {
-  if (!soundId || isCuratedId(soundId)) return; // curated stays client-side
+  if (!soundId) return;
   await updateDoc(doc(db, "sounds", soundId), {
     useCount: increment(1),
     lastUsedAt: serverTimestamp(),
   }).catch(() => {});
 }
 
-/** Soft-delete own original sound (or admin). */
+/**
+ * Credit one listen. The player calls this after ~20 seconds, so the number in
+ * the UI means "people actually played this" rather than "someone clicked".
+ * A per-user history document also feeds the "Recently played" rail.
+ */
+export async function recordSoundPlay(soundId, seconds = 0) {
+  if (!soundId) return;
+  await updateDoc(doc(db, "sounds", soundId), { playCount: increment(1) }).catch(() => {});
+  const uid = auth?.currentUser?.uid || "";
+  if (!uid) return;
+  await setDoc(
+    doc(db, "users", uid, "playHistory", soundId),
+    { soundId, seconds: Math.max(0, Math.round(Number(seconds) || 0)), at: serverTimestamp() },
+    { merge: true }
+  ).catch(() => {});
+}
+
+/** Recent things I listened to (for the Music tab). */
+export async function getMyPlayHistory(uid, max = 12) {
+  if (!uid) return [];
+  const snap = await getDocs(query(collection(db, "users", uid, "playHistory"), orderBy("at", "desc"), limit(max))).catch(() => null);
+  if (!snap) return [];
+  const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const sounds = await getSoundsByIds(rows.map((r) => r.soundId));
+  const byId = new Map(sounds.map((s) => [s.id, s]));
+  return rows.map((r) => byId.get(r.soundId)).filter(Boolean);
+}
+
+/** Soft-delete own sound (or admin); removes the stored file for uploads. */
 export async function deleteSound(soundId, uid, { asAdmin = false } = {}) {
-  if (!soundId || isCuratedId(soundId)) throw new Error("Built-in free sounds can't be deleted.");
+  if (!soundId) return;
   const snap = await getDoc(doc(db, "sounds", soundId));
   if (!snap.exists()) return;
   const data = snap.data();
-  if (!asAdmin && data.artistUid !== uid) throw new Error("You can only delete your own sounds.");
+  if (!asAdmin && data.artistUid !== uid) throw new Error("You can only delete sounds you added.");
   if (data.storagePath) removeObject(data.storagePath).catch(() => {});
   await deleteDoc(doc(db, "sounds", soundId));
 }
 
-/* ---- favorites ---- */
+/* ---- favourites ---- */
 
 export async function isSoundFavorited(uid, soundId) {
   if (!uid || !soundId) return false;
@@ -1133,9 +996,7 @@ export async function toggleSoundFavorite(uid, sound) {
   const snap = await getDoc(ref);
   if (snap.exists()) {
     await deleteDoc(ref);
-    if (!isCuratedId(sound.id)) {
-      await updateDoc(doc(db, "sounds", sound.id), { favoriteCount: increment(-1) }).catch(() => {});
-    }
+    await updateDoc(doc(db, "sounds", sound.id), { favoriteCount: increment(-1) }).catch(() => {});
     return false;
   }
   await setDoc(ref, {
@@ -1146,9 +1007,7 @@ export async function toggleSoundFavorite(uid, sound) {
     genre: sound.genre || "",
     createdAt: serverTimestamp(),
   });
-  if (!isCuratedId(sound.id)) {
-    await updateDoc(doc(db, "sounds", sound.id), { favoriteCount: increment(1) }).catch(() => {});
-  }
+  await updateDoc(doc(db, "sounds", sound.id), { favoriteCount: increment(1) }).catch(() => {});
   return true;
 }
 
@@ -1157,15 +1016,14 @@ export function watchFavoriteSounds(uid, onData) {
   return onSnapshot(
     query(collection(db, "users", uid, "favoriteSounds"), orderBy("createdAt", "desc"), limit(100)),
     async (snap) => {
-      const ids = snap.docs.map((d) => d.id);
-      const sounds = await Promise.all(ids.map((id) => getSound(id)));
-      onData(sounds.filter(Boolean));
+      const sounds = await getSoundsByIds(snap.docs.map((d) => d.id));
+      onData(sounds);
     },
     () => onData([])
   );
 }
 
-/** Artist's original uploads. */
+/** What a member has added to the library (uploads + archive imports). */
 export async function getUserSounds(uid, max = 40) {
   if (!uid) return [];
   try {
@@ -1192,6 +1050,7 @@ export function formatSoundDuration(sec) {
   const s = n % 60;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
+
 
 /* ------------------------------------------------------------------ */
 /* follows                                                             */
@@ -1258,14 +1117,39 @@ export async function getSuggestedUsers(uid, max = 6) {
 /* notifications                                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Every notification goes through here. js/social.js installs a hook that
+ * applies the recipient's notification settings and drops anything blocked, so
+ * muting works for the whole app — not just the screens that remember to ask.
+ * Without the hook (or if it fails) the notification is still written, because
+ * losing an alert is worse than showing one that was muted.
+ */
+let notifyHook = null;
+export function setNotifyHook(fn) {
+  notifyHook = typeof fn === "function" ? fn : null;
+}
+
 export async function notify(toUid, payload) {
-  if (!toUid) return;
+  if (!toUid) return false;
+  if (notifyHook) {
+    try {
+      return await notifyHook(toUid, payload);
+    } catch (err) {
+      console.warn("[notify] hook failed, writing directly", err);
+    }
+  }
+  return writeNotification(toUid, payload);
+}
+
+export async function writeNotification(toUid, payload) {
+  if (!toUid) return false;
   await addDoc(collection(db, "notifications"), {
     toUid,
     read: false,
     createdAt: serverTimestamp(),
     ...payload,
   });
+  return true;
 }
 export function watchNotifications(uid, onData) {
   return onSnapshot(
@@ -1282,7 +1166,7 @@ export async function markNotificationsRead(uid, items) {
 /* content moderation: reports + bans                                  */
 /* ------------------------------------------------------------------ */
 
-export const REPORT_TYPES = Object.freeze(["video", "user", "comment", "sound", "live"]);
+export const REPORT_TYPES = Object.freeze(["video", "user", "comment", "sound", "live", "conversation"]);
 export const REPORT_REASONS = Object.freeze([
   "Spam",
   "Harassment or bullying",
@@ -1471,13 +1355,20 @@ export async function openConversation(me, other) {
 
   await runTransaction(db, async (tx) => {
     const snap = await tx.get(ref);
-    if (snap.exists()) return;
+    if (snap.exists()) {
+      // Bring the thread back into the sender's inbox if it was hidden.
+      tx.update(ref, { [`hiddenBy.${me.uid}`]: null });
+      return;
+    }
     tx.set(ref, {
       participants: [me.uid, other.uid].sort(),
       lastMessage: "",
       lastSenderId: "",
       lastMessageAt: serverTimestamp(),
-      unreadCount: {},
+      unreadCount: { [me.uid]: 0, [other.uid]: 0 },
+      hiddenBy: {},
+      typing: {},
+      readAt: {},
       createdAt: serverTimestamp(),
     });
   });
@@ -1508,7 +1399,8 @@ export function watchConversations(uid, onData) {
       .sort((a, b) => ts(b.lastMessageAt) - ts(a.lastMessageAt));
 
   const emit = (list) => {
-    if (!stopped) onData(list);
+    if (stopped) return;
+    onData(list.filter((c) => !c.hiddenBy || c.hiddenBy[uid] == null));
   };
 
   const startFallback = () => {
@@ -1533,6 +1425,16 @@ export function watchConversations(uid, onData) {
   };
 }
 
+/** Live conversation document (typing flags, read stamps, preview). */
+export function watchConversation(cid, onData) {
+  if (!cid) return () => onData(null);
+  return onSnapshot(
+    doc(db, "conversations", cid),
+    (snap) => onData(snap.exists() ? { id: snap.id, ...snap.data() } : null),
+    () => onData(null)
+  );
+}
+
 export function watchMessages(cid, onData) {
   return onSnapshot(
     query(collection(db, "conversations", cid, "messages"), orderBy("createdAt", "asc"), limit(300)),
@@ -1541,33 +1443,212 @@ export function watchMessages(cid, onData) {
   );
 }
 
-/** Send a message and update the conversation preview + unread counter. */
-export async function sendDirectMessage(cid, sender, otherUid, text) {
-  const body = String(text || "").trim();
-  if (!cid || !sender?.uid || !otherUid) throw new Error("You can't send that message.");
-  if (!body) throw new Error("Write a message first.");
-  if (body.length > 1000) throw new Error("Messages are limited to 1000 characters.");
+/**
+ * Send a message (text, and/or one attachment) and update the conversation
+ * preview, the recipient's unread counter and their notification.
+ *
+ * `otherUid` may be omitted: the recipient is derived from the conversation's
+ * participant list, so a preview/counter can never be written for the sender.
+ */
+export async function sendDirectMessage(cid, sender, otherUid, text, attachment = null) {
+  const body = String(text || "").trim().slice(0, 1000);
+  if (!cid || !sender?.uid) throw new Error("You can't send that message.");
 
-  await addDoc(collection(db, "conversations", cid, "messages"), {
+  const convSnap = await getDoc(doc(db, "conversations", cid));
+  if (!convSnap.exists()) throw new Error("This conversation no longer exists.");
+  const participants = (convSnap.data().participants || []).filter(Boolean);
+  const recipient = otherUid && participants.includes(otherUid) ? otherUid : participants.find((p) => p !== sender.uid) || "";
+  if (!recipient) throw new Error("This conversation is missing a recipient.");
+  if (!body && !attachment) throw new Error("Write a message or attach something first.");
+
+  const payload = {
     senderId: sender.uid,
     senderUsername: sender.username || "",
     senderName: sender.displayName || "",
     senderPhoto: sender.photoURL || "",
     text: body,
+    readBy: {},
     createdAt: serverTimestamp(),
-  });
+  };
+
+  if (attachment) {
+    const kind = ["image", "video", "audio", "file"].includes(attachment.kind) ? attachment.kind : "file";
+    if (!attachment.url || String(attachment.url).startsWith("blob:")) throw new Error("That attachment didn't finish uploading.");
+    payload.attachment = {
+      kind,
+      url: String(attachment.url).slice(0, 600),
+      storagePath: String(attachment.storagePath || "").slice(0, 400),
+      name: String(attachment.name || "").slice(0, 120),
+      size: Math.max(0, Number(attachment.size) || 0),
+      mimeType: String(attachment.mimeType || "").slice(0, 80),
+      width: Math.max(0, Number(attachment.width) || 0),
+      height: Math.max(0, Number(attachment.height) || 0),
+      duration: Math.max(0, Number(attachment.duration) || 0),
+    };
+    if (!body) payload.text = kind === "image" ? "Photo" : kind === "video" ? "Video" : kind === "audio" ? "Audio" : payload.attachment.name || "File";
+  }
+
+  await addDoc(collection(db, "conversations", cid, "messages"), payload);
+
   await updateDoc(doc(db, "conversations", cid), {
-    lastMessage: body.slice(0, 120),
+    lastMessage: (body || "Attachment").slice(0, 120),
     lastSenderId: sender.uid,
     lastMessageAt: serverTimestamp(),
-    [`unreadCount.${otherUid}`]: increment(1),
+    [`unreadCount.${recipient}`]: increment(1),
+    [`hiddenBy.${recipient}`]: null,
+    [`typing.${sender.uid}`]: null,
   });
+
+  // Inbox badge + notification. Muted/blocking are handled by the notifier
+  // installed in js/social.js; without it the DB write still happened.
+  if (dmNotifier) {
+    dmNotifier(recipient, {
+      type: "message",
+      fromUid: sender.uid,
+      fromName: sender.displayName || "",
+      fromPhoto: sender.photoURL || "",
+      fromUsername: sender.username || "",
+      cid,
+      text: (body || "Sent an attachment").slice(0, 120),
+      attachmentKind: attachment?.kind || "",
+    }).catch(() => {});
+  }
 }
 
-/** Zero my unread counter once I've seen the thread. */
+let dmNotifier = null;
+/** js/social.js installs the prefs-aware, block-aware notifier here. */
+export function setDmNotifier(fn) {
+  dmNotifier = typeof fn === "function" ? fn : null;
+}
+
+/** Mark the whole thread read for me: zero the counter + stamp readBy. */
 export async function markConversationRead(cid, uid) {
   if (!cid || !uid) return;
-  await updateDoc(doc(db, "conversations", cid), { [`unreadCount.${uid}`]: 0 }).catch(() => {});
+  await updateDoc(doc(db, "conversations", cid), {
+    [`unreadCount.${uid}`]: 0,
+    [`lastReadAt.${uid}`]: serverTimestamp(),
+  }).catch(() => {});
+
+  // Only touch messages the other person sent that I haven't read yet.
+  try {
+    const snap = await getDocs(
+      query(collection(db, "conversations", cid, "messages"), orderBy("createdAt", "desc"), limit(40))
+    );
+    let batch = writeBatch(db);
+    let dirty = 0;
+    for (const d of snap.docs) {
+      const data = d.data();
+      if (data.senderId === uid) continue;
+      if (data.readBy && data.readBy[uid]) continue;
+      batch.update(d.ref, { [`readBy.${uid}`]: serverTimestamp() });
+      dirty += 1;
+      if (dirty >= 25) {
+        await batch.commit().catch(() => {});
+        batch = writeBatch(db);
+        dirty = 0;
+      }
+    }
+    if (dirty) await batch.commit().catch(() => {});
+  } catch {
+    /* read receipts are a nicety; never fail the UI over them */
+  }
+}
+
+/** Mark one message read (used while the thread is open and streaming). */
+export async function markMessageRead(cid, uid, messageId) {
+  if (!cid || !uid || !messageId) return;
+  await updateDoc(doc(db, "conversations", cid, "messages", messageId), {
+    [`readBy.${uid}`]: serverTimestamp(),
+  }).catch(() => {});
+}
+
+/**
+ * Unsend: the bubble stays as a tombstone so the thread doesn't reflow or
+ * silently rewrite history for the other person. Only the sender may do it,
+ * and only for their own message (enforced in firestore.rules).
+ */
+export async function unsendDirectMessage(cid, uid, messageId) {
+  const ref = doc(db, "conversations", cid, "messages", messageId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return false;
+  if (snap.data().senderId !== uid) throw new Error("You can only unsend your own messages.");
+  await updateDoc(ref, {
+    text: "",
+    unsent: true,
+    unsentAt: serverTimestamp(),
+    storagePathToRemove: snap.data().attachment?.storagePath || null,
+    attachment: null,
+  });
+  const path = snap.data().attachment?.storagePath;
+  if (path) removeObject(path).catch(() => {});
+
+  const convSnap = await getDoc(doc(db, "conversations", cid)).catch(() => null);
+  if (convSnap?.exists() && convSnap.data().lastSenderId === uid) {
+    await updateDoc(doc(db, "conversations", cid), { lastMessage: "Message unsent" }).catch(() => {});
+  }
+  return true;
+}
+
+/** Hide a thread from my inbox without deleting it for the other person. */
+export async function hideConversation(cid, uid) {
+  if (!cid || !uid) return false;
+  await updateDoc(doc(db, "conversations", cid), { [`hiddenBy.${uid}`]: serverTimestamp(), [`unreadCount.${uid}`]: 0 }).catch(() => {});
+  return true;
+}
+
+export async function unhideConversation(cid, uid) {
+  if (!cid || !uid) return false;
+  await updateDoc(doc(db, "conversations", cid), { [`hiddenBy.${uid}`]: null }).catch(() => {});
+  return true;
+}
+
+/** Report a message/conversation to moderators. */
+export async function reportConversation(cid, reporter, reason, details = "", otherUid = "") {
+  if (!cid || !reporter?.uid) throw new Error("Sign in first.");
+  await submitReport({
+    reporterUid: reporter.uid,
+    reporterName: reporter.displayName || "",
+    reporterUsername: reporter.username || "",
+    targetType: "conversation",
+    targetId: cid,
+    targetOwnerUid: otherUid || "",
+    reason,
+    details,
+  });
+  return true;
+}
+
+/**
+ * Messenger-style tapback. `reactions` is a map of uid -> short emoji, so a
+ * reaction is one small write that both participants see live.
+ */
+export const MESSAGE_REACTIONS = Object.freeze(["❤️", "👍", "🙏", "😂", "😮", "🙌"]);
+
+export async function reactToMessage(cid, uid, messageId, emoji) {
+  if (!cid || !uid || !messageId) return null;
+  const key = MESSAGE_REACTIONS.includes(emoji) ? emoji : "❤️";
+  const ref = doc(db, "conversations", cid, "messages", messageId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("That message is gone.");
+  const mine = snap.data().reactions?.[uid];
+  await updateDoc(ref, { [`reactions.${uid}`]: mine === key ? null : key });
+  return mine === key ? null : key;
+}
+
+/**
+ * Search within the loaded window of a thread. Firestore can't do text search,
+ * so this is explicitly a "in this conversation" filter over the last 300
+ * messages the client already has.
+ */
+export function filterMessagesByTerm(messages, term) {
+  const q = String(term || "").trim().toLowerCase();
+  if (!q) return messages;
+  return (messages || []).filter((m) => {
+    const text = String(m.text || "").toLowerCase();
+    const name = String(m.senderName || m.senderUsername || "").toLowerCase();
+    const file = String(m.attachment?.name || "").toLowerCase();
+    return text.includes(q) || name.includes(q) || file.includes(q);
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -1692,7 +1773,8 @@ export function watchActiveLives(onData) {
   const baseFilter = where("status", "==", "live");
 
   const emit = (list) => {
-    if (!stopped) onData(list);
+    if (stopped) return;
+    onData(list.filter((c) => !c.hiddenBy || c.hiddenBy[uid] == null));
   };
   const sortDocs = (docs) =>
     docs

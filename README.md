@@ -1,247 +1,180 @@
-# Xacheus — Short Video Platform
+# Xacheus — a social platform for video, photos, music, messaging and people
 
-Xacheus is a **real production-oriented short vertical video platform** (TikTok-style), not a mockup. Built with vanilla JS, Firebase Auth, Firestore and **Firebase Storage** for media.
+Xacheus is a **working social app**, not a mockup: one account, one database, one
+set of security rules, and no demo data anywhere. If a feature is on screen it
+writes to Firestore or Firebase Storage and comes back after a refresh, a
+re-login, or on another device. Anything that is *not* built is labelled as not
+built (see [Not implemented](#not-implemented)) instead of being faked.
 
-It has real auth, profiles with roles, vertical video feed, **Firebase Storage uploads**, likes, comments, follows, notifications, direct messages, **live streaming (Go Live)**, **photo posts**, create (record/upload), captions, hashtags, a **free sounds system** (no copyrighted YouTube tracks), **content reporting + admin moderation**, and **image assets only from `logo.png` / `logo1.png`** (no text wordmark branding).
-
----
-
-## Phase 1 Features (Implemented Now)
-
-### Real Authentication
-- Email/password + Google sign-in (real Firebase Auth)
-- Profiles auto-created in `users/{uid}` with `ensureProfile`
-- Roles: `user`, `creator`, `business`, `church`, `admin` (default `user`)
-- Handle reservation via `usernames/{handle}` — unique, lowercase, 3-20 chars
-- Admin panel visible **only if Firestore `role == "admin"`** (client checks `isAdminProfile`, rules enforce admin-only writes)
-
-### Media — Firebase Storage
-- All user media (images, photos, videos, audio, live segments, thumbnails) uploads to **Firebase Storage** under `uploads/{uid}/{kind}/{file}`.
-- `js/storage.js` has:
-  - `uploadImage(file, { strict })` → URL (throws when `strict`, default true)
-  - `uploadVideo(file)` → { url, path, duration, width, height, thumbnailUrl }
-  - `uploadAudio(file)` → { url, path, duration }
-  - `removeObject(path)` → cleanup on delete
-- Client-generated video poster frames are uploaded to `uploads/{uid}/thumbnails`, so video cards always get a real thumbnail.
-- No secrets in frontend. Access is controlled by `storage.rules` (deployed with `firebase deploy`).
-
-### Video Feed — No Fake Videos
-- Collection `videos/{videoId}` — real Firestore docs only
-- Fields: `uid`, `username`, `displayName`, `photoURL`, `videoUrl`, `thumbnailUrl`, `caption`, `hashtags`, `mentions`, `soundId`, `soundTitle`, `soundUrl`, `duration`, `likeCount`, `commentCount`, `viewCount`, `createdAt`
-- Vertical feed: full-screen cards, `IntersectionObserver` auto-play when 70% visible, pause others, progress bar
-- Right actions: avatar + follow (+), like + count, comment + count, save, share, sound disc
-- Bottom: @handle, caption with linked #hashtags/@mentions, sound marquee
-- Modes: **For You** (global `createdAt desc`) and **Following** (where `uid in followingIds.slice(0,10)`)
-- Pagination via `startAfter(lastDoc)`
-- No mock data — empty state if no videos
-
-### Interactions — All Buttons Work
-- **Like**: `users/{uid}/likedVideos/{videoId}` + `videos/{id}.likeCount` ±1, notification to owner
-- **Save**: `users/{uid}/savedVideos/{videoId}`
-- **Comment**: `videos/{videoId}/comments/{cid}` + `commentCount`, notification
-- **Follow**: `follows/{uid}/following/{target}` + `follows/{target}/followers/{uid}` + counters, notification
-- **Share**: copies link `/#/video/{id}`
-- **Mute**: toggles video.muted
-- All writes guarded by Firestore rules
-
-### Create — Record or Upload
-- `/#/create` — real working page
-- Upload: drag-drop or file picker, video/*, ≤100MB, shows preview, duration
-- Record: `getUserMedia` + `MediaRecorder`, live preview, timer, 180s max, cancel/stop
-- Caption: 0-1000 chars, hashtags/mentions auto-parsed
-- Sounds: choose from free library or original audio
-- Upload progress bar via XHR `onProgress`
-- On submit: `uploadVideo()` → `createVideo()` Firestore doc, then navigate to `/#/home`
-
-### Sounds System — Free Music Only
-- Collection `sounds/{soundId}` — `title`, `artist`, `audioUrl`, `useCount`, `isFree`, `isOriginal`, `genre`
-- Curated free sounds (royalty-free, not YouTube):
-  - Lo-Fi Chill, Afrobeat Vibe, Gospel Uplift, Zambian Sunset, Upbeat Pop — URLs from Pixabay free library
-  - If `sounds` collection empty, curated list is returned as fallback
-- Trending sounds: `orderBy(useCount desc)`
-- Users can upload original sounds via video's own audio (or future audio upload)
-- Every time a video uses a sound, `useCount` increments
-
-### Discover
-- `/#/discover` — tabs: Trending videos (by `likeCount desc`), Trending sounds, Creators (search users), Hashtags
-- Search: `#tag` → videos with `hashtags array-contains`, `@handle` or name → users
-- Video grid (3 cols) with like/comment counts, click → `/#/video/{id}`
-
-### Sounds Library
-- `/#/sounds` — free music explanation, tabs free/trending/original/all, search, audio preview, link to videos using sound
-
-### Profiles
-- `/#/u/{username}` — cover, avatar, role badge, verified, bio, location, website, followers/following/videos/likes counts
-- Tabs: Videos (user's videos), Liked (likedVideos), Followers, Following
-- Edit profile: avatar/cover via Firebase Storage, displayName, handle (with reservation), bio, location, website — role change only via admin
-
-### Notifications / Inbox
-- `/#/notifications` — likes, comments, follows, mentions — unread dot, mark read after 1.5s, tabs all/likes/comments/follows
-
-### Direct Messages
-- `/#/messages` — private 1:1 chats, live via Firestore snapshots
-- Start from any profile's **Message** button or the ✏️ button (enter an @handle)
-- `/#/dm/{username}` — deterministic conversation id (`uidA__uidB` sorted) so both sides share one doc
-- Messages immutable (rules forbid edit/delete), preview + `unreadCount` per participant on the conversation doc
-- Global unread badge on the Messages nav item, cleared when you open the thread
-- Rules: only participants read/write, `participants` frozen after create, `senderId == auth.uid`, text ≤ 1000 chars
-- Composite index: `participants array-contains + lastMessageAt desc` (client-side sort fallback if index not yet built)
-
-### Engagement counters
-- `viewCount` increments after ~2s of continuous playback in the feed (one bump per video per session)
-- `shareCount` increments on Web Share API success (mobile share sheet) or link copy fallback
-
-### Live Streaming (Go Live)
-- **Client-only architecture** — no streaming service needed: `MediaRecorder` records ~4s segments, each is uploaded to Firebase Storage as an independent WebM, and Firestore tracks the segment cursor (`lives/{liveId}.latestSeq`)
-- `/#/live` — list of active broadcasts (LIVE badge, viewer counts, poster thumbnails); streams whose broadcaster vanished (no heartbeat for 90s) are hidden automatically
-- `/#/live/go` — broadcaster: live camera preview, optional title, on-air clock, viewer count, chunk counter, and live chat; heartbeat every 20s; End Stream (plus best-effort cleanup on tab close)
-- `/#/live/{id}` — viewer: segment playlist player (joins ~1 segment behind live), tap-for-sound, drift protection (skips ahead if the broadcaster outpaces playback), live chat, and replay of published segments after the stream ends
-- Live chat: `lives/{liveId}/chat` — real-time, 300 chars, deletable by author / stream host / admin
-- Latency is ~5–15s by design (segment + upload + Firestore); quality ~900kbps VP9/VP8 WebM, data-friendly
-- Rules: only the stream host updates stream state / publishes segments; anyone signed in can bump `viewerCount` ±1 only
-
-### Photo posts
-- `/#/create` now has **Video | Photo** tabs — photo posts are 1–6 images + caption (TikTok photo-mode style)
-- Stored in the same `videos` collection with `mediaType: "photo"`, `images[]` — so feed, discover, profile grids, likes, comments, saves, shares, notifications and hashtags all work on photo posts automatically
-- Feed renders them as swipeable carousels with position dots; photo dwell also counts a view (2s rule)
-- Rules: photo branch requires `mediaType == 'photo'` and 1–6 `images` instead of a `videoUrl`
-- `uploadImage(..., { strict: true })` — photo posts and live posters fail hard instead of silently storing local blob URLs
-
-### Content Reporting + Admin Moderation
-- Every video card, profile and sound has a **Report** action. Reports are written to `reports/{id}` (one open report per user per target) for the moderation team.
-- `/#/admin` — visible only if `profile.role == "admin"`
-- Tabs:
-  - **Users** — change role, verify/unverify, **ban/unban** accounts
-  - **Videos** — delete any video
-  - **Comments** — collection-group list of comments across all videos; delete any
-  - **Reports** — review open reports, link to the target, resolve/reopen, delete
-  - **Sounds** — delete any sound
-  - **Stats** — platform counts (users, videos, comments, sounds, lives, notifications, open reports, banned accounts)
-- Rules: only admin can change `role`, `verified`, `banned`, delete any video/sound/comment, resolve reports; **banned accounts cannot post, comment, follow, notify, go live or report**.
-
-### Settings
-- Theme: dark/light/system persisted
-- Account info, email verification, sign out, delete account with re-auth
+Stack: vanilla ES modules (no build step), Firebase Auth + Firestore + Storage
+(v10.12.5 CDN modules), a hash router, and the Internet Archive's open-licence
+audio catalog for music.
 
 ---
 
-## Data Model
+## What is real today
+
+### Accounts and profiles
+- Email/password and Google sign-in; `users/{uid}` profile documents created by
+  `ensureProfile`, handle reservations in `usernames/{handle}` (3–20 chars,
+  lowercase, unique), roles `user · creator · business · church · admin`.
+- Profile page (`#/u/{handle}`, `#/profile`): cover photo, avatar, display name,
+  bio, links, location, role badge, verification mark, follower/following/post
+  counts (all computed from real documents), join date, profile-view count.
+- Tabs: **Posts · Photos · Videos · Reposts · Music · Activity · Saved · Liked ·
+  Followers · Following · About**. Deep-linkable: `#/u/you?tab=photos`,
+  `#/u/you?media={profileMediaId}` opens the viewer straight onto that item.
+- **Avatar and cover are interactive**: tap either to open the full-screen media
+  viewer, where you can react, comment, reply to a comment, like a comment,
+  share, copy the link, see view/like/comment counts, and delete your own
+  comments. Uploading a new picture writes a real `profileMedia` document, so a
+  profile keeps a picture *history* rather than one floating URL. If a profile's
+  current avatar/cover has no gallery entry yet, the viewer says so plainly and
+  offers to add it — it never invents a document.
+- Editing your own profile: display name, bio, links, avatar, cover, handle
+  change (propagates to every denormalised copy), private-account switch.
+- Private accounts: content is locked to approved followers (enforced in
+  `firestore.rules`, not just hidden in the UI) and follows become requests that
+  the owner accepts or declines.
+
+### Posts
+- One `videos` collection for everything: vertical video, camera recordings, and
+  photo sets (up to 6) — `mediaType` distinguishes them.
+- Reactions (like + the six-reaction set), comments with replies, per-comment
+  likes, own-comment deletion, save to collections, reposts, share (link copy,
+  DM, other surfaces), hashtag and mention extraction with real `#tag` routes,
+  view counts that only tick after 2 s of actual playback.
+- Story posts (24 h, `stories/{id}`) with a tray on the home feed, per-story
+  progress bars, tap-to-navigate, hold-to-pause, reactions, viewer list, reply
+  (which sends a real direct message), and delete.
+
+### Messaging
+- `conversations/{cid}` + `conversations/{cid}/messages/{id}`: 1:1 threads,
+  optimistic-free (every bubble is a Firestore read), realtime via `onSnapshot`.
+- Read receipts (per-message `readBy` + per-thread unread counters), typing
+  indicator (a real timestamped field both clients write), presence
+  (`presence/{uid}`, 45 s heartbeat, "Active now" / "Active 12 min ago"),
+  attachments (photo, video, audio, generic file ≤ 30 MB via resumable uploads),
+  image expansion in the media viewer, audio/video through the global player,
+  tapback reactions, unsend (tombstone + file delete), hide/restore a thread,
+  report the thread or a single message, block from the thread, and a search box
+  that filters the loaded window of the conversation.
+- The Message button on a profile respects `privacy.whoCanMessage`
+  (`everyone / people I follow back / nobody`) and blocking, and the same checks
+  are enforced server-side.
+
+### Music (real, licensed)
+- `sounds/{id}` holds members' uploads and catalogue imports. Play counts,
+  favourite counts and "uses in posts" come from Firestore — nothing is
+  hardcoded.
+- `#/music` (alias `#/sounds`) has **Library · Discover · Your uploads ·
+  Favourites · Recently played**. Discover searches the Internet Archive's
+  open-licence music (netlabels / audio_music) live: releases, real track
+  lists, artwork from `archive.org/services/img/{identifier}`, playback from
+  `archive.org/download/{identifier}/{file}`.
+- Every catalogue row shows its **licence** (CC0 / Public Domain / CC BY /
+  CC BY-SA / BY-NC / BY-ND …) and links to both the licence deed and the
+  original item. Only licences that permit reuse can be attached to a post;
+  NC/ND items are listen-and-credit only and the UI says "Listen only".
+- Importing writes a `sounds` document with `external: true`, the source
+  identifier, `licenceUrl`, and the real artist credit, and that credit is
+  rendered again on the post's sound line and in the player's licence row.
+- Global player (`js/player.js`): persistent dock with play/pause, previous,
+  next, seek bar, volume, mute, shuffle, repeat, queue panel, Media Session
+  (lock-screen controls), keyboard shortcuts, restore-on-reload, and a play
+  counted only after 20 s of listening.
+
+### Discovery, notifications, moderation
+- Global search (people, hashtags, posts), trending hashtags, suggested
+  creators, tag pages, notifications grouped by category with unread badges,
+  per-category mute in Settings, reporting for posts, profiles, comments, media,
+  sounds and conversations, plus an admin panel for reports/bans and the
+  moderation trail.
+
+---
+
+## How the pieces fit
 
 ```
-users/{uid}
-  - uid, username, displayName, displayNameLower, email, photoURL, coverURL
-  - bio, location, website, role (user|creator|business|church|admin), verified
-  - followersCount, followingCount, videosCount, likesCount, createdAt, updatedAt
-  - likedVideos/{videoId}, savedVideos/{videoId}
-
-usernames/{handle} -> { uid }
-
-videos/{videoId}
-  - uid, username, displayName, photoURL
-  - mediaType: "video" | "photo", images[] (photo posts, 1-6)
-  - videoUrl, thumbnailUrl, caption, hashtags[], mentions[]
-  - soundId, soundTitle, soundUrl, duration, width, height, storagePath
-  - likeCount, commentCount, viewCount, shareCount, isPublic, createdAt, updatedAt
-  - comments/{cid}: uid, username, displayName, photoURL, text, createdAt
-
-sounds/{soundId}
-  - title, artist, artistUid, audioUrl, storagePath, coverUrl, duration, genre, useCount
-  - isFree, isOriginal, createdAt, lastUsedAt
-
-reports/{reportId}
-  - reporterUid, reporterName, reporterUsername
-  - targetType (video|user|comment|sound|live), targetId, targetOwnerUid
-  - reason, details, status (open|resolved), resolvedBy, resolvedAt, createdAt
-
-follows/{uid}/following/{targetUid}
-follows/{uid}/followers/{followerUid}
-
-notifications/{nid}
-  - toUid, fromUid, fromName, fromPhoto, fromUsername, type, videoId?, text?, read, createdAt
-
-hashtags/{tag}: count, lastUsedAt
-
-lives/{liveId}
-  - uid, username, displayName, photoURL, title
-  - status (live|ended), viewerCount, latestSeq, segmentCount
-  - thumbnailUrl, startedAt, lastPingAt (heartbeat), endedAt
-  - segments/{sid}: seq, url (Firebase Storage WebM), duration, createdAt
-  - chat/{mid}: uid, username, displayName, photoURL, text, createdAt
-
-conversations/{cid}  (cid = sorted "uidA__uidB")
-  - participants[2], lastMessage, lastSenderId, lastMessageAt, unreadCount: { uid: n }, createdAt
-  - messages/{mid}: senderId, senderUsername, senderName, senderPhoto, text, createdAt
+index.html            boot shell + watchdog
+js/app.js             router, session, badges, presence heartbeat, player mount
+js/firebase.js        config (public keys only), long polling, memory-local cache
+js/data.js            Firestore layer: users, videos, comments, sounds, DMs, follows
+js/social.js          reactions, prefs, privacy gates, blocks, profile media,
+                      stories, presence, follow requests, reposts, activity
+js/music.js           Internet Archive client (search, item tracks, licences)
+js/player.js          the one <audio> element everything shares
+js/storage.js         Storage uploads (image/video/audio/story/chat) + metadata
+js/views/*.js         home, profile, mediaViewer, stories, messages, sounds,
+                      create, discover, notifications, settings, admin, live,
+                      components (shared cards, modals, pickers)
+firestore.rules       every collection + subcollection the client touches
+storage.rules         owner-scoped writes, public reads, size/type limits
+firestore.indexes.json 31 composite indexes matching the queries above
 ```
+
+Naming note: `videos` is the *posts* collection (it predates photo posts) and
+`profileMedia` is the per-profile photo/video gallery. Both are intentional.
 
 ---
 
-## Firestore Rules — Strict
+## Run it
 
-- Public read for `users`, `usernames`, `videos`, `sounds`, `hashtags`
-- `users` create: must be self, role in [user,creator,business,church] (not admin)
-- `users` update: owners can edit profile fields but not role/counters; admin can change role/verified; counters ±1 allowed for follows
-- `videos`: create if signedIn and owner (video post with videoUrl, or photo post with 1-6 images), counters start 0; update: owner can edit caption/hashtags/sound, anyone can bump counters; delete owner or admin
-- `lives`: read public; create by host (status live, counters 0); update = host on stream-state fields OR anyone signed-in on viewerCount only; segments written by host only; chat 1-300 chars, delete by author/host/admin
-- `sounds`: create owner, update owner or counter bump, delete owner/admin
-- `follows`: self only
-- `notifications`: recipient read only, create if fromUid==auth.uid and toUid!=self
-- `conversations`: participants only; create = 2 participants incl. self; update can't change `participants`; no deletes; messages immutable, `senderId == auth.uid`, text 1–1000 chars
-- `opportunities`, `churches`, `products`: admin-only write (future phases)
-- No secrets in frontend — all protection in rules
-
-Deploy:
 ```bash
-firebase use xacheus-7c98b
+npm run dev       # python3 -m http.server 5173 --bind 0.0.0.0
+# open http://localhost:5173/#/home
+```
+
+There is no build step, so a plain static server is enough. Firebase config lives
+in `js/firebase.js` (public web config — the security rules are what protect it).
+
+## Deploy the backend
+
+```bash
 firebase deploy --only firestore:rules,firestore:indexes,storage,hosting
 ```
-(Enable **Firebase Storage** in the console first. Media writes are owner-scoped by `storage.rules`.)
 
-Indexes in `firestore.indexes.json`:
-- conversations: participants contains+lastMessageAt desc
-- lives: status+startedAt desc (client-side sort fallback if not yet built)
-- videos: uid+createdAt, createdAt, likeCount+createdAt, hashtags contains+createdAt, soundId+createdAt
-- sounds: useCount, isFree+useCount
-- users: username, displayNameLower
-- plus legacy indexes
+Rules and indexes **must** be deployed: the app degrades to
+"permission denied" toasts when they are missing, and several list queries need
+the composite indexes in `firestore.indexes.json`.
 
----
+## Making someone an admin
 
-## Run Locally
-
-```bash
-npm run dev   # http://0.0.0.0:5173
-```
-
-- Enable Email/Password + Google in Firebase Console → Authentication → Sign-in method
-- Add preview domains to Authorized domains
-- Ensure Cloud Firestore API enabled and database created
+Set `users/{uid}.role = "admin"` in the Firestore console once (only an existing
+admin can do it through the app). The admin panel then appears at `#/admin`.
 
 ---
 
-## Firebase Storage
+## Not implemented
 
-- Bucket: the project's default bucket (`xacheus-7c98b.firebasestorage.app`).
-- Media lives at `uploads/{uid}/{kind}/{file}`.
-- Storage rules in `storage.rules` allow public read and owner-scoped writes
-  (matched against the uploader's uid in the path), with content-type + size limits.
+Stated so it is not mistaken for a bug or, worse, for working behaviour:
+
+- **Audio/video calls** inside a conversation (text + files only).
+- Group conversations (1:1 threads only).
+- Per-thread mute and push-notification delivery (web push is not wired;
+  in-app badges and the notification feed are).
+- Full-text search over messages or the whole post corpus — message search filters
+  the loaded window, and post search matches handles/captions/hashtags in
+  Firestore fields.
+- Language/region settings, data export, two-factor sign-in, digest email
+  preferences (Settings says this on-screen).
+- Live streaming is a broadcast/chat prototype: no real media server, so the
+  "stream" is presence + chat + gifts, not a video transport.
+- Video *filters/effects* editor, and trimming (the composer records, uploads and
+  posts; it does not edit).
+- Algorithmic ranking: "For You" is recency + like-count ordering, not a model.
 
 ---
 
 ## Roadmap
 
-- **Phase 1 (now)**: Auth, profiles+roles, video feed, Firebase Storage, likes/comments/follows/notifications, create (record/upload), sounds (free)
-- **Phase 2**: Discover (trending videos/sounds), opportunities (jobs/services posted by admins), churches/communities (sermons/updates)
-- **Phase 3**: Business accounts, advertising
-- **Phase 4**: Marketplace — discover products from videos
-
-Every button works. No fake functions. Production-oriented.
-
----
-
-## Admin Setup
-
-To make a user admin, set Firestore `users/{uid}.role = "admin"` directly in console (only existing admin can do via rules, so first admin must be set manually). After that, admin panel appears at `/#/admin`.
-
----
+- **Phase 1** — auth, profiles + roles, vertical video, Storage, likes/comments/
+  follows/notifications, create, sounds.
+- **Phase 2 (this pass)** — full profiles with media galleries and stories,
+  Messenger-grade DMs, licensed music with a real player, privacy controls,
+  blocking/reporting, reactions/reposts/saved collections, activity feed,
+  hardened rules and indexes.
+- **Phase 3** — communities/pages, business accounts, opportunities board.
+- **Phase 4** — marketplace discovery from posts.
 
 Built in Zambia 🌍

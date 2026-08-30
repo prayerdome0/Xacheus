@@ -1,16 +1,26 @@
-/** Xacheus — Create (video upload/record + photo posts) */
+/**
+ * Xacheus — Create.
+ *
+ * Three real post types on one form: vertical video (upload or camera record),
+ * a photo set (up to 6), and a story. Anything you attach as music comes from
+ * the live library or the licensed catalogue — Xacheus never offers a song you
+ * can't actually play.
+ */
 
-import { uploadVideo, uploadAudio, uploadImage } from "../storage.js";
+import { uploadVideo, uploadImage, uploadStoryMedia } from "../storage.js";
 import {
+  attachCatalogueSound,
   createVideo,
   getSound,
   getSounds,
   searchSounds,
-  CURATED_FREE_SOUNDS,
   getSoundGenres,
   formatSoundDuration,
 } from "../data.js";
 import { toast, esc, avatar } from "../ui.js";
+import { playQueue, toggleTrack, isCurrentTrack } from "../player.js";
+import { describeLicence, loadItemTracks, searchCatalogue } from "../music.js";
+import { addStory } from "../social.js";
 
 export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
   let selectedFile = null;
@@ -91,8 +101,13 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
               <button class="btn btn-ghost btn-sm" type="button" id="clear-sound" hidden>Use original</button>
             </div>
             <div class="sounds-mini" id="sounds-mini"></div>
+            <p class="field-hint sound-licence-note" id="sound-licence-note" hidden></p>
           </div>
 
+          <label class="field-check">
+            <input type="checkbox" id="video-as-story" />
+            <span>Also put this clip in my <strong>story</strong> (gone after 24 hours)</span>
+          </label>
           <div class="create-actions">
             <button class="btn btn-primary btn-block" type="submit" id="post-btn" disabled>Post video</button>
             <p class="fine-print">By posting you confirm you own this video and it doesn't violate copyright. We use only royalty-free sounds — no YouTube rips.</p>
@@ -123,6 +138,10 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
               <span>Caption <em>(optional)</em> — #hashtags and @mentions are linked</span>
               <textarea id="photo-caption" rows="3" maxlength="1000" placeholder="Add a caption… e.g. Sunday service 🙏 #gospel #zambia"></textarea>
               <small class="field-hint"><span id="photo-caption-count">0</span>/1000</small>
+            </label>
+            <label class="field-check">
+              <input type="checkbox" id="photo-as-story" />
+              <span>Also put the first photo in my <strong>story</strong> (gone after 24 hours)</span>
             </label>
             <div class="create-actions">
               <button class="btn btn-primary btn-block" type="submit" id="photo-post-btn" disabled>Post photos</button>
@@ -304,11 +323,16 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
   async function renderSoundsMini() {
     const host = document.querySelector("#sounds-mini");
     if (!host) return;
-    let picks = CURATED_FREE_SOUNDS.slice(0, 6);
+    let picks = [];
     try {
-      const trending = await getSounds({ limitCount: 8, includeCurated: true });
-      if (trending.length) picks = trending.slice(0, 6);
-    } catch {}
+      picks = (await getSounds({ limitCount: 6 })).slice(0, 6);
+    } catch (err) {
+      console.warn("[xacheus] sound suggestions", err);
+    }
+    if (!picks.length) {
+      host.innerHTML = `<p class="field-hint">No sounds in the library yet. Open <a class="link" href="#/music?tab=discover">Music → Discover</a> to import a licensed track, or upload your own.</p>`;
+      return;
+    }
     host.innerHTML = picks
       .map(
         (s) => `
@@ -333,16 +357,32 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
     selectedSound = sound;
     const sel = document.querySelector("#sound-selected");
     const clearBtn = document.querySelector("#clear-sound");
+    const licence = sound.licenceUrl ? describeLicence(sound.licenceUrl) : null;
     sel.innerHTML = `
       <span class="sound-icon">🎵</span>
       <span class="sound-info">
         <strong>${esc(sound.title)}</strong>
-        <em>${esc(sound.artist || "Free Music")} · ${esc(sound.genre || "")}${sound.duration ? ` · ${formatSoundDuration(sound.duration)}` : ""}</em>
+        <em>${esc(sound.artist || "Unknown artist")} · ${esc(sound.genre || "")}${sound.duration ? ` · ${formatSoundDuration(sound.duration)}` : ""}</em>
+        <small>${sound.external
+          ? `Licensed · ${esc(licence?.label || "see source")} · credit is added to your post automatically`
+          : sound.artistUsername
+            ? `Sound by @${esc(sound.artistUsername)} — credit them when you reuse it`
+            : "Member upload"}</small>
       </span>
-      <audio src="${esc(sound.audioUrl)}" controls preload="none" style="height:28px;width:140px"></audio>
+      <button class="icon-btn" type="button" data-act="preview-sound" title="Preview in the player">▶</button>
     `;
+    sel.querySelector("[data-act='preview-sound']").addEventListener("click", () => {
+      if (isCurrentTrack(sound.id)) toggleTrack(sound);
+      else playQueue([sound]);
+    });
     clearBtn.hidden = false;
-    toast(`Selected: ${sound.title}`, "success", 2000);
+    const note = document.querySelector("#sound-licence-note");
+    if (note) {
+      note.hidden = !sound.external;
+      note.textContent = sound.external
+        ? `“${sound.title}” streams from its original source and keeps its licence line (${licence?.label || "see source"}). `
+        : "";
+    }
   }
 
   function clearSound() {
@@ -376,9 +416,9 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
                 .join("")}
             </div>
             <div class="sounds-tabs">
-              <button class="tab is-active" data-tab="free">Free music</button>
-              <button class="tab" data-tab="trending">Trending</button>
-              <button class="tab" data-tab="original">Originals</button>
+              <button class="tab is-active" data-tab="library">Library</button>
+              <button class="tab" data-tab="catalogue">Licensed catalogue</button>
+              <button class="tab" data-tab="original">Your own</button>
             </div>
             <div class="sounds-list" id="sounds-list"><div class="loader-row"><span class="spinner"></span> Loading…</div></div>
             <p class="field-hint" style="margin-top:10px"><a class="link" href="#/sounds">Browse full library →</a></p>
@@ -395,7 +435,7 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
     function paint(sounds) {
       cache = sounds;
       if (!sounds.length) {
-        list.innerHTML = `<p class="panel-empty">No sounds match. Try another search or <a class="link" href="#/sounds">upload your own</a>.</p>`;
+        list.innerHTML = `<p class="panel-empty">No sounds match. Try another search, or <a class="link" href="#/music?tab=uploads">upload your own</a>.</p>`;
         return;
       }
       list.innerHTML = sounds
@@ -407,13 +447,24 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
             <span class="sound-meta">
               <strong>${esc(s.title)}</strong>
               <em>${esc(s.artist || "")} · ${esc(s.genre || "")}${s.duration ? ` · ${formatSoundDuration(s.duration)}` : ""} · used ${s.useCount || 0}</em>
+              ${s.licenceUrl ? `<small>${esc(describeLicence(s.licenceUrl).label)}</small>` : ""}
             </span>
           </div>
-          <audio src="${esc(s.audioUrl)}" controls preload="none"></audio>
+          <button class="icon-btn" type="button" data-act="preview" title="Preview in the player">▶</button>
           <button class="btn btn-primary btn-sm" type="button" data-act="use-sound">Use</button>
         </div>`
         )
         .join("");
+
+      list.querySelectorAll("[data-act='preview']").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const row = btn.closest(".sound-row");
+          const sound = cache.find((x) => x.id === row.dataset.soundId);
+          if (!sound) return;
+          if (isCurrentTrack(sound.id)) toggleTrack(sound);
+          else playQueue(cache, cache.indexOf(sound));
+        });
+      });
 
       list.querySelectorAll("[data-act='use-sound']").forEach((btn) => {
         btn.addEventListener("click", () => {
@@ -432,24 +483,134 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
       host.querySelectorAll(".sounds-tabs .tab").forEach((t) => t.classList.toggle("is-active", t.dataset.tab === tab));
       list.innerHTML = `<div class="loader-row"><span class="spinner"></span> Loading…</div>`;
 
+      if (tab === "catalogue") {
+        await loadCatalogue(query);
+        return;
+      }
+
       let sounds = [];
-      if (query) {
-        sounds = await searchSounds(query, {
-          limitCount: 40,
-          genre: currentGenre === "all" || currentGenre === "original" ? "" : currentGenre,
-        });
-      } else if (tab === "free") {
-        sounds = await getSounds({ onlyFree: true, limitCount: 40, includeCurated: true });
-      } else if (tab === "original") {
-        sounds = await getSounds({ onlyOriginal: true, limitCount: 40, includeCurated: false });
-      } else {
-        sounds = await getSounds({ limitCount: 40, includeCurated: true });
+      try {
+        if (query) {
+          sounds = await searchSounds(query, {
+            limitCount: 40,
+            genre: currentGenre === "all" || currentGenre === "original" ? "" : currentGenre,
+          });
+        } else if (tab === "original") {
+          sounds = await getSounds({ onlyOriginal: true, limitCount: 40 });
+        } else {
+          sounds = await getSounds({ limitCount: 40 });
+        }
+      } catch (err) {
+        list.innerHTML = `<p class="panel-empty">${esc(err?.message || "Couldn't read the sound library right now.")}</p>`;
+        return;
       }
       if (currentGenre && currentGenre !== "all") {
         if (currentGenre === "original") sounds = sounds.filter((s) => s.isOriginal);
         else sounds = sounds.filter((s) => String(s.genre || "").toLowerCase() === currentGenre);
       }
       paint(sounds);
+    }
+
+    /**
+     * Live search of the licensed catalogue. Choosing a track imports it into
+     * `sounds` first (so the post references a real document with a licence),
+     * then selects it. Tracks whose licence forbids reuse are not offered.
+     */
+    async function loadCatalogue(query) {
+      try {
+        const { items } = await searchCatalogue({ text: query, rows: 12, licenceOnly: true });
+        if (!items.length) {
+          list.innerHTML = `<p class="panel-empty">No open-licence releases matched${query ? ` “${esc(query)}”` : ""}. Pick a release, then “Show tracks”, then Use.</p>`;
+          return;
+        }
+        list.innerHTML = items
+          .map(
+            (item) => `
+            <div class="sound-row" data-release-row="${esc(item.identifier)}">
+              <div class="sound-row-main">
+                <span class="sound-cover"><img src="${esc(item.artwork)}" alt="" loading="lazy" /></span>
+                <span class="sound-meta">
+                  <strong>${esc(item.title)}</strong>
+                  <em>${esc(item.creator || "Unknown")} · ${esc(describeLicence(item.licenseUrl).label)}</em>
+                </span>
+              </div>
+              <button class="btn btn-outline btn-sm" type="button" data-act="expand-release">Show tracks</button>
+            </div>`
+          )
+          .join("");
+        list.querySelectorAll("[data-act='expand-release']").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const row = btn.closest("[data-release-row]");
+            const identifier = row.dataset.releaseRow;
+            const item = items.find((x) => x.identifier === identifier);
+            btn.disabled = true;
+            btn.textContent = "Reading…";
+            let tracks = [];
+            try {
+              tracks = (await loadItemTracks(identifier)).tracks;
+            } catch (err) {
+              btn.disabled = false;
+              btn.textContent = "Show tracks";
+              toast(err?.message || "The archive didn't return any files", "error");
+              return;
+            }
+            btn.disabled = false;
+            btn.textContent = "Hide tracks";
+            let host2 = row.querySelector("[data-release-tracks]");
+            if (!host2) {
+              host2 = document.createElement("div");
+              host2.className = "release-tracks is-open";
+              host2.dataset.releaseTracks = "";
+              row.appendChild(host2);
+            } else if (!host2.hidden) {
+              host2.hidden = true;
+              return;
+            }
+            host2.hidden = false;
+            if (!tracks.length) {
+              host2.innerHTML = `<p class="panel-empty">This release has no MP3 files, so there's nothing to attach.</p>`;
+              return;
+            }
+            host2.innerHTML = tracks
+              .map(
+                (t, i) => `
+                <div class="track-row is-compact">
+                  <button class="sound-play" type="button" data-cat-play="${i}" aria-label="Play ${esc(t.title)}"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></button>
+                  <span class="track-main"><strong>${esc(t.title)}</strong><em>${esc(t.artist)}</em></span>
+                  <span class="track-actions"><button class="btn btn-sm btn-primary" type="button" data-cat-use="${i}">Use</button></span>
+                </div>`
+              )
+              .join("");
+            host2.querySelectorAll("[data-cat-play]").forEach((b) => {
+              b.addEventListener("click", () => playQueue(tracks, Number(b.dataset.catPlay) || 0));
+            });
+            host2.querySelectorAll("[data-cat-use]").forEach((b) => {
+              b.addEventListener("click", async () => {
+                const track = tracks[Number(b.dataset.catUse) || 0];
+                if (!track) return;
+                if (!describeLicence(track.licenseUrl).reusable) {
+                  toast("That track's licence doesn't allow reuse in a post.", "error", 4200);
+                  return;
+                }
+                b.disabled = true;
+                try {
+                  const sound = await attachCatalogueSound(ctx.state.profile, track);
+                  selectSound(sound);
+                  closeSoundsModal();
+                  toast("Track attached — its licence and credit travel with the post", "success", 3200);
+                } catch (err) {
+                  toast(err?.message || "Could not attach that track", "error");
+                } finally {
+                  b.disabled = false;
+                }
+                void item;
+              });
+            });
+          });
+        });
+      } catch (err) {
+        list.innerHTML = `<div class="panel error-panel"><strong>Catalogue unavailable</strong><p>${esc(err?.message || "The music catalogue could not be reached from this network.")}</p><p class="muted">Nothing is faked here: pick a sound from the Library tab instead, or try again in a moment.</p></div>`;
+      }
     }
 
     host.querySelectorAll(".sounds-tabs .tab").forEach((tab) => {
@@ -634,7 +795,23 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
             caption: photoCaption.value.trim(),
           });
 
-          toast("Photo post published!", "success");
+          const storyToggle = root.querySelector("#photo-as-story");
+          if (storyToggle?.checked) {
+            storyToggle.checked = false;
+            storyToggle.disabled = true;
+            try {
+              const storyUpload = await uploadStoryMedia(photoFiles[0]);
+              await addStory(ctx.state.profile, { url: storyUpload.url, storagePath: storyUpload.path, kind: "photo" });
+              toast("Photo post published — and it's in your story", "success");
+            } catch (err) {
+              toast(`Story failed: ${err?.message || "try again"}`, "error", 4200);
+            } finally {
+              storyToggle.disabled = false;
+            }
+          } else {
+            toast("Photo post published!", "success");
+          }
+          window.dispatchEvent(new Event("xacheus:feed-refresh"));
           ctx.navigate("#/home");
         } catch (err) {
           console.warn("[xacheus] photo post failed", err);
@@ -683,7 +860,28 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
             storagePath: result.path,
           });
 
-          toast("Video posted!", "success");
+          const storyToggle = root.querySelector("#video-as-story");
+          if (storyToggle?.checked) {
+            storyToggle.checked = false;
+            storyToggle.disabled = true;
+            try {
+              const storyUpload = await uploadStoryMedia(file);
+              await addStory(ctx.state.profile, {
+                url: storyUpload.url,
+                storagePath: storyUpload.path,
+                kind: "video",
+                duration: storyUpload.duration || result.duration || 0,
+              });
+              toast("Video posted — and it's in your story", "success");
+            } catch (err) {
+              toast(`Story failed: ${err?.message || "try again"}`, "error", 4200);
+            } finally {
+              storyToggle.disabled = false;
+            }
+          } else {
+            toast("Video posted!", "success");
+          }
+          window.dispatchEvent(new Event("xacheus:feed-refresh"));
           ctx.navigate("#/home");
         } catch (err) {
           console.warn("[xacheus] create video", err);

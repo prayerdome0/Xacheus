@@ -1,4 +1,10 @@
-/** Xacheus — App shell, router and session state (Phase 1: video platform) */
+/**
+ * Xacheus — app shell, router and session state.
+ *
+ * Owns the things that must outlive a single screen: the signed-in profile,
+ * unread badges, the presence heartbeat, the global music player and the
+ * hash-based routes every view plugs into.
+ */
 
 import { onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 import { getDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
@@ -6,13 +12,17 @@ import { getDoc, doc } from "https://www.gstatic.com/firebasejs/10.12.5/firebase
 import { auth, db } from "./firebase.js";
 import {
   ensureProfile,
+  getVideo,
   getSuggestedUsers,
   getTrending,
   isDeferringProfileCreation,
   watchConversations,
+  watchNotifications,
   watchProfile,
   isAdminProfile,
 } from "./data.js";
+import { PRESENCE_HEARTBEAT_MS, getUserPrefs, goOffline, heartbeat } from "./social.js";
+import { mountPlayer, setPlayerOptions } from "./player.js";
 import { avatar, clear, esc, formatCount, openModal, toast } from "./ui.js";
 import { friendlyAuthError, mountAuth } from "./auth.js";
 import { canInstall, initPwa, isIos, onPwaChange, promptInstall } from "./pwa.js";
@@ -25,6 +35,7 @@ import { settingsView } from "./views/settings.js";
 import { adminView } from "./views/admin.js";
 import { soundsView, soundDetailView } from "./views/sounds.js";
 import { messagesView, chatView } from "./views/messages.js";
+import { openMediaViewer } from "./views/mediaViewer.js";
 import { liveListView, liveBroadcastView, liveWatchView } from "./views/live.js";
 
 // Mobile tab bar keeps Create dead-centre (5 items). Desktop sidebar
@@ -72,6 +83,7 @@ const countedViews = new Set(); // one view-count bump per video per session
 let currentView = null;
 let unsubProfile = null;
 let unsubConversations = null;
+let unsubNotifications = null;
 let authController = null;
 
 const ctx = {
@@ -104,6 +116,23 @@ const ctx = {
   },
   onVideosChanged() {
     render();
+  },
+  /**
+   * A like/comment/share bump happened somewhere else; pull the fresh numbers
+   * into the cache and tell the visible cards to repaint their counters.
+   */
+  async refreshVideoCounts(videoId) {
+    if (!videoId) return;
+    const fresh = await getVideo(videoId).catch(() => null);
+    if (!fresh) return;
+    ctx.videoCache.set(videoId, fresh);
+    window.dispatchEvent(new CustomEvent("xacheus:video-updated", { detail: { id: videoId, video: fresh } }));
+  },
+  openMedia(mediaId, list) {
+    return openMediaViewer(ctx, mediaId, { list });
+  },
+  refreshStories() {
+    window.dispatchEvent(new Event("xacheus:story-posted"));
   },
 };
 
@@ -212,14 +241,14 @@ function buildShell() {
           <ul class="tip-list">
             <li>🎬 Vertical videos & photo posts</li>
             <li>📡 Go live — gifts, stickers & chat</li>
-            <li>🎵 Free royalty-free sounds</li>
+            <li>🎵 Licensed music with the licence shown</li>
             <li>👤 Roles for creators, businesses & churches</li>
           </ul>
         </section>
         <p class="rail-foot">
           <a class="link" href="#/discover">Discover</a> ·
           <a class="link" href="#/live">Live</a> ·
-          <a class="link" href="#/sounds">Sounds</a> ·
+          <a class="link" href="#/music">Music</a> ·
           <a class="link" href="#/settings">Settings</a>
         </p>
       </aside>
@@ -357,6 +386,28 @@ function setBadge(key, count) {
   });
 }
 
+/**
+ * `#/media/{id}` opens the full-screen viewer over whatever is already on
+ * screen; when it's a cold load (shared link) we land on the owner's profile
+ * so the user isn't staring at a blank page behind the viewer.
+ */
+function mediaFallbackView(ctx2, mediaId) {
+  return {
+    html: `<div class="loader-row"><span class="spinner"></span> Opening media…</div>`,
+    title: "Media",
+    async mount(root) {
+      const { getProfileMediaItem } = await import("./social.js");
+      const item = await getProfileMediaItem(mediaId).catch(() => null);
+      if (item?.username) {
+        location.replace(`#/u/${encodeURIComponent(item.username)}?media=${encodeURIComponent(mediaId)}`);
+        return;
+      }
+      root.innerHTML = `<div class="locked-view"><div class="locked-card"><h2>Media not found</h2><p>This photo or clip was deleted, or it isn't public.</p><a class="btn btn-primary btn-sm" href="#/home">Back to the feed</a></div></div>`;
+    },
+    destroy() {},
+  };
+}
+
 /* auth overlay */
 function openAuthOverlay() {
   const overlay = document.querySelector("#auth-overlay");
@@ -407,7 +458,14 @@ function resolveRoute() {
     case "discover":
       return { view: discoverView(ctx, { tab: params.tab, q: params.q }), key: "discover" };
     case "sounds":
-      return { view: soundsView(ctx, { q: params.q, tab: params.tab }), key: "sounds" };
+    case "music":
+      return { view: soundsView(ctx, { q: params.q, tab: first === "music" ? params.tab || "library" : params.tab }), key: "sounds" };
+    case "media":
+      if (second) {
+        openMediaViewer(ctx, second, { list: [] });
+        return { view: mediaFallbackView(ctx, second), key: `media:${second}` };
+      }
+      return { view: homeView(ctx), key: "home" };
     case "sound":
       if (second) return { view: soundDetailView(ctx, { soundId: second }), key: `sound:${second}` };
       return { view: soundsView(ctx, { q: params.q, tab: params.tab }), key: "sounds" };
@@ -428,12 +486,12 @@ function resolveRoute() {
       if (second) return { view: liveWatchView(ctx, { liveId: second }), key: `live:${second}` };
       return { view: liveListView(ctx), key: "live" };
     case "u":
-      return { view: profileView(ctx, { username: second, tab: params.tab || third }), key: `u:${second}` };
+      return { view: profileView(ctx, { username: second, tab: params.tab || third, media: params.media }), key: `u:${second}` };
     case "video":
     case "v":
       return { view: homeView(ctx, { focusVideoId: second }), key: `video:${second}` };
     case "profile":
-      return { view: profileView(ctx, { username: state.profile?.username, tab: params.tab }), key: "me" };
+      return { view: profileView(ctx, { username: state.profile?.username, tab: params.tab, media: params.media }), key: "me" };
     case "settings":
       return { view: settingsView(ctx), key: "settings" };
     case "admin":
@@ -605,12 +663,44 @@ function paintSession() {
   }
 }
 
+/** Playback/animation preferences are read once per session (they change rarely). */
+function hydratePrefs(uid) {
+  getUserPrefs(uid)
+    .then((prefs) => {
+      setPlayerOptions(prefs.playback || {});
+      document.documentElement.classList.toggle("reduce-motion", Boolean(prefs.playback?.reducedMotion));
+    })
+    .catch(() => {});
+}
+
+let presenceTimer = null;
+
+function startPresence(uid) {
+  stopPresence();
+  if (!uid) return;
+  heartbeat(uid);
+  presenceTimer = window.setInterval(() => {
+    if (document.visibilityState === "hidden") return;
+    heartbeat(uid);
+  }, PRESENCE_HEARTBEAT_MS);
+}
+
+function stopPresence() {
+  if (presenceTimer) {
+    clearInterval(presenceTimer);
+    presenceTimer = null;
+  }
+}
+
 function activateSession(user, profile) {
   state.user = user;
   state.profile = profile;
   paintSession();
   refreshRail();
   closeAuthOverlay();
+  startPresence(user.uid);
+  startNotificationWatcher(user.uid);
+  hydratePrefs(user.uid);
 
   unsubProfile?.();
   unsubProfile = watchProfile(user.uid, (fresh) => {
@@ -626,6 +716,24 @@ function activateSession(user, profile) {
   });
 
   render();
+}
+
+/**
+ * Inbox badge from the notification feed itself, so likes/comments/follows
+ * light the bell even while you're on another screen.
+ */
+function startNotificationWatcher(uid) {
+  if (!watchNotifications) return;
+  if (unsubNotifications?.__uid === uid) return;
+  unsubNotifications?.();
+  const stop = watchNotifications(uid, (rows) => {
+    const unread = rows.reduce((sum, n) => sum + (n.read ? 0 : 1), 0);
+    ctx.setNotificationCount(unread);
+  });
+  if (stop) {
+    stop.__uid = uid;
+    unsubNotifications = stop;
+  }
 }
 
 function finishBoot() {
@@ -649,19 +757,40 @@ function boot() {
   buildShell();
   paintSession();
   refreshRail();
+  mountPlayer();
 
   window.addEventListener("hashchange", () => {
     render();
     if (location.hash.startsWith("#/home") || location.hash.startsWith("#/discover")) refreshRail();
   });
 
+  // Presence: be honest about going away. `pagehide` fires on mobile too,
+  // `beforeunload` does not, so both are listed for older desktop browsers.
+  window.addEventListener("pagehide", () => {
+    if (state.user?.uid) goOffline(state.user.uid);
+  });
+  window.addEventListener("beforeunload", () => {
+    if (state.user?.uid) goOffline(state.user.uid);
+  });
+  // Coming back to the tab refreshes "Active now" immediately; we do NOT mark
+  // you offline the moment you switch tabs (that would flicker for no reason) —
+  // presence simply lapses after 75s of no heartbeat.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.user?.uid) heartbeat(state.user.uid);
+  });
+
   onAuthStateChanged(auth, async (user) => {
+    const previousUid = state.user?.uid || null;
     state.user = user;
     if (!user) {
+      if (previousUid) goOffline(previousUid);
       state.profile = null;
       unsubProfile?.();
       unsubConversations?.();
       unsubConversations = null;
+      unsubNotifications?.();
+      unsubNotifications = null;
+      stopPresence();
       setBadge("notifications", 0);
       setBadge("messages", 0);
       paintSession();

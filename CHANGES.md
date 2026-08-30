@@ -1,3 +1,108 @@
+# Phase 2 — profiles, media, stories, messaging, licensed music
+
+## Date: 2026-08-30
+
+Everything below is wired to Firestore/Storage. No placeholder data was added;
+the curated "free sounds" fallback list from Phase 1 was **deleted**, because it
+displayed songs the app could not license or count.
+
+### Foundation (audited and rewritten first)
+- `docs/FOUNDATION_AUDIT.md` — what the foundation actually looked like, what was
+  broken, and the schema/collection decisions the rest of the app now follows.
+- `firestore.rules` — rewritten to match the client exactly: per-collection
+  whitelists, `serverTimestamp()` fields compared against `request.time`,
+  owner-only subcollections (`mediaReactions`, `postReactions`, `likedVideos`,
+  `savedVideos`, `savedCollections`, `blocks`, `presence`, `storyViews`,
+  `profileViews`, `playHistory`, `favoriteSounds`), participant-only DM reads,
+  `stories` expiry enforced by rules, follow-request documents, repost pair
+  writes, and counter increments bounded to sane ranges.
+- `storage.rules` — owner-scoped `uploads/{uid}/{kind}/…` writes with content-type
+  and size ceilings (image 10 MB, video 100 MB, audio 40 MB, chat attachment
+  30 MB), public read, delete restricted to the owner's own prefix.
+- `firestore.indexes.json` — 31 composite indexes, one per non-trivial query in
+  `js/data.js` / `js/social.js` (verified by extracting every `query(...)` from
+  the source and diffing against the file).
+- `js/data.js` — batch/transaction correctness (`batch.set(..., {merge:true})`,
+  500-op chunking, no cross-parent subcollection queries), comment threads gain
+  `parentId`/`replyToUsername`/`likeCount`/`replyCount`, `bumpVideoShare`,
+  `bumpVideoView`, `getLikedVideos`, `watchConversation`, `reactToMessage`,
+  provenance fields on `createVideo`, and username propagation on rename.
+- `js/social.js` — reaction state as the source of truth, `DEFAULT_PREFS`
+  (`notifications`, `privacy`, `playback`) validated on write, `canMessage` /
+  `canComment` / `getAccessState` gates, blocks, presence, typing, follow
+  requests, stories, profile media + comments + replies, reposts, saved
+  collections, activity, `removeFollower`, and a fixed `savePrefs` (it was about
+  to throw on the `playback` group it never built).
+
+### Profiles
+- `js/views/profile.js` rewritten: cover + avatar (both tappable → full-screen
+  media viewer), stats, follow/request-follow/cancel/accept flow, message button
+  gated by privacy + blocking, share/report/block/mute menu, eleven tabs,
+  private-account lock panel, realtime repaints (`watchProfile`,
+  `watchUserVideos`, `watchProfileMedia`, `watchSavedVideos`, `watchMyReposts`,
+  `watchPresence`, `watchFollowRequests`) all torn down on unmount, edit-profile
+  modal (avatar, cover, name, bio, links, location, handle change, private
+  toggle), media uploader for photos/covers, follow-requests inbox.
+- `js/views/mediaViewer.js` — full-screen viewer for any `profileMedia` item with
+  reactions, comments, threaded replies, comment likes, own-comment delete,
+  share, caption editing, set-as-current, delete, and honest "not in your
+  gallery" synthetic mode for a bare avatar/cover URL.
+- `js/views/stories.js` — story tray (seen/unseen rings derived from a real
+  `users/{uid}/storyViews` read), viewer with per-story progress, 5 s photo timer
+  or video-end advance, tap-thirds nav, hold-to-pause, keyboard nav, reactions
+  (`reactToStory`), viewer list, owner delete, and a reply box that sends a real
+  DM; composer uploads through `uploadStoryMedia` + `addStory`.
+
+### Messaging
+- `js/views/messages.js` rewritten: inbox with realtime unread badges, presence
+  dots, follow-request panel, new-chat finder, hide/restore/report; thread view
+  with realtime bubbles, date grouping, typing indicator, presence label,
+  read receipts (single tick = sent, double tick = the other side wrote a
+  `readBy` stamp), attachments with progress, image expansion, audio/video via
+  the global player, tapback reactions, unsend, per-message report, block,
+  and in-thread search.
+
+### Music
+- `js/music.js` — Internet Archive client: `advancedsearch.php` + `/metadata/`
+  with JSONP fallback, LRU + 30-minute cache, licence allow-list, mood presets,
+  seed items, `describeLicence`/`attributionLine`/`trackToSoundDoc`.
+- `js/player.js` — the shared dock (queue, shuffle/repeat, Media Session,
+  shortcuts, restore, licence line, 20-second play attribution).
+- `js/views/sounds.js` — `#/music` with Library / Discover / Your uploads /
+  Favourites / Recently played, real per-row counts, licence chips on every
+  catalogue row, "Listen only" for NC/ND items, import-then-attach flow.
+
+### Composer, settings, shell
+- `js/views/create.js` — photo posts, video upload/record, story opt-in on both,
+  sound picker backed by the real library plus live catalogue search (no
+  per-row `<audio controls>` any more; preview goes through the player).
+- `js/views/settings.js` — notification categories, privacy (private account,
+  who-can-message, who-can-comment, show activity/saved/liked), playback prefs
+  that actually change behaviour (feed autoplay, `preload`, player options),
+  blocked-accounts list with unblock, and an on-screen list of what isn't built.
+- `js/app.js` — routes `#/music`, `#/media/{id}`, `?tab=`/`?media=` params;
+  presence heartbeat + honest offline on `pagehide`; notification badge watcher;
+  prefs hydration; `mountPlayer()`; `ctx.refreshVideoCounts` / `ctx.openMedia` /
+  `ctx.refreshStories`.
+- `js/views/home.js` — story tray above the feed, tap-to-play when autoplay is
+  off, data-saver preload handling, in-place counter patches after modal actions.
+- `styles.css` — ~800 lines for the new surfaces (profile hero, tabs, grids,
+  activity, stories, media viewer, inbox, chat bubbles, sound rows, catalogue
+  cards, player dock, switches) plus light-theme and mobile rules.
+- `sw.js` — cache bumped to `xacheus-video-v8`.
+
+### Verification done in this environment
+- `node --check` on every module; a named-import resolver run over `js/**`
+  (caught three fatal import mistakes, all fixed); a "called but not imported"
+  pass (caught `getProfile` in the share sheet); static HTML/asset fetch smoke
+  test through a local server; index heuristic over every `query(...)` vs
+  `firestore.indexes.json`.
+- Not verifiable here: Firestore/Storage rule compilation and real browser
+  behaviour. Deploy rules/indexes and click through the flows in
+  `docs/FOUNDATION_AUDIT.md` → "Manual pass".
+
+---
+
 # Firebase Authentication Fixes and Real Logo Implementation
 
 ## Date: 2026-08-29
