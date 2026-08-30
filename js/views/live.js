@@ -28,7 +28,7 @@ import {
   watchLiveGifts,
   watchLiveReactions,
 } from "../data.js";
-import { uploadImage, uploadVideo } from "../cloudinary.js";
+import { uploadImage, uploadVideo } from "../storage.js";
 import { avatar, clear, emptyState, esc, formatCount, timeAgo, toast, copyText } from "../ui.js";
 import { liveThumb } from "./components.js";
 
@@ -358,7 +358,7 @@ export function liveBroadcastView(ctx) {
         for (let attempt = 0; attempt < 2 && !ok; attempt += 1) {
           try {
             const file = new File([item.blob], `seg-${item.seq}.webm`, { type: item.blob.type || "video/webm" });
-            const res = await uploadVideo(file);
+            const res = await uploadVideo(file, { noThumbnail: true });
             if (!res?.url) throw new Error("No URL from upload");
             await addLiveSegment(liveId, { seq: item.seq, url: res.url, duration: item.duration });
             uploaded += 1;

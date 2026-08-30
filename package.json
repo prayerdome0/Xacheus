@@ -2,14 +2,14 @@
   "name": "xacheus-social",
   "version": "1.0.0",
   "private": true,
-  "description": "Xacheus — Zambia's short vertical video platform. Phase 1: real auth, profiles with roles, video feed, Cloudinary, free sounds. No fake videos.",
+  "description": "Xacheus — Zambia's short vertical video platform. Real auth, profiles with roles, video feed, Firebase Storage, free sounds. No fake videos.",
   "type": "module",
   "scripts": {
     "dev": "python3 -m http.server 5173 --bind 0.0.0.0",
     "start": "python3 -m http.server 5173 --bind 0.0.0.0",
-    "deploy": "firebase deploy --only firestore:rules,firestore:indexes,hosting"
+    "deploy": "firebase deploy --only firestore:rules,firestore:indexes,storage,hosting"
   },
-  "keywords": ["social", "firebase", "firestore", "realtime", "pwa"],
+  "keywords": ["social", "firebase", "firestore", "storage", "realtime", "pwa"],
   "author": "Xacheus",
   "license": "UNLICENSED"
 }

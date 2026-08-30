@@ -11,9 +11,9 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "assets/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "assets/logo.png",
+      "sizes": "320x320",
+      "type": "image/png",
       "purpose": "any"
     },
     {

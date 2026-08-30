@@ -1,9 +1,9 @@
 /**
- * Xacheus — service worker (Phase 1: video platform)
- * Caches app shell, never caches Firebase or Cloudinary.
+ * Xacheus — service worker
+ * Caches app shell, never caches Firebase or File Storage.
  */
 
-const CACHE_NAME = "xacheus-video-v6";
+const CACHE_NAME = "xacheus-video-v7";
 const SHELL = [
   "./",
   "./index.html",
@@ -14,7 +14,7 @@ const SHELL = [
   "./js/ui.js",
   "./js/pwa.js",
   "./js/auth.js",
-  "./js/cloudinary.js",
+  "./js/storage.js",
   "./js/views/components.js",
   "./js/views/home.js",
   "./js/views/discover.js",
@@ -27,8 +27,8 @@ const SHELL = [
   "./js/views/settings.js",
   "./js/views/admin.js",
   "./manifest.json",
-  "./assets/icon.svg",
-  "./assets/icon-dark.svg",
+  "./assets/logo.png",
+  "./assets/logo1.png",
   "./assets/icon-192.png",
   "./assets/icon-512.png",
   "./assets/icon-maskable-192.png",
@@ -36,8 +36,6 @@ const SHELL = [
   "./assets/apple-touch-icon.png",
   "./assets/favicon-32.png",
   "./assets/favicon.ico",
-  "./assets/logo-wordmark.png",
-  "./assets/logo-wordmark-dark.png",
 ];
 
 const NEVER_CACHE = [
@@ -46,7 +44,7 @@ const NEVER_CACHE = [
   "identitytoolkit.googleapis.com",
   "securetoken.googleapis.com",
   "www.gstatic.com",
-  "api.cloudinary.com",
+  "firebasestorage.googleapis.com",
 ];
 
 self.addEventListener("install", (event) => {

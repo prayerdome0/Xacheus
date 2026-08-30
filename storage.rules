@@ -1,0 +1,56 @@
+rules_version = '2';
+
+// Xacheus — Production Firebase Storage rules.
+// Deploy with: firebase deploy --only storage
+//
+// Layout:
+//   uploads/{uid}/{kind}/{filename}
+//     kind: images | thumbnails | videos | audio
+//
+// Principles:
+//   - anyone can read media (videos/photos must be viewable publicly)
+//   - only the signed-in owner can write under their own {uid} folder
+//   - size + content-type restrictions block abuse
+//   - deletes are owner-only
+//
+// NOTE: media paths are scoped by the uploader's uid at write time
+// (`js/storage.js` builds `uploads/{uid}/...`), so ownership is enforced by
+// matching the URL path segment against the authenticated user's uid.
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Public read for every media object.
+    match /uploads/{allPaths=**} {
+      allow read: if true;
+    }
+
+    match /uploads/{uid}/{kind}/{filename} {
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && (kind in ['images', 'thumbnails', 'videos', 'audio'])
+        && request.resource.size > 0
+        && request.resource.size < 110 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|video/.*|audio/.*');
+
+      // Resumable uploads issue a second metadata-overwrite (update) request;
+      // keep it scoped identically to create.
+      allow update: if signedIn()
+        && request.auth.uid == uid
+        && (kind in ['images', 'thumbnails', 'videos', 'audio'])
+        && request.resource.size < 110 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|video/.*|audio/.*');
+
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Everything else is locked down.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -19,9 +19,9 @@ import {
   watchSounds,
   watchTrendingSounds,
 } from "../data.js";
-import { uploadAudio, uploadImage } from "../cloudinary.js";
+import { uploadAudio, uploadImage } from "../storage.js";
 import { avatar, clear, emptyState, esc, formatCount, toast } from "../ui.js";
-import { postThumb } from "./components.js";
+import { postThumb, openReportModal } from "./components.js";
 
 /* ------------------------------------------------------------------ */
 /* shared row markup                                                   */
@@ -324,6 +324,7 @@ export function soundsView(ctx, { q = "", tab = "free" } = {}) {
         const created = await createSound(ctx.state.profile, {
           title,
           audioUrl: audioRes.url,
+          storagePath: audioRes.path || "",
           coverUrl,
           duration: audioRes.duration || 0,
           genre,
@@ -519,6 +520,7 @@ export function soundDetailView(ctx, { soundId }) {
               <a class="btn btn-primary" href="#/create?sound=${esc(sound.id)}">Use this sound</a>
               <button class="btn btn-outline" type="button" data-act="fav-detail">${favorited ? "★ Saved" : "☆ Save"}</button>
               <button class="btn btn-ghost" type="button" data-act="share-sound">Share</button>
+              <button class="btn btn-ghost" type="button" data-act="report-sound">Report</button>
             </div>
           </div>
         </div>
@@ -567,6 +569,15 @@ export function soundDetailView(ctx, { soundId }) {
           } else if (navigator.clipboard) {
             navigator.clipboard.writeText(url).then(() => toast("Link copied", "success"));
           }
+        }
+        if (act === "report-sound") {
+          if (!ctx.state.profile) return ctx.requireAuth();
+          openReportModal(ctx, {
+            targetType: "sound",
+            targetId: sound.id,
+            targetOwnerUid: sound.artistUid || "",
+            targetLabel: `${sound.title} by ${sound.artist || "Unknown"}`,
+          });
         }
       });
     },

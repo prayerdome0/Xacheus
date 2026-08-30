@@ -151,9 +151,8 @@ function buildShell() {
   shell.innerHTML = `
     <header class="topbar">
       <div class="topbar-inner">
-        <a class="brand" href="#/home" aria-label="Xacheus home">
-          <img class="brand-logo" src="assets/icon-dark.svg" alt="Xacheus" />
-          <span class="brand-text">Xacheus</span>
+        <a class="brand topbar-brand" href="#/home" aria-label="Xacheus home">
+          <img class="brand-logo brand-wordmark" src="assets/logo1.png" alt="Xacheus" />
         </a>
 
         <div class="topbar-tabs" id="topbar-tabs">
@@ -184,7 +183,7 @@ function buildShell() {
     <div class="layout layout-video">
       <nav class="sidebar sidebar-video" aria-label="Primary">
         <a class="brand sidebar-brand" href="#/home" aria-label="Xacheus home">
-          <img class="brand-logo" src="assets/icon-dark.svg" alt="Xacheus" />
+          <img class="brand-logo" src="assets/logo.png" alt="Xacheus" />
         </a>
         ${sideNav.map((item) => navItem(item)).join("")}
         <div class="sidebar-me" data-role="sidebar-me"></div>

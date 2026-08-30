@@ -1,6 +1,6 @@
 /** Xacheus — Create (video upload/record + photo posts) */
 
-import { uploadVideo, uploadAudio, uploadImage } from "../cloudinary.js";
+import { uploadVideo, uploadAudio, uploadImage } from "../storage.js";
 import {
   createVideo,
   getSound,
@@ -680,7 +680,7 @@ export function createView(ctx, { soundId: initialSoundId = "" } = {}) {
             duration: result.duration,
             width: result.width,
             height: result.height,
-            cloudinaryPublicId: result.publicId,
+            storagePath: result.path,
           });
 
           toast("Video posted!", "success");

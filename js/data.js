@@ -46,6 +46,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js";
 
 import { db } from "./firebase.js";
+import { removeObject } from "./storage.js";
 
 export const PAGE_SIZE = 20;
 export const VIDEO_PAGE_SIZE = 10;
@@ -333,7 +334,7 @@ export async function createVideo(author, {
   duration = 0,
   width = 0,
   height = 0,
-  cloudinaryPublicId = "",
+  storagePath = "",
 }) {
   const cap = String(caption || "").trim().slice(0, 1000);
 
@@ -366,7 +367,7 @@ export async function createVideo(author, {
     duration: Number(duration) || 0,
     width: Number(width) || 0,
     height: Number(height) || 0,
-    cloudinaryPublicId: cloudinaryPublicId || "",
+    storagePath: storagePath || "",
     likeCount: 0,
     commentCount: 0,
     viewCount: 0,
@@ -427,6 +428,9 @@ export async function deleteVideo(videoId, uid) {
   const snap = await getDoc(doc(db, "videos", videoId));
   if (!snap.exists()) return;
   if (snap.data().uid !== uid) throw new Error("You can only delete your own videos.");
+  const data = snap.data();
+  // Best-effort: remove the hosted media object so Storage isn't littered.
+  if (data.storagePath) removeObject(data.storagePath).catch(() => {});
   await deleteDoc(doc(db, "videos", videoId));
   await updateDoc(doc(db, "users", uid), { videosCount: increment(-1) }).catch(() => {});
 }
@@ -997,7 +1001,7 @@ export function watchSounds(onData, pageSize = 40) {
   );
 }
 
-/** Publish an original sound (Cloudinary audio URL already uploaded). */
+/** Publish an original sound (audioUrl already uploaded to Firebase Storage). */
 export async function createSound(author, {
   title,
   audioUrl,
@@ -1006,6 +1010,7 @@ export async function createSound(author, {
   genre = "original",
   isFree = false,
   bpm = 0,
+  storagePath = "",
 }) {
   if (!author?.uid) throw new Error("Sign in to upload a sound.");
   if (!title || !audioUrl) throw new Error("Sound needs a title and audio file.");
@@ -1017,6 +1022,7 @@ export async function createSound(author, {
     artistUid: author.uid,
     artistUsername: author.username || "",
     audioUrl,
+    storagePath: storagePath || "",
     coverUrl: coverUrl || author.photoURL || "",
     duration: Number(duration) || 0,
     bpm: Number(bpm) || 0,
@@ -1103,6 +1109,7 @@ export async function deleteSound(soundId, uid, { asAdmin = false } = {}) {
   if (!snap.exists()) return;
   const data = snap.data();
   if (!asAdmin && data.artistUid !== uid) throw new Error("You can only delete your own sounds.");
+  if (data.storagePath) removeObject(data.storagePath).catch(() => {});
   await deleteDoc(doc(db, "sounds", soundId));
 }
 
@@ -1269,6 +1276,101 @@ export function watchNotifications(uid, onData) {
 }
 export async function markNotificationsRead(uid, items) {
   await Promise.all(items.filter((i) => !i.read).map((i) => updateDoc(doc(db, "notifications", i.id), { read: true })));
+}
+
+/* ------------------------------------------------------------------ */
+/* content moderation: reports + bans                                  */
+/* ------------------------------------------------------------------ */
+
+export const REPORT_TYPES = Object.freeze(["video", "user", "comment", "sound", "live"]);
+export const REPORT_REASONS = Object.freeze([
+  "Spam",
+  "Harassment or bullying",
+  "Hate speech",
+  "Nudity or sexual content",
+  "Violence or dangerous content",
+  "Copyright violation",
+  "Scam or misleading",
+  "Impersonation",
+  "Other",
+]);
+
+/**
+ * Submit a moderation report. Guards against duplicate open reports from the
+ * same user for the same target (single-field query, filtered client-side so
+ * no composite index is required).
+ */
+export async function submitReport({
+  reporterUid,
+  reporterName = "",
+  reporterUsername = "",
+  targetType,
+  targetId,
+  targetOwnerUid = "",
+  reason,
+  details = "",
+}) {
+  if (!reporterUid) throw new Error("Sign in to report content.");
+  if (!targetType || !targetId) throw new Error("Missing report target.");
+  if (!REPORT_TYPES.includes(targetType)) throw new Error("Invalid report type.");
+  const reasonText = String(reason || "").trim();
+  if (!reasonText) throw new Error("Pick a reason to report.");
+  if (reasonText.length > 160) throw new Error("That reason is too long.");
+
+  // Prevent spam: one open report per user per target.
+  try {
+    const existing = await getDocs(
+      query(collection(db, "reports"), where("reporterUid", "==", reporterUid), limit(20))
+    );
+    const dup = existing.docs.some((d) => {
+      const data = d.data();
+      return data.targetId === targetId && data.status === "open";
+    });
+    if (dup) throw new Error("You already reported this. Our team is reviewing it.");
+  } catch (err) {
+    if (err?.message?.includes("already reported")) throw err;
+  }
+
+  await addDoc(collection(db, "reports"), {
+    reporterUid,
+    reporterName: reporterName || "",
+    reporterUsername: reporterUsername || "",
+    targetType,
+    targetId,
+    targetOwnerUid: targetOwnerUid || "",
+    reason: reasonText,
+    details: String(details || "").slice(0, 500),
+    status: "open",
+    resolvedBy: "",
+    resolvedAt: null,
+    createdAt: serverTimestamp(),
+  });
+}
+
+/** Admin: resolve (or reopen) a report. */
+export async function resolveReport(reportId, { status = "resolved", by = "" }) {
+  if (!reportId) return;
+  await updateDoc(doc(db, "reports", reportId), {
+    status: status === "open" ? "open" : "resolved",
+    resolvedBy: status === "open" ? "" : String(by || ""),
+    resolvedAt: status === "open" ? null : serverTimestamp(),
+  });
+}
+
+/** Admin: ban / unban an account. */
+export async function setUserBan(uid, banned) {
+  if (!uid) return;
+  await updateDoc(doc(db, "users", uid), { banned: Boolean(banned) });
+}
+
+/** Whether any videos by a user are publicly visible (used for cleanup). */
+export async function countByCollection(collectionName, max = 5000) {
+  try {
+    const snap = await getDocs(query(collection(db, collectionName), limit(max)));
+    return snap.size;
+  } catch {
+    return null;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1485,7 +1587,7 @@ export async function bumpVideoShare(videoId) {
 }
 
 /* ------------------------------------------------------------------ */
-/* live streaming (browser camera -> Cloudinary segments -> Firestore) */
+/* live streaming (browser camera -> Firebase Storage segments -> Firestore) */
 /* ------------------------------------------------------------------ */
 
 // Broadcaster records segments of roughly this length; viewer latency is
