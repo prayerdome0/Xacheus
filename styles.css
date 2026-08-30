@@ -355,9 +355,14 @@ html[data-logo-plate="dark"] .logo-plate .logo-ink--light { display: block; }
 
 /* Compat: any hand-written <img class="brand-logo"> still reads as artwork
    inside a plate rather than as a raw box. Nothing in the app needs an explicit
-   size any more — .logo-plate--* modifiers own that. */
+   size any more — .logo-plate--* modifiers own that.
+   `.logo-ink` is excluded on purpose: the show/hide contract for the two ink
+   variants (`.logo-ink--dark` / `.logo-ink--light`, a couple of rules up) must
+   stay authoritative. Written as a bare `img[class]` this rule won on
+   specificity ((0,2,1) beats (0,2,0)) and force-rendered BOTH inks — two
+   stacked logos — in every slot on a light plate. */
 .logo-plate .brand-logo,
-.logo-plate img[class] { display: block; max-width: 100%; object-fit: contain; }
+.logo-plate img[class]:not(.logo-ink) { display: block; max-width: 100%; object-fit: contain; }
 
 .logo-lockup { display: inline-flex; align-items: center; gap: 10px; }
 .logo-lockup em { font-style: normal; font-size: 0.78rem; color: var(--muted); letter-spacing: 0.02em; }
@@ -1504,8 +1509,22 @@ html.light .panel {
 /* profile                                                             */
 /* ------------------------------------------------------------------ */
 
+/* Back button and title share one line — as a plain block the head dropped
+   the title under the arrow, wasting a row (and jumping) on every profile. */
+.profile-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
 .profile-head .back-btn {
   margin-left: 0;
+  flex: none;
+}
+.profile-head .view-head {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 0;
 }
 .cover {
   height: 148px;
@@ -3934,6 +3953,7 @@ html.is-offline .nav-create {
 
 .profile-identity {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   align-items: flex-end;
   padding: 0 clamp(14px, 3vw, 24px) clamp(14px, 2vw, 20px);
@@ -3978,7 +3998,9 @@ html.is-offline .nav-create {
 .profile-bio { margin: 0; white-space: pre-wrap; color: var(--text); line-height: 1.5; }
 .profile-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: 0.85rem; align-items: center; }
 .profile-follow-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.profile-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+/* Takes the row's remaining width so the buttons wrap *inside* it instead of
+   forcing the identity row (and the page) wider than the viewport. */
+.profile-actions { display: flex; flex: 1 1 auto; min-width: 0; gap: 8px; flex-wrap: wrap; }
 .profile-stats { display: flex; gap: 18px; margin: 0; padding: 12px 0 0; border-top: 1px solid var(--line-soft); flex-wrap: wrap; }
 .profile-stats > div { display: flex; flex-direction: column; }
 .profile-stats dt { color: var(--faint); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; }
@@ -4003,6 +4025,54 @@ html.is-offline .nav-create {
 }
 .profile-tabs .tab.is-active .tab-badge { background: var(--brand-1); color: #fff; }
 .tab-note { margin: 0 0 12px; color: var(--muted); font-size: 0.85rem; }
+
+/* profile skeleton — reserves the hero's geometry (same classes as the real
+   hero: profile-hero / profile-identity / profile-meta) so landing on a
+   profile doesn't shove the page down a few hundred px when the data paints. */
+.profile-skeleton .sk {
+  background: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+  border-radius: 8px;
+}
+.profile-skeleton .sk-profile-cover {
+  height: clamp(140px, 26vw, 260px);
+  border-radius: 0;
+  background: var(--surface-2);
+}
+.profile-skeleton .sk-profile-avatar {
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+}
+.profile-skeleton .sk-profile-btn {
+  width: 104px;
+  height: 34px;
+  border-radius: 999px;
+}
+.profile-skeleton .sk-line {
+  height: 12px;
+  margin-bottom: 10px;
+}
+.profile-skeleton .sk-line--name {
+  height: 20px;
+  width: 36%;
+  margin-bottom: 12px;
+}
+.profile-skeleton .sk-line--w75 { width: 75%; }
+.profile-skeleton .sk-line--w55 { width: 55%; }
+.profile-skeleton .sk-line--w40 { width: 40%; margin-bottom: 0; }
+.profile-tabs.profile-skeleton {
+  padding: 11px 4px;
+}
+.profile-skeleton .sk-tab {
+  height: 14px;
+  width: 78px;
+}
+@media (max-width: 767px) {
+  .profile-skeleton .sk-profile-cover { height: clamp(120px, 32vw, 190px); }
+  .profile-skeleton .sk-profile-avatar { width: 76px; height: 76px; }
+}
 
 /* post rows */
 .profile-posts { display: grid; gap: 10px; }

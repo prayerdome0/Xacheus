@@ -75,13 +75,36 @@ const TABS = [
 
 export function profileView(ctx, { username, tab = "posts", media = "" } = {}) {
   const isOwn = ctx.state.profile && ctx.state.profile.username === username;
+  // Skeleton mirrors the real hero's geometry (same classes) so the swap from
+  // "shimmer" to "data" is close to pixel-stable — no big page shove.
   const html = `
     <div class="profile-head">
       <button class="icon-btn back-btn" type="button" data-act="back" aria-label="Back">←</button>
       <div class="view-head"><h1>${isOwn ? "Profile" : `@${esc(username || "")}`}</h1></div>
     </div>
     <div id="profile-root">
-      <div class="loader-row"><span class="spinner"></span> Loading profile…</div>
+      <div class="profile-hero profile-skeleton" aria-hidden="true">
+        <div class="sk sk-profile-cover"></div>
+        <div class="profile-identity">
+          <span class="sk sk-profile-avatar"></span>
+          <div class="profile-actions">
+            <span class="sk sk-profile-btn"></span>
+            <span class="sk sk-profile-btn"></span>
+          </div>
+        </div>
+        <div class="profile-meta">
+          <span class="sk sk-line sk-line--name"></span>
+          <span class="sk sk-line sk-line--w75"></span>
+          <span class="sk sk-line sk-line--w55"></span>
+          <span class="sk sk-line sk-line--w40"></span>
+        </div>
+      </div>
+      <div class="tabs profile-tabs profile-skeleton" aria-hidden="true">
+        <span class="sk sk-tab"></span>
+        <span class="sk sk-tab"></span>
+        <span class="sk sk-tab"></span>
+        <span class="sk sk-tab"></span>
+      </div>
     </div>
   `;
 
@@ -91,10 +114,21 @@ export function profileView(ctx, { username, tab = "posts", media = "" } = {}) {
   let unsubRequests = null;
   let unsubPresence = null;
   let lastRenderedUid = "";
+  // Paint bookkeeping: a profile doc update (view count, follow count, a bio
+  // edit from another tab…) fires watchProfile with a fresh copy. The full
+  // structure (hero + tabs + tab content) is painted once per uid; anything
+  // after that is a hero-only repaint that leaves the tab content the user is
+  // reading — and its live watchers — exactly where they are.
+  let paintedUid = null;
+  let paintedLocked = null;
+  let mediaUid = null;
+  let presenceUid = null;
   const cleanups = [];
 
   async function renderProfile(root, profile) {
     if (!profile) {
+      paintedUid = null;
+      paintedLocked = null;
       root.querySelector("#profile-root").innerHTML = emptyState(
         "👤",
         "Profile not found",
@@ -107,20 +141,34 @@ export function profileView(ctx, { username, tab = "posts", media = "" } = {}) {
     const myUid = ctx.state.profile?.uid || "";
     const isMine = myUid === profile.uid;
     const access = isMine ? { locked: false } : await getAccessState(profile, myUid);
-    const prefs = isMine ? null : null; // (privacy is enforced by rules; UI only explains it)
 
     const container = root.querySelector("#profile-root");
-    const [mediaAll, avatarHistory, coverHistory, requests] = await Promise.all([
-      access.locked ? Promise.resolve([]) : listProfileMedia(profile.uid, { max: 60 }),
-      Promise.resolve([]),
-      Promise.resolve([]),
-      isMine ? listFollowRequests(myUid).catch(() => []) : Promise.resolve([]),
-    ]);
+    // Full structure paint: first time for this uid (skeleton still up), the
+    // access state flipped, or the hero slot is missing.
+    const fullPaint =
+      paintedUid !== profile.uid ||
+      paintedLocked !== access.locked ||
+      !container.querySelector("#profile-hero");
+
+    // The media list feeds the viewer and the photo count. Fetch once per uid
+    // and keep it on the container so a hero repaint on a profile-doc update
+    // (view count, follow count, …) doesn't re-read 60 docs.
+    if (fullPaint || mediaUid !== profile.uid || !container._media) {
+      const [fetchedMedia, , , requests] = await Promise.all([
+        access.locked ? Promise.resolve([]) : listProfileMedia(profile.uid, { max: 60 }),
+        Promise.resolve([]),
+        Promise.resolve([]),
+        isMine ? listFollowRequests(myUid).catch(() => []) : Promise.resolve([]),
+      ]);
+      container._media = fetchedMedia;
+      container._requests = requests;
+      mediaUid = profile.uid;
+    }
+    const mediaAll = container._media || [];
     const photos = mediaAll.filter((m) => m.kind === "photo");
     const avatars = mediaAll.filter((m) => m.kind === "avatar");
     const covers = mediaAll.filter((m) => m.kind === "cover");
-    void avatarHistory;
-    void coverHistory;
+    const requests = container._requests || [];
 
     const websiteHref = safeUrl(profile.website || "");
     const websiteLabel = String(profile.website || "").replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/\/$/, "");
@@ -128,58 +176,63 @@ export function profileView(ctx, { username, tab = "posts", media = "" } = {}) {
     const roleBadge = profile.role && profile.role !== "user"
       ? `<span class="role-badge role-${esc(profile.role)}">${esc(profile.role)}</span>`
       : "";
-    container.innerHTML = `
-      <div class="profile-hero">
-        <button class="cover cover-btn" type="button" data-act="open-cover" title="View cover photo"
-          style="${profile.coverURL ? `background-image:url(${JSON.stringify(esc(profile.coverURL))});background-size:cover;background-position:center` : ""}">
-          ${profile.coverURL ? "" : `<span class="cover-empty">Add a cover photo</span>`}
-          ${isMine ? `<span class="cover-edit" data-act="edit-cover">Edit</span>` : ""}
-          ${brandSlotHtml({ role: "mark", size: "md", linked: false, extraClass: "logo-plate--watermark profile-brand" })}
+
+    const heroInner = `
+      <button class="cover cover-btn" type="button" data-act="open-cover" title="View cover photo"
+        style="${profile.coverURL ? `background-image:url(${JSON.stringify(esc(profile.coverURL))});background-size:cover;background-position:center` : ""}">
+        ${profile.coverURL ? "" : `<span class="cover-empty">Add a cover photo</span>`}
+        ${isMine ? `<span class="cover-edit" data-act="edit-cover">Edit</span>` : ""}
+        ${brandSlotHtml({ role: "mark", size: "md", linked: false, extraClass: "logo-plate--watermark profile-brand" })}
+      </button>
+
+      <div class="profile-identity">
+        <button class="profile-avatar-btn" type="button" data-act="open-avatar" title="View profile photo">
+          <span class="avatar avatar-xl">${avatar(profile, "xl")}</span>
         </button>
-
-        <div class="profile-identity">
-          <button class="profile-avatar-btn" type="button" data-act="open-avatar" title="View profile photo">
-            <span class="avatar avatar-xl">${avatar(profile, "xl")}</span>
-          </button>
-          <div class="profile-actions">
-            ${isMine
-              ? `<button class="btn btn-outline btn-sm" type="button" data-act="edit">Edit profile</button>
-                 <button class="btn btn-primary btn-sm" type="button" data-act="add-photo">Add photo</button>
-                 <button class="btn btn-ghost btn-sm" type="button" data-act="requests${requests.length ? " is-hot" : ""}">Requests${requests.length ? ` · ${requests.length}` : ""}</button>`
-              : access.locked
-                ? access.canRequest
-                  ? `<button class="btn btn-primary btn-sm" type="button" data-act="request-follow">Request to follow</button>`
-                  : access.requested
-                    ? `<button class="btn btn-outline btn-sm" type="button" data-act="cancel-request">Requested</button>`
-                    : `<span class="locked-chip">Private account</span>`
-                : `<button class="btn btn-sm ${await isFollowing(myUid, profile.uid).catch(() => false) ? "btn-outline" : "btn-primary"}" type="button" data-act="follow">Follow</button>
-                   <button class="btn btn-outline btn-sm" type="button" data-act="message">Message</button>`}
-            <button class="icon-btn" type="button" data-act="more" aria-label="More">⋯</button>
-          </div>
+        <div class="profile-actions">
+          ${isMine
+            ? `<button class="btn btn-outline btn-sm" type="button" data-act="edit">Edit profile</button>
+               <button class="btn btn-primary btn-sm" type="button" data-act="add-photo">Add photo</button>
+               <button class="btn btn-ghost btn-sm" type="button" data-act="requests${requests.length ? " is-hot" : ""}">Requests${requests.length ? ` · ${requests.length}` : ""}</button>`
+            : access.locked
+              ? access.canRequest
+                ? `<button class="btn btn-primary btn-sm" type="button" data-act="request-follow">Request to follow</button>`
+                : access.requested
+                  ? `<button class="btn btn-outline btn-sm" type="button" data-act="cancel-request">Requested</button>`
+                  : `<span class="locked-chip">Private account</span>`
+              : `<button class="btn btn-sm ${await isFollowing(myUid, profile.uid).catch(() => false) ? "btn-outline" : "btn-primary"}" type="button" data-act="follow">Follow</button>
+                 <button class="btn btn-outline btn-sm" type="button" data-act="message">Message</button>`}
+          <button class="icon-btn" type="button" data-act="more" aria-label="More">⋯</button>
         </div>
+      </div>
 
-        <div class="profile-meta">
-          <h2>${esc(profile.displayName)} ${verified} ${roleBadge}
-            <span class="presence-dot" data-presence hidden></span>
-          </h2>
-          <span class="profile-handle">@${esc(profile.username)}${profile.private ? ' <span class="private-chip" title="Private account">🔒 private</span>' : ""}</span>
-          ${profile.bio ? `<p class="profile-bio">${esc(profile.bio)}</p>` : ""}
-          <div class="profile-facts">
-            ${profile.location ? `<span>📍 ${esc(profile.location)}</span>` : ""}
-            ${profile.website && websiteHref
-              ? `<span>🔗 <a class="link" href="${esc(websiteHref)}" target="_blank" rel="noopener noreferrer nofollow">${esc(websiteLabel)}</a></span>`
-              : profile.website ? `<span class="muted" title="This link was rejected as unsafe">🔗 ${esc(profile.website)}</span>` : ""}
-            <span>🗓 Joined ${new Date(profile.createdAt?.seconds ? profile.createdAt.seconds * 1000 : Date.now()).toLocaleDateString(undefined, { month: "long", year: "numeric" })}</span>
-          </div>
-          <div class="profile-stats">
-            <span><strong data-stat="posts">${fmt(profile.videosCount || 0)}</strong> posts</span>
-            <a href="#/u/${esc(profile.username)}?tab=followers"><strong data-stat="followers">${fmt(profile.followersCount || 0)}</strong> followers</a>
-            <a href="#/u/${esc(profile.username)}?tab=following"><strong data-stat="following">${fmt(profile.followingCount || 0)}</strong> following</a>
-            <a href="#/u/${esc(profile.username)}?tab=photos"><strong>${fmt(photos.length)}</strong> photos</a>
-            ${isMine ? `<span title="Profile views"><strong>${fmt(profile.profileViewCount || 0)}</strong> profile views</span>` : ""}
-            <button class="link-btn follow-state" type="button" data-act="follow" ${access.locked && !isMine ? "disabled" : ""}></button>
-          </div>
+      <div class="profile-meta">
+        <h2>${esc(profile.displayName)} ${verified} ${roleBadge}
+          <span class="presence-dot" data-presence hidden></span>
+        </h2>
+        <span class="profile-handle">@${esc(profile.username)}${profile.private ? ' <span class="private-chip" title="Private account">🔒 private</span>' : ""}</span>
+        ${profile.bio ? `<p class="profile-bio">${esc(profile.bio)}</p>` : ""}
+        <div class="profile-facts">
+          ${profile.location ? `<span>📍 ${esc(profile.location)}</span>` : ""}
+          ${profile.website && websiteHref
+            ? `<span>🔗 <a class="link" href="${esc(websiteHref)}" target="_blank" rel="noopener noreferrer nofollow">${esc(websiteLabel)}</a></span>`
+            : profile.website ? `<span class="muted" title="This link was rejected as unsafe">🔗 ${esc(profile.website)}</span>` : ""}
+          <span>🗓 Joined ${new Date(profile.createdAt?.seconds ? profile.createdAt.seconds * 1000 : Date.now()).toLocaleDateString(undefined, { month: "long", year: "numeric" })}</span>
         </div>
+        <div class="profile-stats">
+          <span><strong data-stat="posts">${fmt(profile.videosCount || 0)}</strong> posts</span>
+          <a href="#/u/${esc(profile.username)}?tab=followers"><strong data-stat="followers">${fmt(profile.followersCount || 0)}</strong> followers</a>
+          <a href="#/u/${esc(profile.username)}?tab=following"><strong data-stat="following">${fmt(profile.followingCount || 0)}</strong> following</a>
+          <a href="#/u/${esc(profile.username)}?tab=photos"><strong>${fmt(photos.length)}</strong> photos</a>
+          ${isMine ? `<span title="Profile views"><strong>${fmt(profile.profileViewCount || 0)}</strong> profile views</span>` : ""}
+          <button class="link-btn follow-state" type="button" data-act="follow" ${access.locked && !isMine ? "disabled" : ""}></button>
+        </div>
+      </div>`;
+
+    if (fullPaint) {
+      container.innerHTML = `
+      <div id="profile-hero" class="profile-hero">
+        ${heroInner}
       </div>
 
       ${access.locked
@@ -201,28 +254,38 @@ export function profileView(ctx, { username, tab = "posts", media = "" } = {}) {
         <div class="profile-content" id="profile-content">
           <div class="loader-row"><span class="spinner"></span> Loading…</div>
         </div>`}
-    `;
+      `;
+      paintedUid = profile.uid;
+      paintedLocked = access.locked;
+      wireStructure(ctx, container, profile);
+    } else {
+      // Same person, same access — repaint only the hero. The live tab content
+      // (and the user's scroll position inside it) stays exactly where it is;
+      // rebuilding it is what used to make the page bounce on every update.
+      container.querySelector("#profile-hero").innerHTML = heroInner;
+    }
 
     // gallery data stays on the element so the viewer can walk it
     container.dataset.uid = profile.uid;
-    container._media = mediaAll;
     container._profile = profile;
 
-    wireProfile(ctx, container, profile, { isMine, access, photos, avatars, covers, requests });
+    wireHero(ctx, container, profile, { isMine, access, avatars, covers, requests });
     await refreshFollowButton(ctx, container, profile);
-    if (!isMine && myUid) {
-      const dot = container.querySelector("[data-presence]");
-      if (dot) {
+    if (!isMine && myUid && presenceUid !== profile.uid) {
+      presenceUid = profile.uid;
+      unsubPresence?.();
+      // Re-query the dot on every tick: the hero (and its dot) is re-painted on
+      // each profile update, so a captured reference would go stale and the
+      // dot would freeze.
+      unsubPresence = watchPresence(profile.uid, (presence) => {
+        const dot = container.querySelector("[data-presence]");
+        if (!dot) return;
         dot.hidden = false;
-        unsubPresence?.();
-        unsubPresence = watchPresence(profile.uid, (presence) => {
-          dot.hidden = false;
-          dot.className = `presence-dot ${presence.online ? "is-online" : "is-offline"}`;
-          dot.title = presence.online ? "Active now" : presence.lastActiveAt ? `Last active ${timeAgo(presence.lastActiveAt)}` : "Recently offline";
-        });
-      }
+        dot.className = `presence-dot ${presence.online ? "is-online" : "is-offline"}`;
+        dot.title = presence.online ? "Active now" : presence.lastActiveAt ? `Last active ${timeAgo(presence.lastActiveAt)}` : "Recently offline";
+      });
     }
-    loadTabContent(ctx, container, profile, tab, { isMine, access });
+    if (fullPaint) loadTabContent(ctx, container, profile, tab, { isMine, access });
   }
 
   function visibleTabs(profile, isMine) {
@@ -234,10 +297,53 @@ export function profileView(ctx, { username, tab = "posts", media = "" } = {}) {
     });
   }
 
-  /* ---- wiring ---- */
-  function wireProfile(ctx, container, profile, opts) {
+  /* ---- wiring ----
+     Two levels, matched to the two paint paths in renderProfile:
+     wireStructure — once per uid paint (tab buttons, story strip, the
+       container-level click delegation, deep-link open). It must never run
+       twice on the same container or its delegation listener double-fires.
+     wireHero — after every hero paint (the hero's buttons are fresh nodes
+       each time). */
+  function wireStructure(ctx, container, profile) {
+    const isMineNow = ctx.state.profile?.uid === profile.uid;
+
+    container.querySelectorAll(".profile-tabs .tab").forEach((t) => {
+      t.addEventListener("click", () => {
+        ctx.navigate(`#/u/${encodeURIComponent(profile.username)}?tab=${t.dataset.tab}`);
+      });
+    });
+    container.querySelector('[data-act="story-strip"]')?.addEventListener("click", () => openStoryStrip(ctx, profile, isMineNow));
+
+    // Photo / media grids open the viewer.
+    container.addEventListener("click", (event) => {
+      const mediaBtn = event.target.closest("[data-media-id]");
+      if (mediaBtn) {
+        const list = container._media || [];
+        const id = mediaBtn.dataset.mediaId;
+        const index = list.findIndex((m) => m.id === id);
+        const subset = mediaBtn.dataset.kind ? list.filter((m) => m.kind === mediaBtn.dataset.kind) : list;
+        openMediaViewer(ctx, id, { list: subset.length ? subset : list, media: list[index] });
+        return;
+      }
+      const followBtn = event.target.closest("[data-user-follow]");
+      if (followBtn) {
+        toggleFromList(followBtn, profile);
+        return;
+      }
+      const removeBtn = event.target.closest("[data-remove-follower]");
+      if (removeBtn) {
+        removeFollowerFromMe(removeBtn, profile);
+      }
+    });
+
+    if (media) {
+      const target = (container._media || []).find((m) => m.id === media);
+      if (target) openMediaViewer(ctx, target.id, { list: container._media, media: target });
+    }
+  }
+
+  function wireHero(ctx, container, profile, opts) {
     const { isMine, access, avatars, covers, requests } = opts;
-    let stopMediaWatch = null;
 
     container.querySelector('[data-act="open-avatar"]')?.addEventListener("click", () => {
       const list = avatars.length ? avatars : [{ id: "current", uid: profile.uid, kind: "avatar", url: profile.photoURL, username: profile.username, displayName: profile.displayName, caption: "Current profile photo", likeCount: 0, commentCount: 0, viewCount: 0, shareCount: 0, reactions: {} }];
@@ -322,40 +428,6 @@ export function profileView(ctx, { username, tab = "posts", media = "" } = {}) {
       }
     });
     container.querySelector('[data-act="requests"]')?.addEventListener("click", () => openRequestsModal(ctx, profile, requests));
-    container.querySelector('[data-act="story-strip"]')?.addEventListener("click", () => openStoryStrip(ctx, profile, isMine));
-
-    container.querySelectorAll(".profile-tabs .tab").forEach((t) => {
-      t.addEventListener("click", () => {
-        ctx.navigate(`#/u/${encodeURIComponent(profile.username)}?tab=${t.dataset.tab}`);
-      });
-    });
-
-    // Photo / media grids open the viewer.
-    container.addEventListener("click", (event) => {
-      const mediaBtn = event.target.closest("[data-media-id]");
-      if (mediaBtn) {
-        const list = container._media || [];
-        const id = mediaBtn.dataset.mediaId;
-        const index = list.findIndex((m) => m.id === id);
-        const subset = mediaBtn.dataset.kind ? list.filter((m) => m.kind === mediaBtn.dataset.kind) : list;
-        openMediaViewer(ctx, id, { list: subset.length ? subset : list, media: list[index] });
-        return;
-      }
-      const followBtn = event.target.closest("[data-user-follow]");
-      if (followBtn) {
-        toggleFromList(followBtn, profile);
-        return;
-      }
-      const removeBtn = event.target.closest("[data-remove-follower]");
-      if (removeBtn) {
-        removeFollowerFromMe(removeBtn, profile);
-      }
-    });
-
-    if (media) {
-      const target = (container._media || []).find((m) => m.id === media);
-      if (target) openMediaViewer(ctx, target.id, { list: container._media, media: target });
-    }
   }
 
   async function toggleFromList(btn, profile) {

@@ -1,3 +1,44 @@
+# Logo doubled + profile page no longer moves
+
+## Date: 2026-08-30
+
+Two layout bugs fixed: every brand slot was rendering **two** logos stacked
+(two ink variants), and the profile page kept shifting while it loaded and
+on every background update.
+
+- `styles.css` — **the double logo, root cause**: a "compat" rule
+  (`.logo-plate img[class]`, specificity (0,2,1)) beat the ink-variant
+  show/hide rules ((0,2,0) and (0,3,0)), so the hidden ink variant was
+  force-shown under/over the visible one in every slot (topbar wordmark,
+  sidebar mark, profile-cover watermark, auth, boot-failure screen). The
+  rule now excludes `.logo-ink` (`img[class]:not(.logo-ink)`) and documents
+  the specificity contract so it can't regress.
+- `js/views/profile.js` — **no more page moving on the profile page**:
+  - The spinner row is replaced by a profile skeleton (same
+    `.profile-hero` / `.profile-identity` / `.profile-meta` classes as the
+    real hero, `clamp()`-matched cover heights) so the shimmer → data swap
+    is near pixel-stable instead of a ~500px shove.
+  - `renderProfile` now paints the full structure (hero + tabs + tab
+    content) **once per uid** and repaints **only the hero** on later
+    profile-doc updates (own profile-view count, follow-count changes, a
+    bio edit from another tab…). The live tab content — and the user's
+    scroll position inside it — is no longer rebuilt on every update, and
+    `loadTabContent` (with its realtime watchers) only runs on a full
+    paint.
+  - Wiring split in two to match: `wireStructure` (tab buttons, story
+    strip, the container click-delegation, deep-link media open) runs once
+    per uid paint; `wireHero` (follow, message, cover/avatar, edit,
+    requests, more…) runs after every hero paint.
+  - The media list + follow-requests are fetched once per uid and cached on
+    the container; the presence watcher subscribes once and re-queries its
+    dot each tick (the dot node is fresh on every hero repaint).
+- `styles.css` — profile head: back arrow and title share one flex line
+  (the title used to drop under the arrow, wasting a row).
+- `styles.css` — `.profile-identity` can wrap (name + action buttons) and
+  `.profile-actions` is `min-width: 0` so long button rows wrap instead of
+  pushing the profile outside the page; skeleton shimmer styles.
+- `sw.js` cache bumped `v11 → v12` (all touched modules are precached).
+
 # Guest browsing — watch everything without an account
 
 ## Date: 2026-08-30
