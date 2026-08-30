@@ -36,6 +36,7 @@ import { settingsView } from "./views/settings.js";
 import { adminView } from "./views/admin.js";
 import { soundsView, soundDetailView } from "./views/sounds.js";
 import { messagesView, chatView } from "./views/messages.js";
+import { savedView } from "./views/saved.js";
 import { openMediaViewer } from "./views/mediaViewer.js";
 import { liveListView, liveBroadcastView, liveWatchView } from "./views/live.js";
 
@@ -468,7 +469,7 @@ function resolveRoute() {
       if (second) return { view: soundDetailView(ctx, { soundId: second }), key: `sound:${second}` };
       return { view: soundsView(ctx, { q: params.q, tab: params.tab }), key: "sounds" };
     case "create":
-      return { view: createView(ctx, { soundId: params.sound || "" }), key: "create" };
+      return { view: createView(ctx, { soundId: params.sound || "", tab: params.tab || "" }), key: "create" };
     case "tag":
       return { view: discoverView(ctx, { q: `#${second}` }), key: `tag:${second}` };
     case "notifications":
@@ -490,6 +491,10 @@ function resolveRoute() {
       return { view: homeView(ctx, { focusVideoId: second }), key: `video:${second}` };
     case "profile":
       return { view: profileView(ctx, { username: state.profile?.username, tab: params.tab, media: params.media }), key: "me" };
+    case "saved":
+      // `#/saved` is linked from every profile's account menu, so it is a
+      // real screen rather than a hash that fell through to the feed.
+      return { view: savedView(ctx), key: "saved" };
     case "settings":
       return { view: settingsView(ctx), key: "settings" };
     case "admin":
@@ -502,7 +507,7 @@ function resolveRoute() {
   }
 }
 
-const AUTH_ROUTES = new Set(["create", "notifications", "inbox", "messages", "dm", "settings", "admin"]);
+const AUTH_ROUTES = new Set(["create", "notifications", "inbox", "messages", "dm", "saved", "settings", "admin"]);
 // live/go is handled inside the broadcast view itself (camera + host identity)
 
 function render() {

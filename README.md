@@ -38,8 +38,10 @@ audio catalog for music.
   the owner accepts or declines.
 
 ### Posts
-- One `videos` collection for everything: vertical video, camera recordings, and
-  photo sets (up to 6) — `mediaType` distinguishes them.
+- One `videos` collection for everything: vertical video, camera recordings,
+  photo sets (up to 6) and **text posts** — `mediaType` distinguishes them.
+- Your own post has a ⋯ menu: **edit the caption** (hashtags and mentions are
+  re-derived from it) or **delete the post** (the Storage object goes with it).
 - Reactions (like + the six-reaction set), comments with replies, per-comment
   likes, own-comment deletion, save to collections, reposts, share (link copy,
   DM, other surfaces), hashtag and mention extraction with real `#tag` routes,
@@ -85,11 +87,16 @@ audio catalog for music.
   counted only after 20 s of listening.
 
 ### Discovery, notifications, moderation
-- Global search (people, hashtags, posts), trending hashtags, suggested
-  creators, tag pages, notifications grouped by category with unread badges,
+- Global search (people, post captions, hashtags, sounds) with **recent
+  searches**, trending hashtags, suggested creators, tag pages, notifications
+  grouped by category with unread badges and a **per-item read/unread toggle**,
   per-category mute in Settings, reporting for posts, profiles, comments, media,
-  sounds and conversations, plus an admin panel for reports/bans and the
-  moderation trail.
+  sounds and conversations, **muting** (hides someone's posts and notifications
+  without unfollowing), plus an admin panel for reports/bans and the moderation
+  trail.
+- Feed quality-of-life: a **new-posts pill** so a live update never moves the
+  post you're reading, **pull-to-refresh** on touch, and **infinite scroll**
+  with the "load more" button kept as the fallback.
 
 ---
 
@@ -111,6 +118,8 @@ tools/check-brand.mjs structural guard for every logo slot (see below)
 js/views/*.js         home, profile, mediaViewer, stories, messages, sounds,
                       create, discover, notifications, settings, admin, live,
                       components (shared cards, modals, pickers)
+docs/PRODUCT_SPEC.md    the spec: IA, database, page-by-page status, roadmap
+docs/CORE_FLOWS_AUDIT.md  the ten core flows, traced to the write
 firestore.rules       every collection + subcollection the client touches
 storage.rules         owner-scoped writes, public reads, size/type limits
 firestore.indexes.json 31 composite indexes matching the queries above
@@ -250,7 +259,12 @@ Stated so it is not mistaken for a bug or, worse, for working behaviour:
   Messenger-grade DMs, licensed music with a real player, privacy controls,
   blocking/reporting, reactions/reposts/saved collections, activity feed,
   hardened rules and indexes.
-- **Phase 3** — communities/pages, business accounts, opportunities board.
-- **Phase 4** — marketplace discovery from posts.
+- **Phase 3** — Xacheus Pages (churches, businesses, organisations,
+  communities, public figures) + verification requests.
+- **Phase 4** — Xacheus Marketplace (listings, inquiries, business reviews).
+- **Phase 5** — creator analytics, server-side fan-out, rate limiting, push.
+
+All three are specified — schemas, routes and acceptance — in
+`docs/PRODUCT_SPEC.md §6`, before a line of UI is written.
 
 Built in Zambia 🌍

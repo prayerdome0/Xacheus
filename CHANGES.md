@@ -1,3 +1,101 @@
+# Product specification, and the ten core flows made real
+
+## Date: 2026-08-30
+
+The brief was to stop adding surface area and make the ten things that matter
+completely real: **Login → Profile → Create Post → Feed → Like → Comment →
+Follow → Notifications → Search → Messaging**. Six already were; this pass
+closes the other four, fixes two bugs found on the way, and writes down the
+specification the rest of the build is measured against.
+
+### Documents
+- `docs/PRODUCT_SPEC.md` — product identity, information architecture, the
+  full database structure (every collection, field and subcollection), 32
+  composite indexes, the security model with its honest limits, page-by-page
+  functionality tables with ✅/⚠️/⛔ states, and the phased roadmap for Pages,
+  Marketplace and Creator tools — schemas included, before any UI exists.
+- `docs/CORE_FLOWS_AUDIT.md` — each of the ten flows traced from the click to
+  the write and back to the snapshot, with file-and-line evidence.
+
+### Muting (was a stub that said so)
+- `js/social.js` — `muteUser`, `unmuteUser`, `getMuteList`, `getMutedIds`,
+  `isMuted` on `users/{uid}/mutes/{mutedUid}`.
+- Enforced in three places on purpose: the feed filters muted authors
+  (`js/views/home.js`), the story tray drops their stories
+  (`listActiveStories(…, { excludeUids })` in `js/social.js`, used by
+  `js/views/stories.js`), and `notifyUser()` refuses notifications from them —
+  so a mute holds on every device rather than only in the tab you pressed it in.
+- `js/views/profile.js` — the ⋯ menu's mute item replaces the
+  "isn't built yet" toast; it now toggles and explains what mute does *not* do
+  (they can still follow and message you — that's blocking).
+- `js/views/settings.js` — new **Muted accounts** panel beside Blocked.
+- `firestore.rules` — `match /mutes/{mutedUid}`: owner read/create/delete only,
+  no updates.
+
+### Text posts
+- `js/data.js` — `createVideo` accepts `mediaType: "text"` (caption required,
+  media forbidden) and stores `captionLower` for search.
+- `js/views/create.js` — a ✍️ Text tab; `#/create?tab=photos` and `?tab=text`
+  are now honoured instead of being ignored.
+- `js/views/components.js` — `.video-card.is-text` renders the caption as the
+  body and drops the audio row.
+- `firestore.rules` — third create branch, which also blocks a `videoUrl` or
+  non-empty `images` being smuggled onto a text post.
+
+### Your own posts: edit and delete
+- `js/data.js` — `updateVideo(uid, videoId, patch)`: caption only, re-deriving
+  `hashtags`/`mentions` and notifying anyone newly mentioned.
+- `js/views/components.js` — a ⋯ menu on your own cards with **Edit caption**,
+  **Share** and **Delete post** (delete removes the post, its Storage object
+  and its counters, and confirms first).
+- `firestore.rules` — `captionLower` added to the author-update whitelist.
+
+### Feed: new posts, refresh, infinite scroll
+- `js/views/home.js` — a live snapshot no longer shoves a new post underneath
+  the reader. If you're scrolled past 400px the update is held and a
+  **"N new posts"** pill releases it.
+- **Pull-to-refresh** for touch (armed at scroll-top, 70px threshold, never
+  steals carousel or comment scrolling).
+- **Infinite scroll** via a sentinel 400px ahead of the foot; the
+  "Load more videos" button stays as the fallback for keyboard users and for
+  browsers without IntersectionObserver.
+- Rendering collapsed into one `renderVideos(root, videos, { force, append })`
+  so the pill, refresh, pager and snapshot all paint through the same path.
+
+### Notifications
+- `js/data.js` — `setNotificationRead(uid, id, read)`.
+- `js/views/notifications.js` — a per-item read/**unread** toggle; the row and
+  the bell badge update immediately and a failed write reverts.
+
+### Search
+- `js/data.js` — `searchVideos` now unions `hashtags array-contains` with a
+  prefix range on `captionLower`, so searching a word finally finds posts.
+  `firestore.indexes.json` gains the `captionLower ASC, createdAt DESC` index.
+- `js/views/discover.js` — recent searches (8 terms, per account, localStorage,
+  clearable, and documented as a convenience rather than platform data), a new
+  **Search posts** tab, and honest tab names (*Trending posts*, *People*).
+  The UI states the prefix-match limit instead of implying full-text search.
+
+### Two bugs found on the way
+- **`#/saved` was a dead link.** Every profile's account menu links to it, but
+  the router had no `saved` case, so it silently rendered Home. There is now a
+  real `#/saved` view (saved posts + create/rename/delete collections),
+  registered in `js/app.js` and added to `AUTH_ROUTES`.
+- **`sw.js` never precached `stories.js`, `mediaViewer.js`** (or the new
+  `saved.js`), so an installed PWA could fail on a cold offline start. Added;
+  cache bumped `v12 → v13`.
+
+### Styles
+- `styles.css` — new-posts pill, pull-to-refresh strip, text-post body,
+  recent-search chips, saved/collection cards, menu notes. Reduced-motion
+  respected throughout.
+
+### Not verified here
+`firestore.rules` still cannot be compiled or unit-tested in this sandbox (no
+offline emulator). The rules changes follow existing patterns exactly, but
+`docs/CORE_FLOWS_AUDIT.md` ends with the manual pass to run after
+`firebase deploy --only firestore:rules,firestore:indexes,storage,hosting`.
+
 # Logo doubled + profile page no longer moves
 
 ## Date: 2026-08-30
