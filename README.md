@@ -244,6 +244,13 @@ Stated so it is not mistaken for a bug or, worse, for working behaviour:
 
 ## Roadmap
 
+- **Master development prompt** — the full Xacheus Connect feature plan
+  (home card feed & post types, Circles, Marketplace, Xacheus Play, creator
+  dashboard, Xacheus AI, X Plus, privacy/security completion) is specified
+  end-to-end in [docs/MASTER_DEVELOPMENT_PROMPT.md](docs/MASTER_DEVELOPMENT_PROMPT.md):
+  screen map, Firebase collections + rules + indexes per feature, button
+  behaviour, and the real-vs-faked iron rules.
+
 - **Phase 1** — auth, profiles + roles, vertical video, Storage, likes/comments/
   follows/notifications, create, sounds.
 - **Phase 2 (this pass)** — full profiles with media galleries and stories,
