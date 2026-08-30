@@ -1,3 +1,42 @@
+# Logo Visibility — Auto-Matching Backgrounds
+
+## Date: 2026-08-30
+
+## Changes Made
+
+### Logo ink now adapts to the surface it sits on
+The logo assets previously shipped with a baked light-grey background, which
+looked muddy on dark surfaces and clashed with the theme. The logo art is now
+transparent and rendered in the ink variant that guarantees contrast:
+
+- **Dark artwork** (navy X + blue, dark wordmark) on **light surfaces** — the
+  variant chosen automatically for light theme.
+- **Light artwork** on **dark surfaces** — chosen automatically for dark theme.
+- App/PWA icons live on a clean white rounded plate (`assets/logo-plate.png`)
+  so they stay legible in launchers, task bars and home screens.
+
+### New assets
+- `assets/logo-wordmark.png` — transparent dark-ink wordmark (light surfaces)
+- `assets/logo-wordmark-light.png` — transparent light-ink wordmark (dark surfaces)
+- `assets/logo-plate.png` — 320×320 white-plate mark for PWA icons
+- Reuses existing transparent marks: `assets/logo-mark.png` (dark ink),
+  `assets/logo-mark-dark.png` (light ink)
+
+### Where it's applied
+- Topbar wordmark, sidebar mark (`js/app.js`)
+- Boot screen + boot-failure screen (`index.html`; failure screen picks the
+  correct variant even if the app never boots)
+- Auth/sign-in overlay wordmark (`js/auth.js`)
+- PWA manifest 320px icon (`manifest.json`)
+- Service worker shell cache refreshed (`sw.js` cache v8)
+
+### How it stays correct at runtime
+`applyTheme()` now calls `syncLogoVariants()`, which retints every
+`img[data-logo]` on the screen whenever theme switches (dark/light/system), so
+no logo is ever left with poor contrast — including after a live theme change.
+
+---
+
 # Firebase Authentication Fixes and Real Logo Implementation
 
 ## Date: 2026-08-29
