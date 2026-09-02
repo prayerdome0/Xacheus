@@ -90,26 +90,26 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
         .eq('status', 'active');
 
       const memberBusinesses = (memberRows ?? [])
-        .map((r) => {
-          const b = (r as { businesses?: Business }).businesses;
+        .map((r: { businesses?: Business }) => {
+          const b = r.businesses;
           return b ? { business: b, membership: r as unknown as BusinessMember } : null;
         })
         .filter(Boolean) as { business: Business; membership: BusinessMember }[];
 
       const merged = new Map<string, Business>();
-      (owned ?? []).forEach((b) => merged.set(b.id, b as Business));
-      memberBusinesses.forEach(({ business }) => {
+      (owned ?? []).forEach((b: Business) => merged.set(b.id, b));
+      memberBusinesses.forEach(({ business }: { business: Business }) => {
         if (!merged.has(business.id)) merged.set(business.id, business);
       });
       const list = Array.from(merged.values());
 
       const allMemberships = memberBusinesses
-        .filter((m) => !owned?.some((o) => o.id === m.business.id))
-        .map((m) => m.membership);
+        .filter((m: { business: Business; membership: BusinessMember }) => !owned?.some((o: Business) => o.id === m.business.id))
+        .map((m: { business: Business; membership: BusinessMember }) => m.membership);
 
       // Owner memberships are synthesised so permissions resolve uniformly.
-      (owned ?? []).forEach((b) => {
-        if (!allMemberships.some((m) => m.business_id === b.id)) {
+      (owned ?? []).forEach((b: Business) => {
+        if (!allMemberships.some((m: BusinessMember) => m.business_id === b.id)) {
           allMemberships.push({
             id: `owner-${b.id}`, business_id: b.id, user_id: user.id, role: 'owner',
             custom_role_id: null, status: 'active', job_title: 'Owner', phone: null,

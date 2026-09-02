@@ -1,5 +1,5 @@
-import { getFirebaseDb, type AppUser } from './firebase';
-import { collection, addDoc, getDocs, query, where, orderBy, limit, updateDoc, doc, deleteDoc, getDoc } from 'firebase/firestore';
+import { getFirebaseDb } from './firebase';
+import { collection, addDoc, getDocs, query, where, limit } from 'firebase/firestore';
 import type { NotificationType, UUID } from '@/types';
 
 export const NOTIFICATION_TYPES: { type: NotificationType; label: string; description: string; icon: string }[] = [
@@ -61,12 +61,12 @@ export async function loadNotificationPreferences(userId: UUID): Promise<Notific
       }
     });
 
-    return NOTIFICATION_TYPES.map((t) => {
-      const existing = byType.get(t.type);
-      return existing ? { ...existing, type: t.type } : defaultPreference(t.type);
+    return NOTIFICATION_TYPES.map((item) => {
+      const existing = byType.get(item.type);
+      return existing ? { ...existing, type: item.type } : defaultPreference(item.type);
     });
   } catch {
-    return NOTIFICATION_TYPES.map(defaultPreference);
+    return NOTIFICATION_TYPES.map((item) => defaultPreference(item.type));
   }
 }
 

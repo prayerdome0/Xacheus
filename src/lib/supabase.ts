@@ -53,63 +53,72 @@ export async function rpc<T>(_fn: string, _args?: Record<string, unknown>): Prom
   throw new Error(`RPC ${_fn} is no longer available — the backend has moved to Firebase.`);
 }
 
-export const supabase = {
-  from: () => ({
-    select: () => ({
-      eq: () => ({
-        order: () => ({
-          limit: () => Promise.resolve({ data: [], error: null }),
-        }),
-        maybeSingle: () => Promise.resolve({ data: null, error: null }),
-        single: () => Promise.resolve({ data: null, error: null }),
-      }),
-      is: () => ({
-        eq: () => ({
-          order: () => ({
-            limit: () => Promise.resolve({ data: [], error: null }),
-          }),
-          maybeSingle: () => Promise.resolve({ data: null, error: null }),
-        }),
-      }),
-      not: () => ({
-        eq: () => ({
-          order: () => ({
-            limit: () => Promise.resolve({ data: [], error: null }),
-          }),
-        }),
-      }),
-      or: () => ({
-        eq: () => ({
-          order: () => ({
-            limit: () => Promise.resolve({ data: [], error: null }),
-          }),
-        }),
-      }),
-      ilike: () => ({
-        order: () => ({
-          limit: () => Promise.resolve({ data: [], error: null }),
-        }),
-      }),
-    }),
+/** Recursive chain interface so TypeScript accepts any query chain. */
+function chainBuilder(_promiseValue?: unknown): any {
+  const base = {
+    select: (_columns?: string) => selectChain([]),
     insert: () => Promise.resolve({ data: null, error: null }),
-    update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
-    delete: () => ({ eq: () => ({ then: () => Promise.resolve({ data: null, error: null }), catch: () => Promise.resolve({ data: null, error: null }) }) }),
+    update: () => chainBuilder({ data: null, error: null }),
+    delete: () => chainBuilder({ data: null, error: null }),
     upsert: () => Promise.resolve({ data: null, error: null }),
     rpc: () => Promise.resolve({ data: null, error: null }),
-  }),
-  storage: {
-    from: () => ({
-      upload: async () => ({ data: { path: '' }, error: null }),
-      createSignedUrl: () => Promise.resolve({ data: { signedUrl: null }, error: null }),
-      remove: () => Promise.resolve({ data: null, error: null }),
-      getPublicUrl: () => ({ data: { publicUrl: null } }),
+  };
+
+  const selectChain = (val?: unknown) => ({
+    eq: () => selectChain(val),
+    is: () => selectChain(val),
+    not: () => selectChain(val),
+    or: () => selectChain(val),
+    ilike: () => selectChain(val),
+    in: () => selectChain(val),
+    order: () => ({
+      limit: () => Promise.resolve({ data: val !== undefined ? val : [], error: null }),
+      maybeSingle: () => Promise.resolve({ data: val ?? null, error: null }),
+      single: () => Promise.resolve({ data: val ?? null, error: null }),
     }),
-  },
-  auth: {
-    signOut: async () => ({ error: null }),
-  },
-  channel: () => ({
-    on: () => ({ subscribe: () => ({ unsubscribe: () => {} }) }),
-  }),
-  removeChannel: () => Promise.resolve(),
-};
+    maybeSingle: () => Promise.resolve({ data: val ?? null, error: null }),
+    single: () => Promise.resolve({ data: val ?? null, error: null }),
+  });
+
+  const deleteChain = {
+    eq: () => ({
+      then: () => Promise.resolve({ data: null, error: null }),
+      catch: () => Promise.resolve({ data: null, error: null }),
+    }),
+  };
+
+  return {
+    ...base,
+    select: (_columns?: string) => selectChain([]),
+    update: () => ({ eq: () => Promise.resolve({ data: null, error: null }) }),
+    delete: () => deleteChain,
+    from: () => ({
+      ...base,
+      select: () => selectChain([]),
+    }),
+  };
+}
+
+function makeSupabaseClient() {
+  return {
+    from: (_table?: string) => chainBuilder([]),
+    rpc: async (_fn?: string, _args?: Record<string, unknown>) => Promise.resolve({ data: null, error: null }),
+    storage: {
+      from: () => ({
+        upload: async () => ({ data: { path: '' }, error: null }),
+        createSignedUrl: () => Promise.resolve({ data: { signedUrl: null }, error: null }),
+        remove: () => Promise.resolve({ data: null, error: null }),
+        getPublicUrl: () => ({ data: { publicUrl: null } }),
+      }),
+    },
+    auth: {
+      signOut: async (_opts?: { scope?: string }) => ({ error: null }),
+    },
+    channel: () => ({
+      on: () => ({ subscribe: () => ({ unsubscribe: () => {} }) }),
+    }),
+    removeChannel: () => Promise.resolve(),
+  };
+}
+
+export const supabase = makeSupabaseClient();
