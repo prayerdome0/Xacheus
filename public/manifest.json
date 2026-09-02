@@ -1,0 +1,55 @@
+{
+  "name": "Seedwel Hub — Buy. Sell. Manage. Grow.",
+  "short_name": "Seedwel Hub",
+  "description": "The AI-powered business platform for modern businesses. Store, marketplace, inventory, invoicing, payments and POS in one account. A product of Seedwel Investment Limited.",
+  "id": "com.seedwel.hub",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#071a19",
+  "theme_color": "#0b3d3a",
+  "lang": "en-ZM",
+  "dir": "ltr",
+  "categories": ["business", "shopping", "productivity", "finance"],
+  "shortcuts": [
+    {
+      "name": "Marketplace",
+      "short_name": "Shop",
+      "description": "Search products, services and businesses",
+      "url": "/marketplace",
+      "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "My Business",
+      "short_name": "Business",
+      "description": "Dashboard, sales, stock and documents",
+      "url": "/business",
+      "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "POS",
+      "short_name": "Sell",
+      "description": "Scan, sell and print a receipt",
+      "url": "/business/pos",
+      "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Ask Seedwel AI",
+      "short_name": "AI",
+      "description": "Ask questions about your business",
+      "url": "/business/ai",
+      "icons": [{ "src": "/brand/icon-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "icons": [
+    { "src": "/brand/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/brand/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/brand/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "screenshots": [
+    { "src": "/brand/logo-1024.png", "sizes": "1024x1024", "type": "image/png", "form_factor": "wide", "label": "Seedwel Hub" }
+  ]
+}
