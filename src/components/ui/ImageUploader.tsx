@@ -5,11 +5,13 @@ import { Button } from './Primitives';
 import { useAuth } from '@/context/AuthContext';
 
 /**
- * Image upload → Supabase Storage.
+ * Image upload → legacy Supabase Storage (Phase 2 moves this to Cloudinary).
  *
  * Client-side downscale before upload: product photos arrive from phones at
  * 4–8 MB, and a marketplace grid of those would be unusable on Zambian mobile
  * data. We resize to a sane maximum and upload a JPEG/WEBP instead.
+ * The Cloudinary unsigned preset config is already in env; the uploader swaps
+ * in during Phase 2.
  */
 
 const MAX_BYTES = 12 * 1024 * 1024;

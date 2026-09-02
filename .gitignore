@@ -48,5 +48,17 @@ brand-src/
 supabase/.temp/
 supabase/.branches/
 
+# Firebase local/dev and private credential files
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+*.serviceAccount.json
+serviceAccount*.json
+google-credentials.json
+*-firebase-adminsdk-*.json
+private-key*.json
+.key
+*.pem
+
 # PWA workbox
 dev-dist/

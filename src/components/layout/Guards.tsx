@@ -154,19 +154,22 @@ export function RequirePlatformAdmin({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-/** Screen shown while the Supabase schema has not been applied yet. */
+/**
+ * Shown by not-yet-migrated modules while their data layer can still detect a
+ * missing/legacy backend. Phase 2+ replaces this with Firestore-scoped screens.
+ */
 export function SchemaHint({ children }: { children: ReactNode }) {
   return (
     <div className="space-y-4">
-      <Notice tone="warning" title="Database schema not detected" icon="warning">
+      <Notice tone="warning" title="This module is waiting for its Firebase migration" icon="warning">
         <div className="space-y-2">
           <p>
-            Seedwel Hub needs its tables before it can show real data. Apply the SQL files in
-            <code className="mx-1 rounded bg-white/70 px-1 py-0.5 font-mono text-[11px]">supabase/sql/</code>
-            in numeric order (0001 → 0011) using the Supabase SQL Editor.
+            Auth and profiles are on Firebase. This screen still expects the legacy
+            Supabase data layer, which is being moved to Cloud Firestore phase by
+            phase — see <code className="rounded bg-white/70 px-1 font-mono text-[11px]">docs/FIREBASE_MIGRATION.md</code>.
           </p>
           <p className="flex items-center gap-1.5 text-xs opacity-80">
-            <Icon name="info" size={13} /> Nothing on this screen is simulated — once the schema is applied, real data appears.
+            <Icon name="info" size={13} /> Nothing on this screen is simulated — real Firestore data appears once its collection is migrated.
           </p>
         </div>
       </Notice>

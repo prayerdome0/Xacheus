@@ -1,0 +1,12 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Phase 1 keeps object storage locked down. The media plan is Cloudinary
+    // for public images/videos, with the API secret only in Cloud Functions.
+    // If Firebase Storage is needed for temporary/signed private files later,
+    // add a scoped rule here — never open the whole bucket.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
