@@ -187,12 +187,12 @@ export default function App() {
   if (!isSupabaseConfigured) return <SupabaseGate />;
 
   return (
-    <ModeProvider>
+    <RouteErrorBoundary key={location.pathname}>
       <ToastProvider>
         <AuthProvider>
           <BusinessProvider>
-            <CartProvider>
-              <RouteErrorBoundary key={location.pathname}>
+            <ModeProvider>
+              <CartProvider>
                 <Suspense fallback={<PageFallback />}>
                   <Routes>
                     {/* ── Public storefront ─────────────────────────────── */}
@@ -325,16 +325,16 @@ export default function App() {
                     </Route>
                   </Routes>
                 </Suspense>
-              </RouteErrorBoundary>
 
-              {/* ToastProvider only owns state; the viewport lives here so it
-                  floats above every shell, including modals and the POS. */}
-              <ToastViewport />
-            </CartProvider>
+                {/* ToastProvider only owns state; the viewport lives here so it
+                    floats above every shell, including modals and the POS. */}
+                <ToastViewport />
+              </CartProvider>
+            </ModeProvider>
           </BusinessProvider>
         </AuthProvider>
       </ToastProvider>
-    </ModeProvider>
+    </RouteErrorBoundary>
   );
 }
 
