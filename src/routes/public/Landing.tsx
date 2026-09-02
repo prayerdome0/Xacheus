@@ -26,7 +26,7 @@ const ANNOUNCEMENTS = [
   '🧾 Create professional quotations, invoices and receipts',
 ];
 
-/** Branded promotional banners — image-based, no fake/demo text. */
+/** Branded promotional banners — 5 real branded images, no fake/demo text. */
 const BANNERS: {
   image: string;
   alt: string;
@@ -35,24 +35,38 @@ const BANNERS: {
   to: string;
 }[] = [
   {
-    image: '/brand/banner-marketplace.jpg',
-    alt: 'Seedwel Hub marketplace banner — discover and sell products worldwide',
-    title: 'Marketplace',
-    subtitle: 'Connect buyers and sellers across the world',
+    image: '/brand/banner-clothes.jpg',
+    alt: 'Seedwel Hub apparel banner — discover fashion and clothing products',
+    title: 'Fashion & Clothing',
+    subtitle: 'Discover apparel and accessories from verified sellers',
     to: '/search',
   },
   {
-    image: '/brand/banner-sell.jpg',
-    alt: 'Seedwel Hub business banner — grow your store and manage operations',
-    title: 'Business Tools',
-    subtitle: 'Quotations, invoices, inventory and more',
-    to: '/business/setup',
+    image: '/brand/banner-phones.jpg',
+    alt: 'Seedwel Hub electronics banner — discover phones and gadgets',
+    title: 'Electronics',
+    subtitle: 'Find the latest phones and tech from trusted sellers',
+    to: '/search',
+  },
+  {
+    image: '/brand/banner-food.jpg',
+    alt: 'Seedwel Hub fresh food banner — discover organic products',
+    title: 'Fresh Products',
+    subtitle: 'Organic food and fresh goods from local suppliers',
+    to: '/search',
   },
   {
     image: '/brand/banner-business.jpg',
-    alt: 'Seedwel Hub community banner — connect, share and grow together',
-    title: 'Community',
-    subtitle: 'Join business communities and grow together',
+    alt: 'Seedwel Hub business banner — manage your store and operations',
+    title: 'Business Tools',
+    subtitle: 'Quotations, invoices, inventory and customer management',
+    to: '/business/setup',
+  },
+  {
+    image: '/brand/banner-market.jpg',
+    alt: 'Seedwel Hub marketplace banner — diverse products and sellers',
+    title: 'Marketplace',
+    subtitle: 'Everything from fashion to food — one digital ecosystem',
     to: '/businesses',
   },
 ];
