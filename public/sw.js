@@ -9,8 +9,8 @@ const SHELL = [
   '/',
   '/manifest.json',
   '/brand/icon.svg',
-  '/brand/mark-192.png',
-  '/brand/wordmark.png',
+  '/brand/reallogo.png',
+  '/brand/wordmarklogo.png',
 ];
 
 self.addEventListener('install', (event) => {

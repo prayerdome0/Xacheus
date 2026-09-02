@@ -1,10 +1,11 @@
-import { Component, Suspense, lazy, type ErrorInfo, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
 import { ToastViewport } from '@/components/ui/Overlays';
 import { BareShell, PublicShell } from '@/components/layout/PublicShell';
 import { BusinessShell } from '@/components/layout/BusinessShell';
-import { FullScreenLoader, NotFound, RedirectIfAuthed, RequireAuth, RequireBusiness } from '@/components/layout/Guards';
+import { BrandSplash, BrandLoader } from '@/components/layout/BrandSplash';
+import { NotFound, RedirectIfAuthed, RequireAuth, RequireBusiness } from '@/components/layout/Guards';
 import { AuthProvider } from '@/context/AuthContext';
 import { BusinessProvider } from '@/context/BusinessContext';
 import { CartProvider } from '@/context/CartContext';
@@ -162,7 +163,7 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, BoundaryStat
 /* ── Small helpers ─────────────────────────────────────────────────────────── */
 
 function PageFallback() {
-  return <FullScreenLoader label="Loading…" />;
+  return <BrandLoader label="Loading…" />;
 }
 
 /** Routes that exist in the navigation but not yet in this build. */
@@ -183,6 +184,18 @@ function LegacyShareRedirect() {
 
 export default function App() {
   const location = useLocation();
+  const [booted, setBooted] = useState(false);
+
+  // Application-wide boot splash: particles converge into the wordmark, which
+  // sharpens and glows before fading into the app. Plays once per hard load.
+  if (!booted) {
+    return (
+      <BrandSplash
+        onDone={() => setBooted(true)}
+        label="Welcome to Seedwel Hub — Buy. Sell. Manage. Grow."
+      />
+    );
+  }
 
   if (!isFirebaseConfigured) return <FirebaseGate />;
 

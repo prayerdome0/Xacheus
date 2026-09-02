@@ -1,17 +1,17 @@
 import { useCallback, useRef, useState, type ReactNode } from 'react';
-import { BUCKETS, storagePath, uploadFile, removeFile, type Bucket } from '@/lib/supabase';
+import { BUCKETS, type Bucket } from '@/lib/media';
+import { uploadMediaFile, removeMediaFile, type MediaProvider } from '@/lib/media';
 import { Icon, Spinner } from './Icon';
 import { Button } from './Primitives';
 import { useAuth } from '@/context/AuthContext';
 
 /**
- * Image upload → legacy Supabase Storage (Phase 2 moves this to Cloudinary).
+ * Image upload → Cloudinary (unsigned preset, no folders) when configured,
+ * otherwise legacy Supabase Storage.
  *
  * Client-side downscale before upload: product photos arrive from phones at
- * 4–8 MB, and a marketplace grid of those would be unusable on Zambian mobile
- * data. We resize to a sane maximum and upload a JPEG/WEBP instead.
- * The Cloudinary unsigned preset config is already in env; the uploader swaps
- * in during Phase 2.
+ * 4–8 MB, and a marketplace grid of those would be unusable on mobile data.
+ * We resize to a sane maximum and upload a JPEG/WEBP instead.
  */
 
 const MAX_BYTES = 12 * 1024 * 1024;
@@ -48,6 +48,7 @@ export interface UploadedImage {
   name: string;
   size: number;
   type?: string;
+  provider?: MediaProvider;
 }
 
 interface ImageUploaderProps {
@@ -100,10 +101,8 @@ export function ImageUploader({
           continue;
         }
         const resized = await downscaleImage(file, maxSize, quality);
-        const path = storagePath(scope, sub, resized.name);
-        const res = await uploadFile(bucket, path, resized, { contentType: resized.type });
-        if (!res.url) throw new Error('That bucket is private; images must go to a public bucket.');
-        uploaded.push({ url: res.url, path: res.path, name: file.name, size: resized.size, type: 'image' });
+        const res = await uploadMediaFile({ file: resized, bucket, scope, sub });
+        uploaded.push({ url: res.url, path: res.path, name: file.name, size: resized.size, type: 'image', provider: res.provider });
       }
 
       if (uploaded.length === 0) return;
@@ -111,7 +110,7 @@ export function ImageUploader({
         onImagesChange([...(images ?? []), ...uploaded].slice(0, max));
       } else if (onChange) {
         // Replace the previous image and clean up its storage object.
-        if (value?.path) void removeFile(bucket, value.path).catch(() => {});
+        if (value?.path) void removeMediaFile({ path: value.path, provider: value.provider, bucket }).catch(() => {});
         onChange(uploaded[0]);
       }
     } catch (e) {
@@ -169,7 +168,7 @@ export function ImageUploader({
                     type="button"
                     disabled={disabled}
                     onClick={() => {
-                      void removeFile(bucket, img.path).catch(() => {});
+                      void removeMediaFile({ path: img.path, provider: img.provider, bucket }).catch(() => {});
                       onImagesChange?.(images!.filter((_, idx) => idx !== i));
                     }}
                     className="absolute right-1 top-1 rounded-lg bg-white/90 p-1 text-red-600 shadow"
@@ -200,7 +199,7 @@ export function ImageUploader({
             </Button>
             <Button type="button" variant="ghost" size="sm" icon="trash" className="text-red-600" disabled={disabled || busy}
               onClick={() => {
-                void removeFile(bucket, value.path).catch(() => {});
+                void removeMediaFile({ path: value.path, provider: value.provider, bucket }).catch(() => {});
                 onChange?.(null);
               }}>
               Remove
@@ -229,9 +228,8 @@ export function AvatarUploader({ bucket = BUCKETS.avatars, scope, value, onChang
     setBusy(true);
     try {
       const resized = await downscaleImage(file, 640, 0.9);
-      const res = await uploadFile(bucket, storagePath(scope, user.id.slice(0, 8), resized.name), resized,
-        { contentType: resized.type });
-      if (res.url) onChange({ url: res.url, path: res.path, name: file.name, size: resized.size });
+      const res = await uploadMediaFile({ file: resized, bucket, scope, sub: user.id.slice(0, 8) });
+      if (res.url) onChange({ url: res.url, path: res.path, name: file.name, size: resized.size, provider: res.provider });
     } finally {
       setBusy(false);
       if (input.current) input.current.value = '';
