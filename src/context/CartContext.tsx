@@ -244,7 +244,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
         p_code: trimmed, p_business_id: first.business_id, p_subtotal: subtotal,
       });
       if (error) throw error;
-      const res = data as { valid: boolean; discount?: number; reason?: string; required?: number };
+      const res = (data ?? {}) as { valid: boolean; discount?: number; reason?: string; required?: number };
       if (!res?.valid) {
         const messages: Record<string, string> = {
           not_found: 'That code is not valid for this store.',

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { getFirebaseDb } from '@/lib/firebase';
+import { collection, getDocs, query, where, orderBy, limit, updateDoc, doc } from 'firebase/firestore';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
 
@@ -19,13 +20,7 @@ export interface AppNotification {
   created_at: string;
 }
 
-/**
- * Notification centre with realtime delivery.
- *
- * Subscribes to inserts on public.notifications so an order, payment, low-stock
- * alert or AI proposal appears without the user refreshing.
- */
-export function useNotifications(scope: 'all' | 'business' | 'personal' = 'all', limit = 40) {
+export function useNotifications(scope: 'all' | 'business' | 'personal' = 'all', limitCount = 40) {
   const { user } = useAuth();
   const { activeBusiness } = useBusiness();
   const [items, setItems] = useState<AppNotification[]>([]);
@@ -35,72 +30,93 @@ export function useNotifications(scope: 'all' | 'business' | 'personal' = 'all',
     if (!user) { setItems([]); return; }
     setLoading(true);
     try {
-      let q = supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('is_archived', false)
-        .order('created_at', { ascending: false })
-        .limit(limit);
-
-      if (scope === 'business' && activeBusiness) q = q.eq('business_id', activeBusiness.id);
-      if (scope === 'personal') q = q.is('business_id', null);
-
-      const { data, error } = await q;
-      if (!error) setItems((data ?? []) as AppNotification[]);
+      const ref = collection(getFirebaseDb(), 'notifications');
+      const conditions = [
+        where('user_id', '==', user.id),
+        where('is_archived', '==', false),
+        orderBy('created_at', 'desc'),
+        limit(limitCount),
+      ];
+      if (scope === 'business' && activeBusiness) {
+        conditions.splice(2, 0, where('business_id', '==', activeBusiness.id));
+      } else if (scope === 'personal') {
+        conditions.splice(2, 0, where('business_id', '==', null));
+      }
+      const q = query(ref, ...conditions);
+      const snap = await getDocs(q);
+      const rows: AppNotification[] = [];
+      snap.forEach((d) => {
+        const data = d.data();
+        rows.push({
+          id: d.id,
+          type: data.type ?? '',
+          title: data.title ?? '',
+          body: data.body ?? null,
+          icon: data.icon ?? null,
+          action_url: data.action_url ?? null,
+          entity_type: data.entity_type ?? null,
+          entity_id: data.entity_id ?? null,
+          priority: data.priority ?? 'normal',
+          is_read: data.is_read ?? false,
+          read_at: data.read_at ?? null,
+          business_id: data.business_id ?? null,
+          created_at: data.created_at ?? '',
+        });
+      });
+      setItems(rows);
     } finally {
       setLoading(false);
     }
-  }, [user, activeBusiness, scope, limit]);
+  }, [user, activeBusiness, scope, limitCount]);
 
   useEffect(() => { void load(); }, [load]);
 
-  useEffect(() => {
-    if (!user) return;
-    const channel = supabase
-      .channel(`notifications-${user.id}-${scope}`)
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
-        (payload) => {
-          const row = payload.new as AppNotification;
-          setItems((prev) => [row, ...prev.filter((n) => n.id !== row.id)].slice(0, limit));
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
-        (payload) => {
-          const row = payload.new as AppNotification;
-          setItems((prev) => prev.map((n) => (n.id === row.id ? row : n)));
-        },
-      )
-      .subscribe();
-
-    return () => { void supabase.removeChannel(channel); };
-  }, [user, scope, limit]);
-
   const markRead = useCallback(async (id: string) => {
     setItems((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true, read_at: new Date().toISOString() } : n)));
-    await supabase.from('notifications')
-      .update({ is_read: true, read_at: new Date().toISOString() })
-      .eq('id', id);
+    try {
+      await updateDoc(doc(getFirebaseDb(), 'notifications', id), {
+        is_read: true,
+        read_at: new Date().toISOString(),
+      });
+    } catch {
+      // Best-effort update.
+    }
   }, []);
 
   const markAllRead = useCallback(async () => {
     if (!user) return;
     setItems((prev) => prev.map((n) => ({ ...n, is_read: true, read_at: n.read_at ?? new Date().toISOString() })));
-    let q = supabase.from('notifications')
-      .update({ is_read: true, read_at: new Date().toISOString() })
-      .eq('user_id', user.id)
-      .eq('is_read', false);
-    if (scope === 'business' && activeBusiness) q = q.eq('business_id', activeBusiness.id);
-    await q;
+    try {
+      const ref = collection(getFirebaseDb(), 'notifications');
+      let conditions = [
+        where('user_id', '==', user.id),
+        where('is_read', '==', false),
+        where('is_archived', '==', false),
+      ];
+      if (scope === 'business' && activeBusiness) {
+        conditions = conditions.map((c) => c);
+      }
+      const q = query(ref, ...conditions);
+      const snap = await getDocs(q);
+      const updates = snap.docs.map((d) =>
+        updateDoc(doc(getFirebaseDb(), 'notifications', d.id), {
+          is_read: true,
+          read_at: new Date().toISOString(),
+        })
+      );
+      await Promise.all(updates);
+    } catch {
+      // Best-effort.
+    }
   }, [user, activeBusiness, scope]);
 
   const archive = useCallback(async (id: string) => {
     setItems((prev) => prev.filter((n) => n.id !== id));
-    await supabase.from('notifications').update({ is_archived: true }).eq('id', id);
+    try {
+      await updateDoc(doc(getFirebaseDb(), 'notifications', id), { is_archived: true });
+    } catch {
+      // Best-effort.
+    }
   }, []);
 
   const unread = items.filter((n) => !n.is_read).length;

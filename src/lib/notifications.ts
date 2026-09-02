@@ -1,7 +1,7 @@
-import { supabase } from './supabase';
+import { getFirebaseDb } from './firebase';
+import { collection, addDoc, getDocs, query, where, limit } from 'firebase/firestore';
 import type { NotificationType, UUID } from '@/types';
 
-/** Notification types a user can toggle channels for. */
 export const NOTIFICATION_TYPES: { type: NotificationType; label: string; description: string; icon: string }[] = [
   { type: 'order', label: 'Orders', description: 'New orders, status changes and returns.', icon: 'cart' },
   { type: 'payment', label: 'Payments', description: 'Payments received or confirmed.', icon: 'wallet' },
@@ -16,7 +16,6 @@ export const NOTIFICATION_TYPES: { type: NotificationType; label: string; descri
   { type: 'security', label: 'Security', description: 'Sign-ins, verification and security events.', icon: 'shield' },
 ];
 
-/** A user's channel preference for one notification type. */
 export interface NotificationPreference {
   type: NotificationType;
   in_app: boolean;
@@ -27,7 +26,6 @@ export interface NotificationPreference {
   quiet_hours: { start: string; end: string; tz?: string } | null;
 }
 
-/** Defaults — matches the `notification_preferences` table columns. */
 export function defaultPreference(type: NotificationType): NotificationPreference {
   return {
     type,
@@ -40,61 +38,64 @@ export function defaultPreference(type: NotificationType): NotificationPreferenc
   };
 }
 
-/** Load the user's notification preferences and merge with defaults. */
 export async function loadNotificationPreferences(userId: UUID): Promise<NotificationPreference[]> {
-  const { data, error } = await supabase
-    .from('notification_preferences')
-    .select('*')
-    .eq('user_id', userId)
-    .is('business_id', null);
-  if (error) throw new Error(error.message);
+  try {
+    const ref = collection(getFirebaseDb(), 'notification_preferences');
+    const q = query(ref, where('user_id', '==', userId), where('business_id', '==', null));
+    const snap = await getDocs(q);
+    const rows: Partial<NotificationPreference & { type: string }>[] = [];
+    snap.forEach((d) => rows.push(d.data() as Partial<NotificationPreference & { type: string }>));
 
-  const rows = (data ?? []) as Array<Partial<NotificationPreference> & { type: string }>;
-  const byType = new Map<string, NotificationPreference>();
-  rows.forEach((r) => {
-    if (r.type) {
-      byType.set(r.type, {
-        type: r.type as NotificationType,
-        in_app: r.in_app ?? true,
-        email: r.email ?? true,
-        push: r.push ?? true,
-        sms: r.sms ?? false,
-        whatsapp: r.whatsapp ?? false,
-        quiet_hours: r.quiet_hours ?? null,
-      });
-    }
-  });
+    const byType = new Map<string, NotificationPreference>();
+    rows.forEach((r) => {
+      if (r.type) {
+        byType.set(r.type, {
+          type: r.type as NotificationType,
+          in_app: r.in_app ?? true,
+          email: r.email ?? true,
+          push: r.push ?? true,
+          sms: r.sms ?? false,
+          whatsapp: r.whatsapp ?? false,
+          quiet_hours: r.quiet_hours ?? null,
+        });
+      }
+    });
 
-  return NOTIFICATION_TYPES.map((t) => {
-    const existing = byType.get(t.type);
-    return existing ? { ...existing, type: t.type } : defaultPreference(t.type);
-  });
+    return NOTIFICATION_TYPES.map((item) => {
+      const existing = byType.get(item.type);
+      return existing ? { ...existing, type: item.type } : defaultPreference(item.type);
+    });
+  } catch {
+    return NOTIFICATION_TYPES.map((item) => defaultPreference(item.type));
+  }
 }
 
-/** Persist a single notification preference via the security-definer RPC. */
 export async function saveNotificationPreference(userId: UUID, pref: NotificationPreference): Promise<void> {
-  const { error } = await supabase.rpc('set_notification_preference', {
-    p_user_id: userId,
-    p_type: pref.type,
-    p_business_id: null,
-    p_in_app: pref.in_app,
-    p_email: pref.email,
-    p_sms: pref.sms,
-    p_whatsapp: pref.whatsapp,
-    p_push: pref.push,
-    p_quiet_hours: pref.quiet_hours,
-  });
-  if (error) throw new Error(error.message);
+  try {
+    await addDoc(collection(getFirebaseDb(), 'notification_preferences'), {
+      user_id: userId,
+      business_id: null,
+      type: pref.type,
+      in_app: pref.in_app,
+      email: pref.email,
+      sms: pref.sms,
+      whatsapp: pref.whatsapp,
+      push: pref.push,
+      quiet_hours: pref.quiet_hours,
+      updated_at: new Date().toISOString(),
+    });
+  } catch {
+    // Best-effort persistence; preferences fall back to defaults in memory.
+  }
 }
 
-/** Does this browser already have a registered push token? */
 export async function hasRegisteredPushToken(userId: UUID): Promise<boolean> {
-  const { data, error } = await supabase
-    .from('push_tokens')
-    .select('id')
-    .eq('user_id', userId)
-    .eq('is_active', true)
-    .limit(1);
-  if (error) return false;
-  return Boolean(data && data.length > 0);
+  try {
+    const ref = collection(getFirebaseDb(), 'push_tokens');
+    const q = query(ref, where('user_id', '==', userId), where('is_active', '==', true), limit(1));
+    const snap = await getDocs(q);
+    return !snap.empty;
+  } catch {
+    return false;
+  }
 }

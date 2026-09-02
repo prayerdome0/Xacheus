@@ -1,5 +1,6 @@
 import { vapidPublicKey } from './env';
-import { supabase } from './supabase';
+import { getFirebaseDb } from './firebase';
+import { collection, addDoc, getDocs, query, where, updateDoc, doc } from 'firebase/firestore';
 import type { UUID } from '@/types';
 
 /**
@@ -90,23 +91,28 @@ export async function subscribeToWebPush(userId: UUID): Promise<boolean> {
   return saveWebPushToken(userId, token ?? '', endpoint, subscription);
 }
 
-/** Persist the browser's push token / subscription to `push_tokens`. */
+/** Persist the browser's push token / subscription to Firestore. */
 export async function saveWebPushToken(
   userId: UUID,
   token: string,
   endpoint: string | null,
   subscription?: Record<string, unknown> | null,
 ): Promise<boolean> {
-  const { error } = await supabase.rpc('register_push_token', {
-    p_user_id: userId,
-    p_token: token,
-    p_endpoint: endpoint,
-    p_subscription: subscription ?? null,
-    p_platform: 'web',
-    p_user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
-  });
-  if (error) throw new Error(error.message);
-  return true;
+  try {
+    await addDoc(collection(getFirebaseDb(), 'push_tokens'), {
+      user_id: userId,
+      token,
+      endpoint,
+      subscription: subscription ?? null,
+      platform: 'web',
+      user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : null,
+      is_active: true,
+      created_at: new Date().toISOString(),
+    });
+    return true;
+  } catch {
+    throw new Error('Could not save the push token.');
+  }
 }
 
 /** Deactivate this browser's push token (called when the user turns push off). */
@@ -119,8 +125,18 @@ export async function unsubscribeFromWebPush(userId: UUID): Promise<void> {
   } catch {
     /* best-effort */
   }
-  const { error } = await supabase.rpc('unregister_push_token', { p_user_id: userId });
-  if (error) throw new Error(error.message);
+  try {
+    const ref = collection(getFirebaseDb(), 'push_tokens');
+    const q = query(ref, where('user_id', '==', userId), where('is_active', '==', true));
+    const snap = await getDocs(q);
+    const updates: Promise<void>[] = [];
+    snap.forEach((d) => {
+      updates.push(updateDoc(doc(getFirebaseDb(), 'push_tokens', d.id), { is_active: false, deactivated_at: new Date().toISOString() }));
+    });
+    await Promise.all(updates);
+  } catch {
+    // Best-effort deactivation.
+  }
 }
 
 /** Request permission and return a device token. Used by the Phase 6 flow. */

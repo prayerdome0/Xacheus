@@ -28,7 +28,7 @@ import type {
  * (export my data, delete my account) backed by the data_requests table.
  */
 
-const TABS: { key: string; label: string; icon: IconName }[] = [
+const BASE_TABS: { key: string; label: string; icon: IconName }[] = [
   { key: '', label: 'Overview', icon: 'dashboard' },
   { key: 'orders', label: 'My orders', icon: 'receipt' },
   { key: 'wishlist', label: 'Wishlist', icon: 'heart' },
@@ -39,11 +39,13 @@ const TABS: { key: string; label: string; icon: IconName }[] = [
 ];
 
 export default function AccountLayout() {
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, signOut, isPlatformAdmin } = useAuth();
   const { businesses } = useBusiness();
   const navigate = useNavigate();
   const params = useParams();
   const tab = params['*'] ?? '';
+
+  const TABS = isPlatformAdmin ? [...BASE_TABS, { key: 'admin', label: 'Admin', icon: 'shield' as IconName }] : BASE_TABS;
 
   if (!user) return null;
 
