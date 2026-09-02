@@ -1,0 +1,56 @@
+import { useMemo } from 'react';
+import { supabase } from '@/lib/supabase';
+import { useBusiness } from '@/context/BusinessContext';
+import { useQuery } from './useQuery';
+import type { UUID } from '@/types';
+
+/**
+ * Business-scoped queries with the permission gate applied first.
+ *
+ * If the caller's role lacks the permission, the query is not issued at all and
+ * `denied` is set — the screen then shows the "your role does not include…"
+ * message instead of an empty table. RLS still enforces the rule server-side.
+ */
+
+export interface BusinessQueryOptions {
+  permission?: string;
+  permissions?: string[];
+  enabled?: boolean;
+  order?: { column: string; ascending?: boolean };
+  limit?: number;
+  extra?: (q: ReturnType<typeof supabase.from>) => ReturnType<typeof supabase.from>;
+}
+
+export function useBusinessQuery<T>(
+  table: string,
+  select: string,
+  opts: BusinessQueryOptions = {},
+) {
+  const { activeBusiness, can, canAny } = useBusiness();
+  const businessId = activeBusiness?.id ?? null;
+
+  const allowed = useMemo(() => {
+    if (!businessId) return false;
+    if (opts.permissions?.length) return canAny(opts.permissions);
+    if (opts.permission) return can(opts.permission);
+    return true;
+  }, [businessId, opts.permission, opts.permissions, can, canAny]);
+
+  const denied = Boolean(businessId) && !allowed;
+
+  const query = useQuery<T>(
+    () => {
+      if (!businessId || !allowed || opts.enabled === false) return null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let q: any = supabase.from(table).select(select).eq('business_id', businessId);
+      if (opts.order) q = q.order(opts.order.column, { ascending: opts.order.ascending ?? false });
+      if (opts.limit) q = q.limit(opts.limit);
+      if (opts.extra) q = opts.extra(q);
+      return q as never;
+    },
+    [businessId, table, select, allowed, opts.enabled, opts.order?.column, opts.order?.ascending, opts.limit],
+    { enabled: Boolean(businessId) && allowed && opts.enabled !== false },
+  );
+
+  return { ...query, denied, allowed, businessId: businessId as UUID | null };
+}

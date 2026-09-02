@@ -1,15 +1,38 @@
 {
-  "name": "xacheus-social",
-  "version": "1.0.0",
+  "name": "seedwel-hub",
+  "version": "0.1.0",
   "private": true,
-  "description": "Xacheus — Zambia's short vertical video platform. Real auth, profiles with roles, video feed, Firebase Storage, free sounds. No fake videos.",
   "type": "module",
+  "description": "Seedwel Hub — Buy. Sell. Manage. Grow. The AI-powered business platform for modern businesses. A product of Seedwel Investment Limited.",
   "scripts": {
-    "dev": "python3 -m http.server 5173 --bind 0.0.0.0",
-    "start": "python3 -m http.server 5173 --bind 0.0.0.0",
-    "deploy": "firebase deploy --only firestore:rules,firestore:indexes,storage,hosting"
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "typecheck": "tsc -b --noEmit",
+    "lint": "eslint ."
   },
-  "keywords": ["social", "firebase", "firestore", "storage", "realtime", "pwa"],
-  "author": "Xacheus",
-  "license": "UNLICENSED"
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "bwip-js": "^4.5.1",
+    "clsx": "^2.1.1",
+    "jspdf": "^2.5.2",
+    "jspdf-autotable": "^3.8.4",
+    "papaparse": "^5.4.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2",
+    "recharts": "^2.12.7",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.7.4",
+    "@types/papaparse": "^5.3.14",
+    "@types/react": "^18.3.10",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  }
 }

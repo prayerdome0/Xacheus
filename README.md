@@ -1,277 +1,316 @@
-# Xacheus — a social platform for video, photos, music, messaging and people
+# Seedwel Hub
 
-Xacheus is a **working social app**, not a mockup: one account, one database, one
-set of security rules, and no demo data anywhere. If a feature is on screen it
-writes to Firestore or Firebase Storage and comes back after a refresh, a
-re-login, or on another device. Anything that is *not* built is labelled as not
-built (see [Not implemented](#not-implemented)) instead of being faked.
+**Buy. Sell. Manage. Grow.** — A product of Seedwel Investment Limited.
 
-Stack: vanilla ES modules (no build step), Firebase Auth + Firestore + Storage
-(v10.12.5 CDN modules), a hash router, and the Internet Archive's open-licence
-audio catalog for music.
+Seedwel Hub is a marketplace *and* the back office behind it. A trader in Lusaka
+can create an account, get an online store at `seedwelhub.com/store/<slug>`, list
+products, sell over the counter with the POS, record what a customer owes, and
+send an invoice on WhatsApp that the customer can open, verify and pay — without
+ever leaving one login.
 
----
-
-## What is real today
-
-### Accounts and profiles
-- Email/password and Google sign-in; `users/{uid}` profile documents created by
-  `ensureProfile`, handle reservations in `usernames/{handle}` (3–20 chars,
-  lowercase, unique), roles `user · creator · business · church · admin`.
-- Profile page (`#/u/{handle}`, `#/profile`): cover photo, avatar, display name,
-  bio, links, location, role badge, verification mark, follower/following/post
-  counts (all computed from real documents), join date, profile-view count.
-- Tabs: **Posts · Photos · Videos · Reposts · Music · Activity · Saved · Liked ·
-  Followers · Following · About**. Deep-linkable: `#/u/you?tab=photos`,
-  `#/u/you?media={profileMediaId}` opens the viewer straight onto that item.
-- **Avatar and cover are interactive**: tap either to open the full-screen media
-  viewer, where you can react, comment, reply to a comment, like a comment,
-  share, copy the link, see view/like/comment counts, and delete your own
-  comments. Uploading a new picture writes a real `profileMedia` document, so a
-  profile keeps a picture *history* rather than one floating URL. If a profile's
-  current avatar/cover has no gallery entry yet, the viewer says so plainly and
-  offers to add it — it never invents a document.
-- Editing your own profile: display name, bio, links, avatar, cover, handle
-  change (propagates to every denormalised copy), private-account switch.
-- Private accounts: content is locked to approved followers (enforced in
-  `firestore.rules`, not just hidden in the UI) and follows become requests that
-  the owner accepts or declines.
-
-### Posts
-- One `videos` collection for everything: vertical video, camera recordings,
-  photo sets (up to 6) and **text posts** — `mediaType` distinguishes them.
-- Your own post has a ⋯ menu: **edit the caption** (hashtags and mentions are
-  re-derived from it) or **delete the post** (the Storage object goes with it).
-- Reactions (like + the six-reaction set), comments with replies, per-comment
-  likes, own-comment deletion, save to collections, reposts, share (link copy,
-  DM, other surfaces), hashtag and mention extraction with real `#tag` routes,
-  view counts that only tick after 2 s of actual playback.
-- Story posts (24 h, `stories/{id}`) with a tray on the home feed, per-story
-  progress bars, tap-to-navigate, hold-to-pause, reactions, viewer list, reply
-  (which sends a real direct message), and delete.
-
-### Messaging
-- `conversations/{cid}` + `conversations/{cid}/messages/{id}`: 1:1 threads,
-  optimistic-free (every bubble is a Firestore read), realtime via `onSnapshot`.
-- Read receipts (per-message `readBy` + per-thread unread counters), typing
-  indicator (a real timestamped field both clients write), presence
-  (`presence/{uid}`, 45 s heartbeat, "Active now" / "Active 12 min ago"),
-  attachments (photo, video, audio, generic file ≤ 30 MB via resumable uploads),
-  image expansion in the media viewer, audio/video through the global player,
-  tapback reactions, unsend (tombstone + file delete), hide/restore a thread,
-  report the thread or a single message, block from the thread, and a search box
-  that filters the loaded window of the conversation.
-- The Message button on a profile respects `privacy.whoCanMessage`
-  (`everyone / people I follow back / nobody`) and blocking, and the same checks
-  are enforced server-side.
-
-### Music (real, licensed)
-- `sounds/{id}` holds members' uploads and catalogue imports. Play counts,
-  favourite counts and "uses in posts" come from Firestore — nothing is
-  hardcoded.
-- `#/music` (alias `#/sounds`) has **Library · Discover · Your uploads ·
-  Favourites · Recently played**. Discover searches the Internet Archive's
-  open-licence music (netlabels / audio_music) live: releases, real track
-  lists, artwork from `archive.org/services/img/{identifier}`, playback from
-  `archive.org/download/{identifier}/{file}`.
-- Every catalogue row shows its **licence** (CC0 / Public Domain / CC BY /
-  CC BY-SA / BY-NC / BY-ND …) and links to both the licence deed and the
-  original item. Only licences that permit reuse can be attached to a post;
-  NC/ND items are listen-and-credit only and the UI says "Listen only".
-- Importing writes a `sounds` document with `external: true`, the source
-  identifier, `licenceUrl`, and the real artist credit, and that credit is
-  rendered again on the post's sound line and in the player's licence row.
-- Global player (`js/player.js`): persistent dock with play/pause, previous,
-  next, seek bar, volume, mute, shuffle, repeat, queue panel, Media Session
-  (lock-screen controls), keyboard shortcuts, restore-on-reload, and a play
-  counted only after 20 s of listening.
-
-### Discovery, notifications, moderation
-- Global search (people, post captions, hashtags, sounds) with **recent
-  searches**, trending hashtags, suggested creators, tag pages, notifications
-  grouped by category with unread badges and a **per-item read/unread toggle**,
-  per-category mute in Settings, reporting for posts, profiles, comments, media,
-  sounds and conversations, **muting** (hides someone's posts and notifications
-  without unfollowing), plus an admin panel for reports/bans and the moderation
-  trail.
-- Feed quality-of-life: a **new-posts pill** so a live update never moves the
-  post you're reading, **pull-to-refresh** on touch, and **infinite scroll**
-  with the "load more" button kept as the fallback.
+This repository replaces Xacheus (the Firebase social app). Nothing from that
+codebase is reused except the brand artwork in `assets/`.
 
 ---
 
-## How the pieces fit
+## What this is not
 
-```
-index.html            boot shell + watchdog
-js/app.js             router, session, badges, presence heartbeat, player mount
-js/firebase.js        config (public keys only), long polling, memory-local cache
-js/data.js            Firestore layer: users, videos, comments, sounds, DMs, follows
-js/social.js          reactions, prefs, privacy gates, blocks, profile media,
-                      stories, presence, follow requests, reposts, activity
-js/music.js           Internet Archive client (search, item tracks, licences)
-js/player.js          the one <audio> element everything shares
-js/storage.js         Storage uploads (image/video/audio/story/chat) + metadata
-js/brand.js           logo plate: measures the artwork, decides light or dark plate
-tools/build-brand.py  regenerates the brand PNGs + the social card from the artwork
-tools/check-brand.mjs structural guard for every logo slot (see below)
-js/views/*.js         home, profile, mediaViewer, stories, messages, sounds,
-                      create, discover, notifications, settings, admin, live,
-                      components (shared cards, modals, pickers)
-docs/PRODUCT_SPEC.md    the spec: IA, database, page-by-page status, roadmap
-docs/CORE_FLOWS_AUDIT.md  the ten core flows, traced to the write
-firestore.rules       every collection + subcollection the client touches
-storage.rules         owner-scoped writes, public reads, size/type limits
-firestore.indexes.json 31 composite indexes matching the queries above
-```
+It is not a demo and it has no fake data. There are no mock JSON files, no
+hard-coded product lists and no `setTimeout` pretending to be an API. Every
+number on screen comes from Postgres, and every screen that is not finished says
+so out loud instead of rendering an empty state that looks like "no records yet".
 
-Naming note: `videos` is the *posts* collection (it predates photo posts) and
-`profileMedia` is the per-profile photo/video gallery. Both are intentional.
+The database is the product. The screens are how you reach it.
 
 ---
 
-## Logo visibility (the brand plate)
+## Stack
 
-The rule the app follows: **the logo never sits on a background that swallows
-it.** Dark ink (black, or a deep green) gets a light plate; light ink (white)
-gets a dark plate. That is contrast, not theme — the logo looks the same in dark
-mode and light mode, because the surface behind the logo is its own plate.
+| Layer | Choice |
+| --- | --- |
+| Database & auth | Supabase (Postgres 15, Row Level Security, storage, realtime) |
+| Business logic | ~150 PL/pgSQL functions — numbering, stock, money, permissions, sharing |
+| Frontend | React 18 + Vite 5 + TypeScript (strict) |
+| Routing | react-router-dom 6, every route lazy-loaded |
+| Styling | Tailwind CSS v4 (`@theme`, `sh-*` component classes, phone-first) |
+| Documents | jsPDF + jspdf-autotable (A4 and 80 mm thermal), bwip-js barcodes |
+| Charts | recharts |
+| CSV | papaparse |
 
-This is decided by measurement, not by a hardcoded colour per page:
+Money is `numeric(14,2)` in the database and `number | string` in TypeScript
+(PostgREST returns numerics as strings). Every calculation goes through
+`toNum()` in `src/lib/currency.ts`. No floats reach a total.
 
-1. `js/brand.js` loads the artwork (`assets/logo.png`), samples it on a canvas,
-   separates ink from background (the artwork's own border defines the matte),
-   and computes the ink's WCAG relative luminance.
-2. `inkLum < 0.55` → **light plate** (`#ffffff`), otherwise → **dark plate**
-   (`#05060a`). One threshold is what makes both "black logo on white" and
-   "white logo on black" fall out of the same rule. One guard sits on top of it:
-   if the ruled plate would leave a mid-tone logo below 3:1 (WCAG's floor for a
-   graphic), the more legible plate is used instead — the rule exists to make the
-   logo visible, not to honour a swatch. Measured today: **16.77:1** (navy ink on white)
-   and **17.15:1** (the light build on near-black) — the wrong pairings sit at
-   ~1.2:1, i.e. invisible.
-3. `tools/build-brand.py` writes that same decision to `assets/brand-manifest.json`,
-   and `initBrand()` reads it first — so the normal path needs no canvas at all,
-   and it cannot be pinned to an old bitmap (the file is `.json`, which `sw.js`
-   serves network-first, as it does for the logo artwork itself). Measuring the
-   image is the fallback for anything the build does not know about.
-4. The result is cached in `localStorage` under `xacheus.brand.plate.v1` (keyed
-   by file + pixel size, so replacing the artwork re-measures) and applied to
-   `<html data-logo-plate>` by a tiny inline script *before first paint*, so the
-   logo never flashes onto the wrong background. The same cache also sets
-   `--logo-accent`, which Safari's tab icon and the plate's focus ring use.
+---
 
-Every place the logo appears goes through one builder, so the rule can't be
-applied in one screen and forgotten in another:
+## Running it
 
-| slot | where | helper |
+### 1. Apply the schema
+
+Open your Supabase project → **SQL Editor**, and run every file in
+`supabase/sql/` **in numeric order**. Each file is idempotent and ends with a
+`select '… ok'` line, so you can re-run one safely.
+
+| # | File | What it creates |
 | --- | --- | --- |
-| boot screen + boot-failure screen | `index.html` | `.logo-plate` markup with both inks |
-| top bar wordmark, sidebar mark, account-menu row | `js/app.js` | `brandSlotHtml()` |
-| auth hero | `js/auth.js` | `brandSlotHtml({ size: "xl" })` |
-| profile cover corner | `js/views/profile.js` | `brandSlotHtml()` + `.logo-plate--watermark` |
-| share-preview card | `js/views/components.js` | `brandSlotHtml()` |
-| settings footer | `js/views/settings.js` | `brandSlotHtml()` |
-| PWA icons, favicons, social card | `manifest.json`, `index.html`, `assets/` | already ink-on-plate by build |
+| 0001 | `0001_foundation.sql` | extensions (`pg_trgm`, `pgcrypto`, `postgis` if available), enums, currencies, countries, taxes, helper functions |
+| 0002 | `0002_identity.sql` | profiles, businesses, memberships, roles, branches, stores, audit logs, settings, notifications, addresses |
+| 0003 | `0003_marketplace.sql` | categories, products, variants, images, services, reviews, wishlists, conversations, messages |
+| 0004 | `0004_inventory.sql` | warehouses, stock levels, movements, transfers, stocktakes, csv sources, barcodes |
+| 0005 | `0005_sales.sql` | orders, order items, payments, receipts, customers, customer transactions, coupons, loyalty |
+| 0006 | `0006_purchasing_finance.sql` | suppliers, purchase orders, bills, expenses, expense categories |
+| 0007 | `0007_documents_ai_platform.sql` | invoices, quotations, returns, documents, signatures, payment links, AI actions, ads, plans, subscriptions, reports |
+| 0008 | `0008_rls_policies.sql` | Row Level Security for every table + the `can()` permission helper |
+| 0009 | `0009_functions.sql` | all business logic: search, orders, stock, documents, payments, dashboards, AI, imports |
+| 0010 | `0010_triggers.sql` | numbering, slugs, search vectors, denormalised totals, rollups, alerts |
+| 0011 | `0011_seed.sql` | countries, currencies, tax rates, categories, plan tiers, roles, report templates, storage buckets |
+| 0012 | `0012_public_payments.sql` | public payment links: `get_payment_link`, `pay_via_link`, `resolve_payment_submission` |
 
-`brandSlotHtml()` emits **both** ink variants inside the plate and lets CSS pick
-(`.logo-ink--light` is shown only under `html[data-logo-plate="dark"]`), which
-is why there is no "wait for the measurement" gap in any slot.
+> **0012 is required for the payment-link page to work.** It is additive — it
+> replaces `get_payment_link` and adds one table — so it is safe to run against a
+> database that already has 0001–0011 applied.
 
-The assets are derived, not hand-painted — `assets/logo.png` / `assets/logo1.png`
-ship as ink over a translucent noise wash, so `tools/build-brand.py` strips that
-wash, trims, snaps the ink to the brand colours, and writes:
+`0011` also creates the storage buckets (`avatars`, `businesses`, `products`,
+`documents`, `signatures`, `imports`, `support`, `exports`) with their size and
+MIME limits, so there is nothing to click in the dashboard afterwards.
 
-- `assets/logo-wordmark.png` — navy ink for the light plate
-- `assets/logo-wordmark-dark.png` — light ink for the dark plate
-- `assets/brand-card.png` — 1200×630 link-preview card, plate baked in (a social
-  preview can't run CSS, so it gets the decision as pixels)
+### 2. Configure the client
 
 ```bash
-python3 tools/build-brand.py --check   # measure only: fails if any logo is below AA on its own plate
-python3 tools/build-brand.py           # regenerate the three files above
-node tools/check-brand.mjs             # no bare logo tags, both inks shipped, plate classes styled, SW cache complete
-node tools/plate-rule.test.mjs         # the rule itself, on synthetic ink/background pairs
+cp .env.example .env
 ```
 
-New logo file? Drop it in `assets/`, point `BRAND_SOURCE` (and `SOURCES` in the
-tool) at it, run `python3 tools/build-brand.py`, and reload — the build writes
-both ink variants and the plate decision, and nothing else is hardcoded. In a
-console, `XacheusBrand.report()` shows what was decided and where it came from
-(`origin: "manifest"` or `"measured"`), and `XacheusBrand.use("assets/new.png")`
-measures an untracked file on the spot.
+```
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<your publishable key>
+VITE_DEFAULT_COUNTRY=ZM
+VITE_DEFAULT_CURRENCY=ZMW
+```
+
+These are **public** client credentials and `.env` is committed on purpose —
+that is how Supabase is designed to work. Access control is Row Level Security
+in `0008`, not key secrecy. A `service_role` key or a database password must
+never appear in this repository; `.gitignore` blocks them by pattern.
+
+If the credentials are missing or malformed the app does not start with a blank
+screen — it renders `SupabaseGate`, which tells you exactly which file to run
+and which variable to set.
+
+### 3. Run
+
+```bash
+npm install
+npm run dev      # http://localhost:5173
+npm run build    # tsc -b && vite build → dist/
+```
 
 ---
 
-## Run it
+## What works today
 
-```bash
-npm run dev       # python3 -m http.server 5173 --bind 0.0.0.0
-# open http://localhost:5173/#/home
-```
+### Accounts and roles
+- Email + password sign-up and sign-in, email confirmation, password reset,
+  session restore, sign-out.
+- One person can hold many roles at once: `buyer`, `seller`, `business`,
+  `employee`, `supplier`, `service_provider`, `admin`.
+- **Shop / My Business mode toggle** — the whole interface changes around it.
+- Account centre: profile and avatar, orders with live status, wishlist,
+  addresses, my reviews, messages, notifications, security settings, and the
+  data-privacy controls (export my data, delete my account) which write real
+  rows to `data_requests`. Two-factor is a profile setting with
+  sign-out-of-all-sessions — a real TOTP challenge is Phase 4 work, not a
+  claim this build makes.
 
-There is no build step, so a plain static server is enough. Firebase config lives
-in `js/firebase.js` (public web config — the security rules are what protect it).
+### The marketplace (buyer side)
+- Homepage with categories, trending searches, best sellers, featured and
+  verified businesses, deals, nearby.
+- **Search that understands a sentence**: `search_products()` combines
+  full-text, trigram similarity, SKU/barcode exact match and parsed filters, so
+  "black shoes under 500" filters on colour and price. Sort by relevance, price,
+  rating, newest, discount.
+- Filters: category, price range, rating, business, city, in stock, on sale,
+  wholesale, delivery, verified, attributes.
+- Product page: gallery, variants, wholesale tiers and minimum order quantity,
+  stock, business card with verification badges, reviews (with a **Verified
+  Purchase** mark where the reviewer actually bought it), Q&A, similar products,
+  wishlist, share.
+- Store pages at `/store/<slug>` with the seller's own colours and layout, plus
+  `/businesses`, `/nearby` (haversine over the stored location) and
+  `/wholesale`.
+- Cart across multiple sellers, grouped and totalled per business, with coupon
+  validation and delivery fees, then checkout → `create_order()`, which
+  re-reads live prices server-side, deducts stock, applies
+  `free_delivery_over`, and writes the status history.
 
-## Deploy the backend
+### The business workspace (seller side)
+- **Onboarding wizard** (`/business/setup`) → `create_business()` creates the
+  business, the owner membership, a head-office branch, a main warehouse, an
+  online store, default expense categories, document number prefixes and the
+  base currency — in one transaction. A separate "Become a seller" flow registers
+  an existing buyer account as a seller.
+- **Dashboard**: today / period revenue, orders, profit, cost of goods,
+  receivables, overdue invoices, stock value, low-stock and out-of-stock counts,
+  revenue-split and orders charts, top products, top customers, a task list
+  generated from real overdue invoices and low stock, and the growth score from
+  `compute_growth_score()`.
+- **Products**: list with search and filters, create and edit with images,
+  variants, SKU, barcode (generated if you do not have one), cost price, tax,
+  units, wholesale price and MOQ, per-product stock adjustment with a reason,
+  publish / archive, duplicate, delete, CSV export, and printable **price label
+  sheets** with barcodes.
+- **Orders**: filter by status, channel, payment state and date range; detail
+  view with items, timeline from `status_history`, payments and documents;
+  status transitions that follow the real flow and refuse impossible ones
+  (cancelling a paid order is blocked in the database and restocks correctly
+  when it is allowed); assign delivery; record a payment; create an invoice from
+  the order; start a return; share the invoice or receipt.
+- **POS** (`/business/pos`): scan or search, add by barcode, custom item,
+  per-line discount, whole-sale discount, customer picker that searches or
+  creates a customer, split tenders across cash / mobile money / card / bank
+  transfer with change due, credit sales (no tender → the order is confirmed and
+  the balance is owed), 80 mm thermal receipt PDF that prints, and a
+  **customer display** on `/business/pos/display` for a second screen — the till
+  publishes the running cart through `localStorage`.
 
-```bash
-firebase deploy --only firestore:rules,firestore:indexes,storage,hosting
-```
+### Public documents and payments
+These run without an account, because the person opening them usually does not
+have one:
 
-Rules and indexes **must** be deployed: the app degrades to
-"permission denied" toasts when they are missing, and several list queries need
-the composite indexes in `firestore.indexes.json`.
+- `/d/invoice/<token>` — the invoice with its items, totals, payments and your
+  bank details; PDF download; the view is recorded (`viewed_at`,
+  `viewed_count`, IP, user agent) and the seller is notified.
+- `/d/receipt/<token>` — the receipt, verifiable.
+- `/d/quotation/<token>` — the quotation, and the customer can **accept,
+  request changes or decline**, signing with their name. The response is
+  timestamped and the seller sees it immediately.
+- `/pay/<code>` — a payment page showing the amount, the seller's mobile-money
+  numbers and bank account. The payer declares the payment; it lands in
+  `payment_link_submissions`; the seller confirms it, and only then
+  `record_payment()` writes the payment, updates the invoice and generates the
+  receipt. **Nothing is marked as received from the public internet.**
+- `/verify/<kind>/<token>` — the QR code on every printed document resolves
+  here and proves it is genuine.
 
-## Making someone an admin
-
-Set `users/{uid}.role = "admin"` in the Firestore console once (only an existing
-admin can do it through the app). The admin panel then appears at `#/admin`.
+### Security model
+- **Row Level Security on every table**, with `SECURITY DEFINER` helper
+  functions that are `STABLE` and have a pinned `search_path`.
+- `can(business_id, 'permission')` → `member_permissions()` →
+  `role_permissions()`. Eight member roles with granular permissions; a
+  **cashier can sell but cannot read costs, expenses or profits** — that rule is
+  in the database, so it holds even if someone calls the API directly.
+- Financial and destructive AI actions require explicit owner approval
+  (`OWNER_APPROVAL_ACTIONS` in `src/lib/permissions.ts`, enforced by
+  `requiresOwnerApproval()` and by the `ai_actions` approval gate).
+- `audit_logs` records who did what, when, with changes and metadata.
+- Sharing is token-gated: a share token can be revoked and expires, and
+  `get_shared_document` returns only the fields a customer should see.
 
 ---
 
-## Not implemented
+## What is scaffolded but has no screen yet
 
-Stated so it is not mistaken for a bug or, worse, for working behaviour:
+The database side of these is **applied and working**; only the interface is
+missing. Each route renders a "In progress" screen that lists exactly what will
+land there and links to what already covers part of the need — see
+`src/routes/business/ComingSoon.tsx`.
 
-- **Audio/video calls** inside a conversation (text + files only).
-- Group conversations (1:1 threads only).
-- Per-thread mute and push-notification delivery (web push is not wired;
-  in-app badges and the notification feed are).
-- Full-text search over messages or the whole post corpus — message search filters
-  the loaded window, and post search matches handles/captions/hashtags in
-  Firestore fields.
-- Language/region settings, data export, two-factor sign-in, digest email
-  preferences (Settings says this on-screen).
-- Live streaming is a broadcast/chat prototype: no real media server, so the
-  "stream" is presence + chat + gifts, not a video transport.
-- Video *filters/effects* editor, and trimming (the composer records, uploads and
-  posts; it does not edit).
-- Algorithmic ranking: "For You" is recency + like-count ordering, not a model.
+| Module | Already in the database |
+| --- | --- |
+| Invoices | `create_invoice`, `void_invoice`, numbering, credit/debit notes, reminders, `documents` mirror |
+| Quotations | `create_quotation`, pro-forma kind, `respond_to_quotation`, `convert_quotation_to_invoice` |
+| Receipts | `create_receipt`, thermal and A4 PDFs, verify tokens |
+| Payments | `record_payment` with direction, overpay rules, refunds, reconciliation |
+| Payment links | `create_payment_link` (callable from the console; the creation screen is not built) |
+| Returns & refunds | `create_return`, `process_return` with restock and automatic credit note |
+| Customers (CRM) | `upsert_customer`, statements, credit limits, groups, loyalty |
+| Inventory | `adjust_stock`, `transfer_stock`, warehouses, movements, stocktakes, valuation |
+| CSV import & sync | `import_csv_rows`, `sync_csv_source`, `due_csv_sources`, saved column mappings |
+| Suppliers & purchases | suppliers, purchase orders, goods received, bills |
+| Expenses | expense categories (seeded per business), approvals, receipts |
+| Reports | 19 report templates seeded; `sales_series`, `top_products`, `top_customers`, `low_stock_alerts`, `overdue_invoices` already power the dashboard |
+| Staff & roles | memberships, invites, the eight roles and their permissions |
+| Settings | profile, branding, taxes, currencies, rates, numbering prefixes, branches |
+| Marketing | coupons (`validate_coupon` already runs at checkout), flash sales, campaigns, AI content |
+| Messages | conversations, messages, WhatsApp hand-off |
+| Ask Seedwel AI | `propose_ai_action`, `ai_action_impact`, `resolve_ai_action` with owner approval |
+| Growth | `compute_growth_score` (the dashboard already shows the score) |
+| Documents | contracts, delivery notes, statements, digital signatures with audit trail |
+| Services | `services` table: fixed, hourly, daily, per-job or quote pricing |
+| Subscriptions | Free / Starter (K150) / Business (K450) / Professional (K1,200) / Enterprise, with limits |
+| Ads, help centre, academy, API | tables seeded, no screens |
+
+Phases 4–7 of the roadmap (advanced automation, AI, scale) are scaffolded in the
+schema and deliberately not wired to a UI yet.
+
+---
+
+## Repository layout
+
+```
+supabase/sql/          12 ordered migrations — apply these first
+src/
+  main.tsx             entry: StrictMode + BrowserRouter + App
+  App.tsx              providers, every route, error boundary
+  index.css            Tailwind v4 theme + sh-* design system
+  lib/                 supabase client, api (RPC wrappers), types live in src/types
+    currency dates calc barcode pdf csv share slug permissions format constants env
+  types/index.ts       domain types mirroring the Postgres schema
+  context/             Mode, Toast, Auth, Business, Cart
+  hooks/               useQuery, useBusinessQuery, useUi, useCategories, useNotifications
+  components/
+    ui/                Icon, Primitives, Overlays, ImageUploader, index (cards, tables, product grid)
+    layout/            Logo, SiteHeader + BottomNav + Footer, PublicShell, BareShell,
+                       BusinessShell, NotificationBell, Guards
+    business/Shared.tsx  order & document components, DocumentLinesEditor, CustomerField
+  routes/
+    public/            Landing, Search, ProductDetail, StorePage, Cart + Checkout
+    auth/              AuthGate, AuthPages
+    account/           Account layout and its nine screens
+    business/          Setup, Dashboard, Products, Orders, Pos, ComingSoon
+    shared/SharedDoc.tsx  /d/:kind/:token, /pay/:code, /verify/:kind/:token
+public/brand/          logos, icons, manifest, service worker
+assets/                original artwork (the 12 MB master logo is gitignored)
+```
+
+### Conventions worth knowing before you edit
+- **Never invent data.** If a query fails, show the error. If a module is not
+  built, say it is not built.
+- Money: `toNum()` before any arithmetic; `formatMoney()` before any display.
+- RPC errors arrive as `"exception: <message>"`. `RpcError.reason` strips the
+  prefix; `isPermission()` and `isNotFound()` branch the UX.
+- Icons are a fixed `IconName` union in `src/components/ui/Icon.tsx` — there is
+  no `monitor` and no `percent`.
+- Tailwind v4 resolves `@apply` against *utilities only*: you cannot
+  `@apply sh-btn` inside another custom class, and a data URI containing spaces
+  (an SVG `viewBox`) inside `@apply` breaks the build. Both traps are commented
+  where they occur in `src/index.css`.
+- `ToastProvider` owns state only; `App.tsx` mounts `<ToastViewport/>` so toasts
+  float above every shell, modal and the POS.
+
+---
+
+## Multi-country by design, Zambia first
+
+ZMW, `+260` and VAT at 16% are seeded defaults, not constants. `countries`,
+`currencies` (with configurable `exchange_rate`) and `taxes` are tables; a
+business chooses its `base_currency`, its taxes and its number prefixes; and
+`format_money()` renders any of them. Launching in Botswana or Malawi is a data
+change, not a code change.
 
 ---
 
 ## Roadmap
 
-- **Master development prompt** — the full Xacheus Connect feature plan
-  (home card feed & post types, Circles, Marketplace, Xacheus Play, creator
-  dashboard, Xacheus AI, X Plus, privacy/security completion) is specified
-  end-to-end in [docs/MASTER_DEVELOPMENT_PROMPT.md](docs/MASTER_DEVELOPMENT_PROMPT.md):
-  screen map, Firebase collections + rules + indexes per feature, button
-  behaviour, and the real-vs-faked iron rules.
+| Phase | Scope | Status |
+| --- | --- | --- |
+| 1 — Foundation | schema, auth, roles, businesses, stores, products, search, cart, checkout, orders | **working** |
+| 2 — Selling | POS, receipts, customers, quotations, invoices, payments, returns | **working at the counter and from an order**; standalone module screens pending |
+| 3 — Business management | inventory, suppliers, purchases, expenses, dashboard, reports, staff | **dashboard working**; module screens pending |
+| 4 — Advanced | marketing, messaging, subscriptions, ads, multi-branch | schema ready |
+| 5 — Automation | CSV sync, recurring invoices, approval workflows | schema ready |
+| 6 — AI | assistant, content generator, insights, monthly report | schema ready, approval gate designed |
+| 7 — Scale | API, help centre, academy, mobile apps | not started |
 
-- **Phase 1** — auth, profiles + roles, vertical video, Storage, likes/comments/
-  follows/notifications, create, sounds.
-- **Phase 2 (this pass)** — full profiles with media galleries and stories,
-  Messenger-grade DMs, licensed music with a real player, privacy controls,
-  blocking/reporting, reactions/reposts/saved collections, activity feed,
-  hardened rules and indexes.
-- **Phase 3** — Xacheus Pages (churches, businesses, organisations,
-  communities, public figures) + verification requests.
-- **Phase 4** — Xacheus Marketplace (listings, inquiries, business reviews).
-- **Phase 5** — creator analytics, server-side fan-out, rate limiting, push.
+---
 
-All three are specified — schemas, routes and acceptance — in
-`docs/PRODUCT_SPEC.md §6`, before a line of UI is written.
-
-Built in Zambia 🌍
+© Seedwel Investment Limited.
