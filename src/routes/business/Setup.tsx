@@ -10,7 +10,7 @@ import { useCategories } from '@/hooks/useCategories';
 import { BUCKETS } from '@/lib/supabase';
 import { createBusiness, isSlugAvailable, suggestSlug } from '@/lib/api';
 import { slugify, isReservedSlug, isValidSlug, normalisePhone } from '@/lib/slug';
-import { BRAND, BUSINESS_TYPES, COUNTRY_LABELS, DAYS, DAY_LABELS } from '@/lib/constants';
+import { BRAND, BUSINESS_TYPES, COUNTRY_LABELS, DAYS, DAY_LABELS, countryCurrency } from '@/lib/constants';
 import { displayName } from '@/lib/format';
 import type { UUID } from '@/types';
 
@@ -313,7 +313,10 @@ export default function BusinessSetupPage() {
                 onChange={(e) => set({ address_line2: e.target.value })} />
               <Input label="City / town" value={form.city} onChange={(e) => set({ city: e.target.value })} />
               <Input label="Province / region" value={form.region} onChange={(e) => set({ region: e.target.value })} />
-              <Select label="Country" value={form.country_code} onChange={(e) => set({ country_code: e.target.value })}
+              <Select label="Country" value={form.country_code} onChange={(e) => {
+                const code = e.target.value;
+                set({ country_code: code, base_currency: countryCurrency(code) });
+              }}
                 options={Object.entries(COUNTRY_LABELS).map(([value, label]) => ({ value, label }))} />
               <Select label="Base currency" value={form.base_currency} onChange={(e) => set({ base_currency: e.target.value })}
                 options={['ZMW', 'USD', 'ZAR', 'BWP', 'MWK', 'TZS', 'KES', 'GBP', 'EUR'].map((c) => ({ value: c, label: c }))}
