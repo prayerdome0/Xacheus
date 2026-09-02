@@ -772,6 +772,7 @@ export type OrderStatus =
   | 'processing'
   | 'ready'
   | 'shipped'
+  | 'out_for_delivery'
   | 'delivered'
   | 'cancelled'
   | 'returned';

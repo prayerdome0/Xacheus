@@ -345,17 +345,20 @@ export const ORDER_STATUS_LABELS: Record<string, string> = {
   processing: 'Processing',
   ready: 'Ready for collection',
   shipped: 'Shipped',
+  out_for_delivery: 'Out for delivery',
   delivered: 'Delivered',
   cancelled: 'Cancelled',
   returned: 'Returned',
 };
 
+/** The buyer-facing tracking timeline (spec #18). */
 export const ORDER_STATUS_FLOW = [
   'pending',
   'confirmed',
   'processing',
   'ready',
   'shipped',
+  'out_for_delivery',
   'delivered',
 ] as const;
 

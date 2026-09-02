@@ -80,6 +80,7 @@ const InvoiceEditorPage = lazyNamed(() => import('@/routes/business/Invoices'), 
 const InvoiceDetailPage = lazyNamed(() => import('@/routes/business/Invoices'), 'InvoiceDetailPage');
 const ReceiptsModule = lazy(() => import('@/routes/business/Receipts'));
 const ReceiptEditorPage = lazyNamed(() => import('@/routes/business/Receipts'), 'ReceiptEditorPage');
+const PaymentsModule = lazy(() => import('@/routes/business/Payments'));
 const PosPage = lazy(() => import('@/routes/business/Pos'));
 const CustomerDisplayPage = lazyNamed(() => import('@/routes/business/Pos'), 'CustomerDisplayPage');
 
@@ -101,7 +102,7 @@ const MarketingModule = lazyNamed(modules, 'MarketingModule');
 const MessagesModule = lazyNamed(modules, 'MessagesModule');
 const MoreModule = lazyNamed(modules, 'MoreModule');
 const PaymentLinksModule = lazyNamed(modules, 'PaymentLinksModule');
-const PaymentsModule = lazyNamed(modules, 'PaymentsModule');
+
 const ReportsModule = lazyNamed(modules, 'ReportsModule');
 const ReturnsModule = lazyNamed(modules, 'ReturnsModule');
 const ServicesModule = lazyNamed(modules, 'ServicesModule');
@@ -309,7 +310,7 @@ export default function App() {
                       <Route path="invoices/:id" element={<InvoiceDetailPage />} />
                       <Route path="receipts" element={<ReceiptsModule />} />
                       <Route path="receipts/new" element={<ReceiptEditorPage />} />
-                      <Route path="payments/*" element={<PaymentsModule />} />
+                      <Route path="payments" element={<PaymentsModule />} />
                       <Route path="payment-links/*" element={<PaymentLinksModule />} />
                       <Route path="returns/*" element={<ReturnsModule />} />
                       <Route path="customers/*" element={<CustomersModule />} />

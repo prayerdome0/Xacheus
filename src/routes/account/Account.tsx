@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
 import { supabase } from '@/lib/supabase';
+import { createPaymentLink } from '@/lib/api';
 import { useQuery } from '@/hooks/useQuery';
 import { formatMoney, toNum } from '@/lib/currency';
 import { formatDate, formatDateTime, relativeTime } from '@/lib/dates';
@@ -340,6 +341,7 @@ function CancelOrderButton({ order }: { order: Order }) {
 export function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { error: toastError } = useToast();
   const [order, setOrder] = useState<(Order & { items: OrderItem[]; business?: Record<string, unknown> }) | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -374,6 +376,34 @@ export function OrderDetailPage() {
 
   const currency = order.currency;
   const history = (order.status_history ?? []) as { status: string; at: string; by?: string }[];
+  const business = order.business as Record<string, unknown> | undefined;
+  const businessId = (business?.id as UUID | undefined) ?? null;
+  const [payBusy, setPayBusy] = useState(false);
+
+  /** "I've Made Payment" — create (or reuse) a payment link for this order and
+   *  route the buyer to the page where they declare amount, method, reference
+   *  and proof. The seller confirms it on the Payments screen before money is
+   *  recorded. */
+  const payNow = async () => {
+    if (!businessId) return;
+    setPayBusy(true);
+    try {
+      const res = await createPaymentLink({
+        business_id: businessId,
+        amount: toNum(toNum(order.balance_due) > 0 ? order.balance_due : order.total),
+        currency,
+        order_id: order.id,
+        customer_name: order.shipping_name ?? order.customer?.name ?? undefined,
+        allow_custom_amount: true,
+        label: `Order ${order.order_number}`,
+      });
+      navigate(`/pay/${res.code}`);
+    } catch (e) {
+      toastError('Could not start payment', e instanceof Error ? e.message : 'Please try again.');
+    } finally {
+      setPayBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -388,6 +418,16 @@ export function OrderDetailPage() {
         <StatusBadge status={order.payment_status} />
         <Button variant="outline" size="sm" icon="arrowLeft" onClick={() => navigate('/orders')}>My orders</Button>
       </div>
+
+      {toNum(order.balance_due) > 0 && (
+        <div className="flex flex-col items-start justify-between gap-2 rounded-2xl border border-brand-200 bg-brand-50 p-4 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-sm font-extrabold text-brand-800">Payment still due</p>
+            <p className="text-xs text-brand-700">{formatMoney(order.balance_due, currency)} — review your order, then tap “I’ve Made Payment”.</p>
+          </div>
+          <Button icon="wallet" loading={payBusy} onClick={() => void payNow()}>I’ve Made Payment</Button>
+        </div>
+      )}
 
       {/* Status timeline */}
       {history.length > 0 && (
