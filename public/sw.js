@@ -1,7 +1,7 @@
 /* Seedwel Hub service worker
  * Strategy:
  *   - App shell + brand assets: cache-first with background refresh (stale-while-revalidate)
- *   - Supabase API/auth: network-only. Never cache business data — it is live and private.
+ *   - Firebase API/auth: network-only. Never cache business data — it is live and private.
  *   - Offline: serve the cached shell so the app opens and shows a clear offline state.
  */
 const VERSION = 'seedwel-hub-v1';
@@ -32,7 +32,6 @@ self.addEventListener('activate', (event) => {
 });
 
 const isApiRequest = (url) =>
-  url.hostname.endsWith('.supabase.co') ||
   url.pathname.startsWith('/rest/v1/') ||
   url.pathname.startsWith('/auth/v1/') ||
   url.pathname.startsWith('/storage/v1/') ||

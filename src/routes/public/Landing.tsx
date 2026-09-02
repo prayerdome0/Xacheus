@@ -13,7 +13,7 @@ import { BRAND } from '@/lib/constants';
 import { formatMoney, toNum } from '@/lib/currency';
 import { distanceLabel, openingStatus } from '@/lib/format';
 import { useGeolocation } from '@/hooks/useUi';
-import { isFirebaseConfigured, isSupabaseConfigured } from '@/lib/env';
+import { isFirebaseConfigured } from '@/lib/env';
 import type { Deal, Product, UUID } from '@/types';
 
 /** Rotating announcement copy for the top marquee ticker. */
@@ -26,44 +26,34 @@ const ANNOUNCEMENTS = [
   '🧾 Create professional quotations, invoices and receipts',
 ];
 
-/** Promotional banners shown as a responsive carousel on the homepage. */
+/** Branded promotional banners — image-based, no fake/demo text. */
 const BANNERS: {
-  eyebrow: string;
-  title: string;
-  text?: string;
-  cta: string;
+  image: string;
+  alt: string;
+  title?: string;
+  subtitle?: string;
   to: string;
-  tone: 'brand' | 'amber' | 'dark' | 'green';
 }[] = [
   {
-    eyebrow: 'Marketplace',
-    title: 'Discover products from businesses worldwide',
-    cta: 'Shop Now',
+    image: '/brand/banner-marketplace.jpg',
+    alt: 'Seedwel Hub marketplace banner — discover and sell products worldwide',
+    title: 'Marketplace',
+    subtitle: 'Connect buyers and sellers across the world',
     to: '/search',
-    tone: 'brand',
   },
   {
-    eyebrow: 'Sell online',
-    title: 'Start selling your products online',
-    cta: 'Become a Seller',
-    to: '/auth/signup?intent=sell',
-    tone: 'amber',
-  },
-  {
-    eyebrow: 'Business tools',
-    title: 'Manage your business professionally',
-    text: 'Quotations • Invoices • Receipts • Inventory • Customers',
-    cta: 'Explore Business Tools',
+    image: '/brand/banner-sell.jpg',
+    alt: 'Seedwel Hub business banner — grow your store and manage operations',
+    title: 'Business Tools',
+    subtitle: 'Quotations, invoices, inventory and more',
     to: '/business/setup',
-    tone: 'dark',
   },
   {
-    eyebrow: 'Community',
-    title: 'Connect. Share. Grow.',
-    text: 'Join business communities and connect with people worldwide.',
-    cta: 'Join the Community',
+    image: '/brand/banner-business.jpg',
+    alt: 'Seedwel Hub community banner — connect, share and grow together',
+    title: 'Community',
+    subtitle: 'Join business communities and grow together',
     to: '/businesses',
-    tone: 'green',
   },
 ];
 
@@ -155,12 +145,6 @@ export default function LandingPage() {
           Add your Firebase web config to <code className="rounded bg-white/70 px-1 font-mono text-[11px]">.env</code> and
           deploy <code className="rounded bg-white/70 px-1 font-mono text-[11px]">firebase/firestore.rules</code>. Auth and profiles are live on
           Firebase; marketplace, orders and documents move over in the next phases. Nothing here is simulated.
-        </Notice>
-      ) : !isSupabaseConfigured ? (
-        <Notice tone="info" title="Phase 1 is live — marketplace data is migrating next" icon="sparkles">
-          Firebase Authentication and user profiles are connected. Business, products, orders and documents are
-          moving to Cloud Firestore in the next phases; until then their sections use the legacy data layer and
-          will show a clear setup/migration message instead of fake records.
         </Notice>
       ) : null}
 
@@ -658,14 +642,7 @@ export function AvatarRow({ items }: { items: { name: string; url?: string | nul
   );
 }
 
-const BANNER_TONES: Record<string, string> = {
-  brand: 'sh-gradient-brand',
-  amber: 'sh-gradient-accent',
-  dark: 'bg-ink-900',
-  green: 'bg-gradient-to-br from-emerald-600 to-teal-700',
-};
-
-/** Responsive, auto-advancing promotional banner carousel. */
+/** Responsive, auto-advancing branded banner carousel with images. */
 function PromoBanners() {
   const [index, setIndex] = useState(0);
   const count = BANNERS.length;
@@ -676,63 +653,69 @@ function PromoBanners() {
   }, [count]);
 
   return (
-    <section aria-roledescription="carousel" aria-label="Seedwel Hub highlights">
-      <div className="relative overflow-hidden rounded-3xl border border-ink-200/70">
+    <section aria-roledescription="carousel" aria-label="Seedwel Hub branded banners">
+      <div className="relative overflow-hidden rounded-3xl border border-ink-200/70 bg-ink-950 shadow-xl">
         <div
-          className="flex transition-transform duration-500 ease-out"
+          className="flex transition-transform duration-700 ease-out"
           style={{ transform: `translateX(-${index * 100}%)` }}
         >
           {BANNERS.map((b, i) => (
-            <div key={b.title} className="w-full shrink-0" aria-hidden={i !== index}>
-              <div className={`${BANNER_TONES[b.tone]} relative flex min-h-[13rem] flex-col justify-between gap-4 p-6 text-white sm:min-h-[15rem] sm:p-9`}>
-                <div>
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-white/90">
-                    {b.eyebrow}
-                  </span>
-                  <h2 className="mt-3 max-w-xl text-xl font-extrabold leading-tight text-white sm:text-2xl">
-                    {b.title}
-                  </h2>
-                  {b.text && <p className="mt-1.5 max-w-xl text-sm text-white/80">{b.text}</p>}
+            <div key={b.image} className="w-full shrink-0" aria-hidden={i !== index}>
+              <Link to={b.to} className="relative block min-h-[18rem] overflow-hidden sm:min-h-[22rem]">
+                <img
+                  src={b.image}
+                  alt={b.alt}
+                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-700 hover:scale-[1.03]"
+                  loading={i === 0 ? 'eager' : 'lazy'}
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/20" />
+                <div className="absolute inset-0 flex flex-col justify-end gap-3 p-6 text-white sm:p-10">
+                  {b.title && (
+                    <h2 className="text-2xl font-extrabold leading-tight text-white drop-shadow-lg sm:text-4xl">
+                      {b.title}
+                    </h2>
+                  )}
+                  {b.subtitle && (
+                    <p className="max-w-xl text-sm text-white/90 drop-shadow-md sm:text-base">{b.subtitle}</p>
+                  )}
+                  <div className="mt-2">
+                    <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-4 py-2 text-xs font-bold uppercase tracking-wider text-white/95 backdrop-blur hover:bg-white/25 transition-colors">
+                      Discover more <Icon name="chevronRight" size={14} />
+                    </span>
+                  </div>
                 </div>
-                <div>
-                  <Link to={b.to}>
-                    <Button variant={b.tone === 'amber' ? 'dark' : 'accent'} size="lg">
-                      {b.cta}
-                    </Button>
-                  </Link>
-                </div>
-              </div>
+              </Link>
             </div>
           ))}
         </div>
 
-        <div className="absolute bottom-3 left-3 flex items-center gap-1.5">
-          {BANNERS.map((b, i) => (
+        <div className="absolute bottom-4 left-4 flex items-center gap-2">
+          {BANNERS.map((_, i) => (
             <button
-              key={b.title}
+              key={i}
               type="button"
               onClick={() => setIndex(i)}
               aria-label={`Go to banner ${i + 1}`}
-              className={`h-1.5 rounded-full transition-all ${i === index ? 'w-5 bg-white' : 'w-1.5 bg-white/50 hover:bg-white/70'}`}
+              className={`h-2 rounded-full transition-all ${i === index ? 'w-8 bg-white' : 'w-2 bg-white/40 hover:bg-white/60'}`}
             />
           ))}
         </div>
-        <div className="absolute bottom-3 right-3 flex items-center gap-1.5">
+        <div className="absolute bottom-4 right-4 flex items-center gap-2">
           <button
             type="button"
             onClick={() => setIndex((index - 1 + count) % count)}
             aria-label="Previous banner"
-            className="rounded-lg bg-white/20 p-1.5 text-white backdrop-blur hover:bg-white/35"
+            className="rounded-xl bg-white/20 p-2 text-white backdrop-blur hover:bg-white/35 transition-colors"
           >
-            <Icon name="chevronLeft" size={16} />
+            <Icon name="chevronLeft" size={18} />
           </button>
           <button
             type="button"
             onClick={() => setIndex((index + 1) % count)}
             aria-label="Next banner"
-            className="rounded-lg bg-white/20 p-1.5 text-white backdrop-blur hover:bg-white/35"
+            className="rounded-xl bg-white/20 p-2 text-white backdrop-blur hover:bg-white/35 transition-colors"
           >
-            <Icon name="chevronRight" size={16} />
+            <Icon name="chevronRight" size={18} />
           </button>
         </div>
       </div>

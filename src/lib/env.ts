@@ -83,43 +83,4 @@ export const env = {
   requireEmailVerification: readBool(import.meta.env.VITE_REQUIRE_EMAIL_VERIFICATION, true),
 };
 
-/**
- * Legacy Supabase client configuration.
- *
- * These remain exported only because the marketplace, business and document
- * modules still import the old data layer while Phase 2+ moves each module to
- * Firestore. Do NOT ship new work through these. Each migrated module removes
- * its Supabase import and these exports can then be deleted entirely.
- */
-const legacySupabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const legacySupabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
-export const legacySupabase = {
-  url: legacySupabaseUrl ?? '',
-  anonKey: legacySupabaseAnonKey ?? '',
-};
-
-/** Kept in the legacy module until the last Supabase data query is migrated. */
-export const isSupabaseConfigured =
-  /^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(legacySupabase.url) &&
-  legacySupabase.anonKey.length > 20;
-
-/** Kept in the legacy module until the last Supabase data query is migrated. */
-export const supabaseSetupHint = !legacySupabase.url
-  ? 'VITE_SUPABASE_URL is missing (legacy Supabase data layer).'
-  : !legacySupabase.anonKey
-    ? 'VITE_SUPABASE_ANON_KEY is missing (legacy Supabase data layer).'
-    : !isSupabaseConfigured
-      ? 'The Supabase URL does not look like https://<project-ref>.supabase.co.'
-      : '';
-
-/**
- * @deprecated Supabase is replaced by Firebase. This alias is used by the not
- * yet migrated market/business modules and will be removed after Phase 2+.
- */
-export const supabaseUrl = legacySupabase.url;
-/**
- * @deprecated Supabase is replaced by Firebase. This alias is used by the not
- * yet migrated market/business modules and will be removed after Phase 2+.
- */
-export const supabaseAnonKey = legacySupabase.anonKey;

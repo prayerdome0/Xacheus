@@ -60,6 +60,7 @@ const MyMessagesPage = lazyNamed(() => import('@/routes/account/Account'), 'MyMe
 const AccountSettingsPage = lazyNamed(() => import('@/routes/account/Account'), 'AccountSettingsPage');
 const NotificationsPage = lazyNamed(() => import('@/routes/account/Account'), 'NotificationsPage');
 const NotificationSettingsPage = lazy(() => import('@/routes/account/NotificationSettings'));
+const AdminPage = lazy(() => import('@/routes/account/AdminPage'));
 
 const SharedDocumentPage = lazyNamed(() => import('@/routes/shared/SharedDoc'), 'SharedDocumentPage');
 const PayPage = lazyNamed(() => import('@/routes/shared/SharedDoc'), 'PayPage');
@@ -274,6 +275,7 @@ export default function App() {
                         <Route path="settings" element={<AccountSettingsPage />} />
                         <Route path="notifications" element={<NotificationsPage />} />
                         <Route path="notifications-settings" element={<NotificationSettingsPage />} />
+                        <Route path="admin" element={<AdminPage />} />
                         <Route path="*" element={<NotFound title="That account page does not exist" />} />
                       </Route>
                     </Route>
