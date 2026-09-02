@@ -9,7 +9,7 @@ import { useCategories } from '@/hooks/useCategories';
 import { useDebounce, useGeolocation } from '@/hooks/useUi';
 import { searchProducts, type SearchFilters } from '@/lib/api';
 import { formatMoney } from '@/lib/currency';
-import { BRAND } from '@/lib/constants';
+import { BRAND, COUNTRIES, COUNTRY_BY_CODE, flagEmoji } from '@/lib/constants';
 import type { Product, UUID } from '@/types';
 
 /**
@@ -51,6 +51,7 @@ export default function SearchPage() {
   const q = params.get('q') ?? '';
   const categorySlug = params.get('category') ?? '';
   const city = params.get('city') ?? '';
+  const country = params.get('country') ?? '';
   const minPrice = params.get('min_price') ? Number(params.get('min_price')) : null;
   const maxPrice = params.get('max_price') ? Number(params.get('max_price')) : null;
   const minRating = params.get('min_rating') ? Number(params.get('min_rating')) : null;
@@ -113,7 +114,7 @@ export default function SearchPage() {
         q: q || undefined,
         category_id: descendantIds ? descendantIds[0] : null,
         city: city || null,
-        country_code: null,
+        country_code: country || null,
         min_price: minPrice,
         max_price: maxPrice,
         min_rating: minRating,
@@ -144,7 +145,7 @@ export default function SearchPage() {
     } finally {
       setLoading(false);
     }
-  }, [q, descendantIds, city, minPrice, maxPrice, minRating, inStock, brand, condition,
+  }, [q, descendantIds, city, country, minPrice, maxPrice, minRating, inStock, brand, condition,
       wholesale, featured, sort, page]);
 
   useEffect(() => { void run(); }, [run]);
@@ -152,6 +153,7 @@ export default function SearchPage() {
   const activeFilters = [
     category && { key: 'category', label: category.name, clear: () => setParam({ category: null }) },
     city && { key: 'city', label: `In ${city}`, clear: () => setParam({ city: null }) },
+    country && { key: 'country', label: `${flagEmoji(country)} ${COUNTRY_BY_CODE[country]?.name ?? country}`, clear: () => setParam({ country: null }) },
     minPrice !== null && { key: 'min', label: `From ${formatMoney(minPrice)}`, clear: () => setParam({ min_price: null }) },
     maxPrice !== null && { key: 'max', label: `Up to ${formatMoney(maxPrice)}`, clear: () => setParam({ max_price: null }) },
     minRating !== null && { key: 'rating', label: `${minRating}★ & up`, clear: () => setParam({ min_rating: null }) },
@@ -228,6 +230,11 @@ export default function SearchPage() {
 
       {/* Location */}
       <FilterBlock title="Location" icon="pin">
+        <Select label="Country" value={country} onChange={(e) => setParam({ country: e.target.value || null })}
+          options={[
+            { value: '', label: 'Anywhere in the world' },
+            ...COUNTRIES.map((c) => ({ value: c.code, label: `${flagEmoji(c.code)} ${c.name}` })),
+          ]} />
         <Input placeholder="City, e.g. Lusaka" value={city}
           onChange={(e) => setParam({ city: e.target.value || null })} />
         <div className="mt-2 flex flex-wrap gap-1.5">

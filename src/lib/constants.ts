@@ -6,9 +6,9 @@ export const BRAND = {
   company: 'Seedwel Investment Limited',
   companyLine: 'A product of Seedwel Investment Limited',
   tagline: 'Buy. Sell. Manage. Grow.',
-  hero: 'Everything your business needs, in one place.',
+  hero: 'Everything Your Business Needs. In One Place.',
   subHero:
-    'Your store. Your customers. Your documents. Your inventory. Your growth — all in one platform.',
+    'Buy, sell, connect, manage your business and grow with Seedwel Hub.',
   searchPlaceholder: 'Search products, services, businesses…',
   domain: 'seedwelhub.com',
   supportEmail: 'support@seedwelhub.com',
@@ -445,10 +445,102 @@ export const BADGES: Record<string, { label: string; icon: string; hint: string 
   established_business: { label: 'Established', icon: '🏛️', hint: 'Long-standing activity on the platform' },
 };
 
-export const COUNTRY_LABELS: Record<string, string> = {
-  ZM: 'Zambia', ZW: 'Zimbabwe', MW: 'Malawi', BW: 'Botswana', ZA: 'South Africa',
-  TZ: 'Tanzania', KE: 'Kenya', US: 'United States', GB: 'United Kingdom',
-};
+export interface CountryInfo {
+  code: string; // ISO 3166-1 alpha-2
+  name: string;
+  dial: string; // international dial code, e.g. +260
+  currency: string; // ISO 4217
+  timeZone: string; // IANA time zone
+  language: string; // default BCP-47 language
+  continent: string;
+}
+
+/** Turn a 2-letter ISO country code into a flag emoji (no per-country data). */
+export function flagEmoji(code: string): string {
+  if (code.length !== 2) return '🌐';
+  return String.fromCodePoint(...[...code.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
+
+/** Worldwide country registry — Seedwel Hub is global, not Zambia-only. */
+export const COUNTRIES: CountryInfo[] = [
+  { code: 'ZM', name: 'Zambia', dial: '+260', currency: 'ZMW', timeZone: 'Africa/Lusaka', language: 'en', continent: 'Africa' },
+  { code: 'ZA', name: 'South Africa', dial: '+27', currency: 'ZAR', timeZone: 'Africa/Johannesburg', language: 'en', continent: 'Africa' },
+  { code: 'MW', name: 'Malawi', dial: '+265', currency: 'MWK', timeZone: 'Africa/Blantyre', language: 'en', continent: 'Africa' },
+  { code: 'ZW', name: 'Zimbabwe', dial: '+263', currency: 'USD', timeZone: 'Africa/Harare', language: 'en', continent: 'Africa' },
+  { code: 'NG', name: 'Nigeria', dial: '+234', currency: 'NGN', timeZone: 'Africa/Lagos', language: 'en', continent: 'Africa' },
+  { code: 'KE', name: 'Kenya', dial: '+254', currency: 'KES', timeZone: 'Africa/Nairobi', language: 'en', continent: 'Africa' },
+  { code: 'GH', name: 'Ghana', dial: '+233', currency: 'GHS', timeZone: 'Africa/Accra', language: 'en', continent: 'Africa' },
+  { code: 'UG', name: 'Uganda', dial: '+256', currency: 'UGX', timeZone: 'Africa/Kampala', language: 'en', continent: 'Africa' },
+  { code: 'TZ', name: 'Tanzania', dial: '+255', currency: 'TZS', timeZone: 'Africa/Dar_es_Salaam', language: 'en', continent: 'Africa' },
+  { code: 'BW', name: 'Botswana', dial: '+267', currency: 'BWP', timeZone: 'Africa/Gaborone', language: 'en', continent: 'Africa' },
+  { code: 'MZ', name: 'Mozambique', dial: '+258', currency: 'MZN', timeZone: 'Africa/Maputo', language: 'pt', continent: 'Africa' },
+  { code: 'AO', name: 'Angola', dial: '+244', currency: 'AOA', timeZone: 'Africa/Luanda', language: 'pt', continent: 'Africa' },
+  { code: 'CD', name: 'DR Congo', dial: '+243', currency: 'CDF', timeZone: 'Africa/Kinshasa', language: 'fr', continent: 'Africa' },
+  { code: 'ET', name: 'Ethiopia', dial: '+251', currency: 'ETB', timeZone: 'Africa/Addis_Ababa', language: 'am', continent: 'Africa' },
+  { code: 'EG', name: 'Egypt', dial: '+20', currency: 'EGP', timeZone: 'Africa/Cairo', language: 'ar', continent: 'Africa' },
+  { code: 'MA', name: 'Morocco', dial: '+212', currency: 'MAD', timeZone: 'Africa/Casablanca', language: 'ar', continent: 'Africa' },
+  { code: 'SN', name: 'Senegal', dial: '+221', currency: 'XOF', timeZone: 'Africa/Dakar', language: 'fr', continent: 'Africa' },
+  { code: 'CM', name: 'Cameroon', dial: '+237', currency: 'XAF', timeZone: 'Africa/Douala', language: 'fr', continent: 'Africa' },
+  { code: 'RW', name: 'Rwanda', dial: '+250', currency: 'RWF', timeZone: 'Africa/Kigali', language: 'en', continent: 'Africa' },
+  { code: 'US', name: 'United States', dial: '+1', currency: 'USD', timeZone: 'America/New_York', language: 'en', continent: 'North America' },
+  { code: 'CA', name: 'Canada', dial: '+1', currency: 'CAD', timeZone: 'America/Toronto', language: 'en', continent: 'North America' },
+  { code: 'MX', name: 'Mexico', dial: '+52', currency: 'MXN', timeZone: 'America/Mexico_City', language: 'es', continent: 'North America' },
+  { code: 'GB', name: 'United Kingdom', dial: '+44', currency: 'GBP', timeZone: 'Europe/London', language: 'en', continent: 'Europe' },
+  { code: 'IE', name: 'Ireland', dial: '+353', currency: 'EUR', timeZone: 'Europe/Dublin', language: 'en', continent: 'Europe' },
+  { code: 'DE', name: 'Germany', dial: '+49', currency: 'EUR', timeZone: 'Europe/Berlin', language: 'de', continent: 'Europe' },
+  { code: 'FR', name: 'France', dial: '+33', currency: 'EUR', timeZone: 'Europe/Paris', language: 'fr', continent: 'Europe' },
+  { code: 'ES', name: 'Spain', dial: '+34', currency: 'EUR', timeZone: 'Europe/Madrid', language: 'es', continent: 'Europe' },
+  { code: 'IT', name: 'Italy', dial: '+39', currency: 'EUR', timeZone: 'Europe/Rome', language: 'it', continent: 'Europe' },
+  { code: 'NL', name: 'Netherlands', dial: '+31', currency: 'EUR', timeZone: 'Europe/Amsterdam', language: 'nl', continent: 'Europe' },
+  { code: 'BE', name: 'Belgium', dial: '+32', currency: 'EUR', timeZone: 'Europe/Brussels', language: 'nl', continent: 'Europe' },
+  { code: 'PT', name: 'Portugal', dial: '+351', currency: 'EUR', timeZone: 'Europe/Lisbon', language: 'pt', continent: 'Europe' },
+  { code: 'CH', name: 'Switzerland', dial: '+41', currency: 'CHF', timeZone: 'Europe/Zurich', language: 'de', continent: 'Europe' },
+  { code: 'SE', name: 'Sweden', dial: '+46', currency: 'SEK', timeZone: 'Europe/Stockholm', language: 'sv', continent: 'Europe' },
+  { code: 'NO', name: 'Norway', dial: '+47', currency: 'NOK', timeZone: 'Europe/Oslo', language: 'nb', continent: 'Europe' },
+  { code: 'DK', name: 'Denmark', dial: '+45', currency: 'DKK', timeZone: 'Europe/Copenhagen', language: 'da', continent: 'Europe' },
+  { code: 'PL', name: 'Poland', dial: '+48', currency: 'PLN', timeZone: 'Europe/Warsaw', language: 'pl', continent: 'Europe' },
+  { code: 'TR', name: 'Türkiye', dial: '+90', currency: 'TRY', timeZone: 'Europe/Istanbul', language: 'tr', continent: 'Asia' },
+  { code: 'AU', name: 'Australia', dial: '+61', currency: 'AUD', timeZone: 'Australia/Sydney', language: 'en', continent: 'Oceania' },
+  { code: 'NZ', name: 'New Zealand', dial: '+64', currency: 'NZD', timeZone: 'Pacific/Auckland', language: 'en', continent: 'Oceania' },
+  { code: 'IN', name: 'India', dial: '+91', currency: 'INR', timeZone: 'Asia/Kolkata', language: 'en', continent: 'Asia' },
+  { code: 'PK', name: 'Pakistan', dial: '+92', currency: 'PKR', timeZone: 'Asia/Karachi', language: 'en', continent: 'Asia' },
+  { code: 'BD', name: 'Bangladesh', dial: '+880', currency: 'BDT', timeZone: 'Asia/Dhaka', language: 'bn', continent: 'Asia' },
+  { code: 'CN', name: 'China', dial: '+86', currency: 'CNY', timeZone: 'Asia/Shanghai', language: 'zh', continent: 'Asia' },
+  { code: 'JP', name: 'Japan', dial: '+81', currency: 'JPY', timeZone: 'Asia/Tokyo', language: 'ja', continent: 'Asia' },
+  { code: 'KR', name: 'South Korea', dial: '+82', currency: 'KRW', timeZone: 'Asia/Seoul', language: 'ko', continent: 'Asia' },
+  { code: 'SG', name: 'Singapore', dial: '+65', currency: 'SGD', timeZone: 'Asia/Singapore', language: 'en', continent: 'Asia' },
+  { code: 'MY', name: 'Malaysia', dial: '+60', currency: 'MYR', timeZone: 'Asia/Kuala_Lumpur', language: 'ms', continent: 'Asia' },
+  { code: 'AE', name: 'United Arab Emirates', dial: '+971', currency: 'AED', timeZone: 'Asia/Dubai', language: 'ar', continent: 'Asia' },
+  { code: 'SA', name: 'Saudi Arabia', dial: '+966', currency: 'SAR', timeZone: 'Asia/Riyadh', language: 'ar', continent: 'Asia' },
+  { code: 'QA', name: 'Qatar', dial: '+974', currency: 'QAR', timeZone: 'Asia/Qatar', language: 'ar', continent: 'Asia' },
+  { code: 'BR', name: 'Brazil', dial: '+55', currency: 'BRL', timeZone: 'America/Sao_Paulo', language: 'pt', continent: 'South America' },
+  { code: 'AR', name: 'Argentina', dial: '+54', currency: 'ARS', timeZone: 'America/Argentina/Buenos_Aires', language: 'es', continent: 'South America' },
+  { code: 'CL', name: 'Chile', dial: '+56', currency: 'CLP', timeZone: 'America/Santiago', language: 'es', continent: 'South America' },
+  { code: 'CO', name: 'Colombia', dial: '+57', currency: 'COP', timeZone: 'America/Bogota', language: 'es', continent: 'South America' },
+  { code: 'PE', name: 'Peru', dial: '+51', currency: 'PEN', timeZone: 'America/Lima', language: 'es', continent: 'South America' },
+];
+
+export const COUNTRY_BY_CODE: Record<string, CountryInfo> = Object.fromEntries(
+  COUNTRIES.map((c) => [c.code, c]),
+);
+
+export const COUNTRY_LABELS: Record<string, string> = Object.fromEntries(
+  COUNTRIES.map((c) => [c.code, c.name]),
+);
+
+/** Convenience lookups used to auto-configure a profile from a country. */
+export function countryDial(code: string): string {
+  return COUNTRY_BY_CODE[code]?.dial ?? '+260';
+}
+export function countryCurrency(code: string): string {
+  return COUNTRY_BY_CODE[code]?.currency ?? 'ZMW';
+}
+export function countryTimeZone(code: string): string {
+  return COUNTRY_BY_CODE[code]?.timeZone ?? 'Africa/Lusaka';
+}
+export function countryLanguage(code: string): string {
+  return COUNTRY_BY_CODE[code]?.language ?? 'en';
+}
 
 export const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 export const DAY_LABELS: Record<string, string> = {

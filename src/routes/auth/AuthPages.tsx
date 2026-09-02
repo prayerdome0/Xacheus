@@ -5,8 +5,15 @@ import { Icon } from '@/components/ui/Icon';
 import { Button, Checkbox, Input, Notice, Select } from '@/components/ui/Primitives';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import { BRAND } from '@/lib/constants';
-import { COUNTRY_LABELS } from '@/lib/constants';
+import {
+  BRAND,
+  COUNTRIES,
+  flagEmoji,
+  countryDial,
+  countryCurrency,
+  countryLanguage,
+  countryTimeZone,
+} from '@/lib/constants';
 import { normalisePhone } from '@/lib/slug';
 import type { UserRole } from '@/types';
 
@@ -147,6 +154,9 @@ export function SignUpPage() {
   const [phone, setPhone] = useState('');
   const [countryCode, setCountryCode] = useState('+260');
   const [country, setCountry] = useState('ZM');
+  const [city, setCity] = useState('');
+  const [region, setRegion] = useState('');
+  const [postalCode, setPostalCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [roles, setRoles] = useState<UserRole[]>(
@@ -168,6 +178,14 @@ export function SignUpPage() {
     });
   };
 
+  /** Picking a country auto-selects its dial code and the profile locale. */
+  const onCountryChange = (value: string) => {
+    setCountry(value);
+    setCountryCode(countryDial(value));
+  };
+
+  const countryInfo = COUNTRIES.find((c) => c.code === country);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -186,6 +204,12 @@ export function SignUpPage() {
       phone: phone ? normalisePhone(phone, countryCode) : undefined,
       phoneCountryCode: countryCode,
       countryCode: country,
+      currency: countryCurrency(country),
+      language: countryLanguage(country),
+      timeZone: countryTimeZone(country),
+      city: city.trim() || undefined,
+      region: region.trim() || undefined,
+      postalCode: postalCode.trim() || undefined,
       roles,
       primaryRole: wantsToSell ? 'seller' : 'buyer',
       headline: businessName.trim() || undefined,
@@ -262,24 +286,34 @@ export function SignUpPage() {
         <Input label="Email address" type="email" required autoComplete="email" value={email}
           onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
 
-        <div className="grid grid-cols-[7rem_1fr] gap-2">
-          <Select label="Code" value={countryCode} onChange={(e) => setCountryCode(e.target.value)}
-            options={[
-              { value: '+260', label: '🇿🇲 +260' },
-              { value: '+27', label: '🇿🇦 +27' },
-              { value: '+267', label: '🇧🇼 +267' },
-              { value: '+265', label: '🇲🇼 +265' },
-              { value: '+255', label: '🇹🇿 +255' },
-              { value: '+254', label: '🇰🇪 +254' },
-              { value: '+44', label: '🇬🇧 +44' },
-              { value: '+1', label: '🇺🇸 +1' },
-            ]} />
+        <div className="grid grid-cols-[7.5rem_1fr] gap-2">
+          <Select label="Dial code" value={countryCode} onChange={(e) => setCountryCode(e.target.value)}
+            options={COUNTRIES.map((c) => ({ value: c.dial, label: `${flagEmoji(c.code)} ${c.dial}` }))} />
           <Input label="Phone (for order updates)" type="tel" autoComplete="tel" value={phone}
             onChange={(e) => setPhone(e.target.value)} placeholder="97 123 4567" />
         </div>
 
-        <Select label="Country" value={country} onChange={(e) => setCountry(e.target.value)}
-          options={Object.entries(COUNTRY_LABELS).map(([code, label]) => ({ value: code, label }))} />
+        <Select label="Country" value={country} onChange={(e) => onCountryChange(e.target.value)}
+          options={COUNTRIES.map((c) => ({ value: c.code, label: `${flagEmoji(c.code)} ${c.name}` }))} />
+
+        {/* Location — worldwide: state/region, city, and postal/ZIP are optional. */}
+        <div className="space-y-3">
+          <p className="sh-label">Location (optional)</p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <Input label="State / province / region" value={region}
+              onChange={(e) => setRegion(e.target.value)} placeholder="e.g. Lusaka Province, Gauteng, Lagos" />
+            <Input label="City" value={city}
+              onChange={(e) => setCity(e.target.value)} placeholder="e.g. Lusaka, Johannesburg" />
+          </div>
+          <Input label="Postal / ZIP code" value={postalCode}
+            onChange={(e) => setPostalCode(e.target.value)} placeholder="e.g. 10101" />
+          {countryInfo && (
+            <p className="flex items-center gap-1.5 rounded-xl bg-ink-50 px-3 py-2 text-[11px] text-ink-500">
+              <Icon name="info" size={13} className="shrink-0" />
+              {flagEmoji(countryInfo.code)} {countryInfo.name} · currency {countryInfo.currency} · {countryInfo.timeZone.replace(/_/g, ' ')} · Auto-applied to your profile.
+            </p>
+          )}
+        </div>
 
         <div>
           <Input label="Password" type="password" required autoComplete="new-password" value={password}

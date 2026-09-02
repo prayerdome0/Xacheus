@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Icon } from '@/components/ui/Icon';
 import { Badge, Button, Notice } from '@/components/ui/Primitives';
 import { Avatar, BusinessAvatar, ProductCard, ProductGrid, Rating, SearchBar } from '@/components/ui';
-import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
 import { useToast } from '@/context/ToastContext';
 import { useCategories } from '@/hooks/useCategories';
@@ -17,6 +16,57 @@ import { useGeolocation } from '@/hooks/useUi';
 import { isFirebaseConfigured, isSupabaseConfigured } from '@/lib/env';
 import type { Deal, Product, UUID } from '@/types';
 
+/** Rotating announcement copy for the top marquee ticker. */
+const ANNOUNCEMENTS = [
+  '🌍 Buy and sell worldwide',
+  '🛍️ Discover products from businesses around the world',
+  '🚀 Grow your business with Seedwel Hub',
+  '💬 Connect with customers and businesses',
+  '📦 Track your orders from purchase to delivery',
+  '🧾 Create professional quotations, invoices and receipts',
+];
+
+/** Promotional banners shown as a responsive carousel on the homepage. */
+const BANNERS: {
+  eyebrow: string;
+  title: string;
+  text?: string;
+  cta: string;
+  to: string;
+  tone: 'brand' | 'amber' | 'dark' | 'green';
+}[] = [
+  {
+    eyebrow: 'Marketplace',
+    title: 'Discover products from businesses worldwide',
+    cta: 'Shop Now',
+    to: '/search',
+    tone: 'brand',
+  },
+  {
+    eyebrow: 'Sell online',
+    title: 'Start selling your products online',
+    cta: 'Become a Seller',
+    to: '/auth/signup?intent=sell',
+    tone: 'amber',
+  },
+  {
+    eyebrow: 'Business tools',
+    title: 'Manage your business professionally',
+    text: 'Quotations • Invoices • Receipts • Inventory • Customers',
+    cta: 'Explore Business Tools',
+    to: '/business/setup',
+    tone: 'dark',
+  },
+  {
+    eyebrow: 'Community',
+    title: 'Connect. Share. Grow.',
+    text: 'Join business communities and connect with people worldwide.',
+    cta: 'Join the Community',
+    to: '/businesses',
+    tone: 'green',
+  },
+];
+
 /**
  * Public homepage.
  *
@@ -25,7 +75,6 @@ import type { Deal, Product, UUID } from '@/types';
  * has not been applied yet we say so instead of showing invented listings.
  */
 export default function LandingPage() {
-  const { user, profile } = useAuth();
   const { add } = useCart();
   const { success: toast } = useToast();
   const navigate = useNavigate();
@@ -85,6 +134,22 @@ export default function LandingPage() {
 
   return (
     <div className="space-y-10">
+      {/* ── Announcement marquee ────────────────────────────────────────── */}
+      <section aria-label="Announcements" className="sh-gradient-brand overflow-hidden rounded-2xl py-2.5 text-sm font-semibold text-white/95 no-print">
+        <div className="sh-marquee">
+          {[0, 1].map((copy) => (
+            <div key={copy} className="sh-marquee-track" aria-hidden={copy === 1}>
+              {ANNOUNCEMENTS.map((a) => (
+                <span key={a} className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+                  {a}
+                  <span className="h-1 w-1 rounded-full bg-white/40" />
+                </span>
+              ))}
+            </div>
+          ))}
+        </div>
+      </section>
+
       {!isFirebaseConfigured ? (
         <Notice tone="warning" title="Seedwel Hub is waiting for its Firebase project" icon="warning">
           Add your Firebase web config to <code className="rounded bg-white/70 px-1 font-mono text-[11px]">.env</code> and
@@ -135,27 +200,12 @@ export default function LandingPage() {
           </div>
 
           <div className="mt-7 flex flex-wrap items-center justify-center gap-2">
-            {!user ? (
-              <>
-                <Link to="/auth/signup?intent=sell">
-                  <Button variant="accent" size="lg" icon="store">Start selling free</Button>
-                </Link>
-                <Link to="/auth/signin">
-                  <Button size="lg" className="bg-white/10 text-white hover:bg-white/20">Sign in</Button>
-                </Link>
-              </>
-            ) : (
-              <>
-                <Link to="/business/setup">
-                  <Button variant="accent" size="lg" icon="store">Open my business</Button>
-                </Link>
-                <Link to="/account">
-                  <Button size="lg" className="bg-white/10 text-white hover:bg-white/20">
-                    Hi, {profile?.display_name ?? profile?.full_name ?? 'there'}
-                  </Button>
-                </Link>
-              </>
-            )}
+            <Link to="/search">
+              <Button variant="accent" size="lg" icon="search">Explore Marketplace</Button>
+            </Link>
+            <Link to="/auth/signup?intent=sell">
+              <Button size="lg" className="bg-white/10 text-white hover:bg-white/20" icon="store">Start Selling</Button>
+            </Link>
           </div>
         </div>
       </section>
@@ -171,6 +221,9 @@ export default function LandingPage() {
         <ValueTile icon="robot" title="AI that asks first"
           text="Seedwel AI drafts work for you, but money and deletions always need your approval." />
       </section>
+
+      {/* ── Product banners (responsive carousel) ───────────────────────── */}
+      <PromoBanners />
 
       {/* ── Categories ──────────────────────────────────────────────────── */}
       <section>
@@ -602,5 +655,87 @@ export function AvatarRow({ items }: { items: { name: string; url?: string | nul
         <Avatar key={i} src={it.url} name={it.name} size={28} ring />
       ))}
     </div>
+  );
+}
+
+const BANNER_TONES: Record<string, string> = {
+  brand: 'sh-gradient-brand',
+  amber: 'sh-gradient-accent',
+  dark: 'bg-ink-900',
+  green: 'bg-gradient-to-br from-emerald-600 to-teal-700',
+};
+
+/** Responsive, auto-advancing promotional banner carousel. */
+function PromoBanners() {
+  const [index, setIndex] = useState(0);
+  const count = BANNERS.length;
+
+  useEffect(() => {
+    const t = setInterval(() => setIndex((i) => (i + 1) % count), 5200);
+    return () => clearInterval(t);
+  }, [count]);
+
+  return (
+    <section aria-roledescription="carousel" aria-label="Seedwel Hub highlights">
+      <div className="relative overflow-hidden rounded-3xl border border-ink-200/70">
+        <div
+          className="flex transition-transform duration-500 ease-out"
+          style={{ transform: `translateX(-${index * 100}%)` }}
+        >
+          {BANNERS.map((b, i) => (
+            <div key={b.title} className="w-full shrink-0" aria-hidden={i !== index}>
+              <div className={`${BANNER_TONES[b.tone]} relative flex min-h-[13rem] flex-col justify-between gap-4 p-6 text-white sm:min-h-[15rem] sm:p-9`}>
+                <div>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-white/90">
+                    {b.eyebrow}
+                  </span>
+                  <h2 className="mt-3 max-w-xl text-xl font-extrabold leading-tight text-white sm:text-2xl">
+                    {b.title}
+                  </h2>
+                  {b.text && <p className="mt-1.5 max-w-xl text-sm text-white/80">{b.text}</p>}
+                </div>
+                <div>
+                  <Link to={b.to}>
+                    <Button variant={b.tone === 'amber' ? 'dark' : 'accent'} size="lg">
+                      {b.cta}
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="absolute bottom-3 left-3 flex items-center gap-1.5">
+          {BANNERS.map((b, i) => (
+            <button
+              key={b.title}
+              type="button"
+              onClick={() => setIndex(i)}
+              aria-label={`Go to banner ${i + 1}`}
+              className={`h-1.5 rounded-full transition-all ${i === index ? 'w-5 bg-white' : 'w-1.5 bg-white/50 hover:bg-white/70'}`}
+            />
+          ))}
+        </div>
+        <div className="absolute bottom-3 right-3 flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setIndex((index - 1 + count) % count)}
+            aria-label="Previous banner"
+            className="rounded-lg bg-white/20 p-1.5 text-white backdrop-blur hover:bg-white/35"
+          >
+            <Icon name="chevronLeft" size={16} />
+          </button>
+          <button
+            type="button"
+            onClick={() => setIndex((index + 1) % count)}
+            aria-label="Next banner"
+            className="rounded-lg bg-white/20 p-1.5 text-white backdrop-blur hover:bg-white/35"
+          >
+            <Icon name="chevronRight" size={16} />
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }
