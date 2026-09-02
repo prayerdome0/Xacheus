@@ -10,15 +10,15 @@ import { BusinessProvider } from '@/context/BusinessContext';
 import { CartProvider } from '@/context/CartContext';
 import { ModeProvider } from '@/context/ModeContext';
 import { ToastProvider } from '@/context/ToastContext';
-import { isSupabaseConfigured } from '@/lib/env';
+import { isFirebaseConfigured } from '@/lib/env';
 
 /* ── Route modules ─────────────────────────────────────────────────────────── */
 /* Every screen is lazy. A shopper on a phone in Lusaka should download the
    storefront and nothing else: the POS, the PDF writer (jsPDF + html2canvas),
    the charts and the account centre all arrive only when they are opened.
-   `SupabaseGate` stays eager because it is what renders when nothing else can. */
+   `FirebaseGate` stays eager because it is what renders when nothing else can. */
 
-import { SupabaseGate } from '@/routes/auth/AuthGate';
+import { FirebaseGate } from '@/routes/auth/AuthGate';
 
 /** Route components take no props — everything comes from the URL, the session
  *  or a context — but React's `lazy` needs `ComponentType<any>`, so the cast is
@@ -184,7 +184,7 @@ function LegacyShareRedirect() {
 export default function App() {
   const location = useLocation();
 
-  if (!isSupabaseConfigured) return <SupabaseGate />;
+  if (!isFirebaseConfigured) return <FirebaseGate />;
 
   return (
     <RouteErrorBoundary key={location.pathname}>

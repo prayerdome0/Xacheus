@@ -1,19 +1,21 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { env, isSupabaseConfigured } from './env';
+import { isSupabaseConfigured, supabaseAnonKey, supabaseUrl } from './env';
+
+/** @deprecated Legacy Supabase data layer. Replaced by Firebase in Phase 1+. */
 
 /**
  * Single Supabase client for the whole app.
  *
  * When credentials are missing (fresh clone, no .env) we still export a client
- * pointed at a placeholder URL so imports never crash; <SupabaseGate/> blocks
- * the UI and explains how to finish setup. Nothing is faked.
+ * pointed at a placeholder URL so imports never crash. The app's FirebaseGate
+ * blocks identity work before the legacy layer is reached. Nothing is faked.
  */
 const placeholderUrl = 'https://not-configured.supabase.co';
 const placeholderKey = 'not-configured-publishable-key';
 
 export const supabase: SupabaseClient = createClient(
-  isSupabaseConfigured ? env.supabaseUrl : placeholderUrl,
-  isSupabaseConfigured ? env.supabaseAnonKey : placeholderKey,
+  isSupabaseConfigured ? supabaseUrl : placeholderUrl,
+  isSupabaseConfigured ? supabaseAnonKey : placeholderKey,
   {
     auth: {
       persistSession: true,

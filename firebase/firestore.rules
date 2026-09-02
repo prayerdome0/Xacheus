@@ -1,0 +1,37 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Platform admin is a Firebase custom claim, set by an Admin SDK Cloud
+    // Function (or the Firebase console). A client-written field such as
+    // `is_platform_admin: true` must NEVER grant access — only this claim does.
+    function isAdmin() {
+      return signedIn() && request.auth.token.admin == true;
+    }
+
+    // ── Phase 1: identity / user profiles ──────────────────────────────────
+    // `users/{uid}` is the user's own profile. Only the user (or a platform
+    // admin with the custom claim) can reach it.
+    match /users/{uid} {
+      allow read: if isOwner(uid) || isAdmin();
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── Future phases ─────────────────────────────────────────────────────
+    // Cloud Firestore is deny-by-default: any collection without a matching
+    // `match /<collection>/{id}` block is automatically denied. Each migrated
+    // collection will add its own scoped rules here (businesses, business
+    // members, products, orders, payments, messages, documents, audit logs…).
+    // Do not add a broad `match /{document=**}` catch-all; explicit scopes are
+    // easier to reason about and safer as the schema grows.
+  }
+}

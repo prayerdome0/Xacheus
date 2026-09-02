@@ -14,7 +14,7 @@ import { BRAND } from '@/lib/constants';
 import { formatMoney, toNum } from '@/lib/currency';
 import { distanceLabel, openingStatus } from '@/lib/format';
 import { useGeolocation } from '@/hooks/useUi';
-import { isSupabaseConfigured } from '@/lib/env';
+import { isFirebaseConfigured, isSupabaseConfigured } from '@/lib/env';
 import type { Deal, Product, UUID } from '@/types';
 
 /**
@@ -67,7 +67,7 @@ export default function LandingPage() {
   // Top stores come from the search RPC (it exposes ratings, badges and counts).
   const [storeRows, setStoreRows] = useState<BusinessSearchRow[]>([]);
   useEffect(() => {
-    if (!isSupabaseConfigured) return;
+    if (!isFirebaseConfigured) return;
     searchBusinesses({ sort: 'rating', limit: 6, verified_only: false })
       .then((res) => setStoreRows(res.items))
       .catch(() => setStoreRows([]));
@@ -85,13 +85,19 @@ export default function LandingPage() {
 
   return (
     <div className="space-y-10">
-      {!isSupabaseConfigured && (
-        <Notice tone="warning" title="Seedwel Hub is not connected to its database yet" icon="warning">
-          Add your Supabase URL and publishable key to <code className="rounded bg-white/70 px-1 font-mono text-[11px]">.env</code>, then
-          apply <code className="rounded bg-white/70 px-1 font-mono text-[11px]">supabase/sql/0001–0011</code>. Every listing on this page is
-          read from the database — nothing here is simulated.
+      {!isFirebaseConfigured ? (
+        <Notice tone="warning" title="Seedwel Hub is waiting for its Firebase project" icon="warning">
+          Add your Firebase web config to <code className="rounded bg-white/70 px-1 font-mono text-[11px]">.env</code> and
+          deploy <code className="rounded bg-white/70 px-1 font-mono text-[11px]">firebase/firestore.rules</code>. Auth and profiles are live on
+          Firebase; marketplace, orders and documents move over in the next phases. Nothing here is simulated.
         </Notice>
-      )}
+      ) : !isSupabaseConfigured ? (
+        <Notice tone="info" title="Phase 1 is live — marketplace data is migrating next" icon="sparkles">
+          Firebase Authentication and user profiles are connected. Business, products, orders and documents are
+          moving to Cloud Firestore in the next phases; until then their sections use the legacy data layer and
+          will show a clear setup/migration message instead of fake records.
+        </Notice>
+      ) : null}
 
       {/* ── Hero ─────────────────────────────────────────────────────────── */}
       <section className="sh-gradient-brand overflow-hidden rounded-3xl px-5 py-8 text-white sm:px-8 sm:py-12">

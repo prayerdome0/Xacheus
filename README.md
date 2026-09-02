@@ -17,19 +17,32 @@ codebase is reused except the brand artwork in `assets/`.
 
 It is not a demo and it has no fake data. There are no mock JSON files, no
 hard-coded product lists and no `setTimeout` pretending to be an API. Every
-number on screen comes from Postgres, and every screen that is not finished says
-so out loud instead of rendering an empty state that looks like "no records yet".
+number on screen comes from a real database — Firestore for Phase 1 identity,
+and the legacy Supabase/Postgres layer for modules that have not migrated yet.
+Every screen that is not finished says so out loud instead of rendering an
+empty state that looks like "no records yet".
 
 The database is the product. The screens are how you reach it.
 
 ---
 
+> **Migration status:** Seedwel Hub is being moved from Supabase to Firebase.
+> Phase 1 (this branch) replaces authentication and user profiles with Firebase
+> Auth + Cloud Firestore and ships the deny-by-default Firestore/Storage rules.
+> Marketplace, business, orders, documents etc. still use the legacy Supabase
+> data layer until Phase 2+ has migrated each module. See
+> [`docs/FIREBASE_MIGRATION.md`](docs/FIREBASE_MIGRATION.md) for the plan.
+
+---
+
 ## Stack
 
-| Layer | Choice |
+| Layer | Choice (current) |
 | --- | --- |
-| Database & auth | Supabase (Postgres 15, Row Level Security, storage, realtime) |
-| Business logic | ~150 PL/pgSQL functions — numbering, stock, money, permissions, sharing |
+| Auth | Firebase Authentication (Email/Password, verification, reset) |
+| Identity | Cloud Firestore `users/{uid}` + `firebase/firestore.rules` + custom admin claims |
+| Media phase 2 | Cloudinary (public upload preset in the browser; secret only in Cloud Functions) |
+| Marketplace/business data | Legacy Supabase data layer (Postgres + RLS) — being migrated to Firestore |
 | Frontend | React 18 + Vite 5 + TypeScript (strict) |
 | Routing | react-router-dom 6, every route lazy-loaded |
 | Styling | Tailwind CSS v4 (`@theme`, `sh-*` component classes, phone-first) |
@@ -37,42 +50,34 @@ The database is the product. The screens are how you reach it.
 | Charts | recharts |
 | CSV | papaparse |
 
-Money is `numeric(14,2)` in the database and `number | string` in TypeScript
-(PostgREST returns numerics as strings). Every calculation goes through
-`toNum()` in `src/lib/currency.ts`. No floats reach a total.
+Money is stored/decimal at the data layer and `number | string` in TypeScript.
+Every calculation goes through `toNum()` in `src/lib/currency.ts`; no floats
+reach a total.
 
 ---
 
 ## Running it
 
-### 1. Apply the schema
+### 1. Create the Firebase project
 
-Open your Supabase project → **SQL Editor**, and run every file in
-`supabase/sql/` **in numeric order**. Each file is idempotent and ends with a
-`select '… ok'` line, so you can re-run one safely.
+Open the [Firebase console](https://console.firebase.google.com), create a
+project, register a **Web app**, then copy the official `firebaseConfig`.
 
-| # | File | What it creates |
-| --- | --- | --- |
-| 0001 | `0001_foundation.sql` | extensions (`pg_trgm`, `pgcrypto`, `postgis` if available), enums, currencies, countries, taxes, helper functions |
-| 0002 | `0002_identity.sql` | profiles, businesses, memberships, roles, branches, stores, audit logs, settings, notifications, addresses |
-| 0003 | `0003_marketplace.sql` | categories, products, variants, images, services, reviews, wishlists, conversations, messages |
-| 0004 | `0004_inventory.sql` | warehouses, stock levels, movements, transfers, stocktakes, csv sources, barcodes |
-| 0005 | `0005_sales.sql` | orders, order items, payments, receipts, customers, customer transactions, coupons, loyalty |
-| 0006 | `0006_purchasing_finance.sql` | suppliers, purchase orders, bills, expenses, expense categories |
-| 0007 | `0007_documents_ai_platform.sql` | invoices, quotations, returns, documents, signatures, payment links, AI actions, ads, plans, subscriptions, reports |
-| 0008 | `0008_rls_policies.sql` | Row Level Security for every table + the `can()` permission helper |
-| 0009 | `0009_functions.sql` | all business logic: search, orders, stock, documents, payments, dashboards, AI, imports |
-| 0010 | `0010_triggers.sql` | numbering, slugs, search vectors, denormalised totals, rollups, alerts |
-| 0011 | `0011_seed.sql` | countries, currencies, tax rates, categories, plan tiers, roles, report templates, storage buckets |
-| 0012 | `0012_public_payments.sql` | public payment links: `get_payment_link`, `pay_via_link`, `resolve_payment_submission` |
+- **Authentication** → enable **Email/Password**.
+- **Cloud Firestore** → create a database (start in production mode).
+- Deploy the Phase 1 rules:
 
-> **0012 is required for the payment-link page to work.** It is additive — it
-> replaces `get_payment_link` and adds one table — so it is safe to run against a
-> database that already has 0001–0011 applied.
+```bash
+npx firebase deploy --only firestore:rules,storage:rules
+```
 
-`0011` also creates the storage buckets (`avatars`, `businesses`, `products`,
-`documents`, `signatures`, `imports`, `support`, `exports`) with their size and
-MIME limits, so there is nothing to click in the dashboard afterwards.
+The rules live in `firebase/firestore.rules` and `firebase/storage.rules`.
+Admin access must use a **custom claim** (`admin: true`) set by an Admin SDK /
+Cloud Function — never a browser-writable field.
+
+> The old `supabase/sql/` files remain only as the transitional schema for the
+> not-yet-migrated marketplace/business modules. Do not run them in a project
+> that has been replaced; they are being removed module-by-module.
 
 ### 2. Configure the client
 
@@ -80,21 +85,29 @@ MIME limits, so there is nothing to click in the dashboard afterwards.
 cp .env.example .env
 ```
 
-```
-VITE_SUPABASE_URL=https://<project-ref>.supabase.co
-VITE_SUPABASE_ANON_KEY=<your publishable key>
+```dotenv
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_STORAGE_BUCKET=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
+VITE_FIREBASE_MEASUREMENT_ID=
+
+VITE_CLOUDINARY_CLOUD_NAME=
+VITE_CLOUDINARY_PRESET=
+
 VITE_DEFAULT_COUNTRY=ZM
 VITE_DEFAULT_CURRENCY=ZMW
 ```
 
-These are **public** client credentials and `.env` is committed on purpose —
-that is how Supabase is designed to work. Access control is Row Level Security
-in `0008`, not key secrecy. A `service_role` key or a database password must
-never appear in this repository; `.gitignore` blocks them by pattern.
+The Firebase web API key and Cloudinary **unsigned upload preset** are public
+identifiers. No secret belongs in the browser: the Cloudinary API secret and
+Firebase service-account key must stay in Cloud Functions and never in `.env`
+or the repo.
 
-If the credentials are missing or malformed the app does not start with a blank
-screen — it renders `SupabaseGate`, which tells you exactly which file to run
-and which variable to set.
+If the Firebase config is missing or malformed the app renders `FirebaseGate`,
+which explains exactly which values to set.
 
 ### 3. Run
 

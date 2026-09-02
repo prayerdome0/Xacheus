@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 /**
- * Tiny data-fetching hook for Supabase queries.
+ * Tiny data-fetching hook for the legacy Supabase query builders used by
+ * modules that have not migrated to Firestore yet (Phase 2+ replaces this).
  *
  * Deliberately not a caching framework: Seedwel Hub data is live and private,
  * so every screen re-reads on mount and can be re-read explicitly. Realtime

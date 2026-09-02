@@ -345,23 +345,26 @@ function scorePassword(pw: string): { score: number; label: string; tips: string
 
 export function ConfirmEmailPage() {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, resendVerificationEmail } = useAuth();
   const [email, setEmail] = useState<string>(
     (window.history.state?.usr?.email as string) ?? '',
   );
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [resendError, setResendError] = useState<string | null>(null);
 
-  useEffect(() => { if (user) navigate('/', { replace: true }); }, [user, navigate]);
+  // A Firebase sign-up keeps a temporary session, but we do not let the user
+  // move on until the address is verified.
+  useEffect(() => { if (user?.emailVerified) navigate('/', { replace: true }); }, [user, navigate]);
 
   const resend = async () => {
     if (!email.trim()) return;
     setBusy(true);
-    const { supabase } = await import('@/lib/supabase');
-    await supabase.auth.resend({ type: 'signup', email: email.trim(),
-      options: { emailRedirectTo: `${window.location.origin}/auth/confirm` } });
+    setResendError(null);
+    const res = await resendVerificationEmail(email.trim());
     setBusy(false);
-    setSent(true);
+    if (res.error) setResendError(res.error);
+    else setSent(true);
   };
 
   return (
@@ -371,6 +374,7 @@ export function ConfirmEmailPage() {
           We sent a confirmation link to <span className="font-bold">{email || 'your email address'}</span>.
           Open it on this device to finish creating your account.
         </Notice>
+        {resendError && <Notice tone="danger">{resendError}</Notice>}
 
         <Input label="Email address" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
 

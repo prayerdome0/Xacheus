@@ -2,16 +2,15 @@ import { Link } from 'react-router-dom';
 import { BrandLockup } from '@/components/layout/Logo';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Primitives';
-import { isSupabaseConfigured, supabaseSetupHint } from '@/lib/env';
-import { env } from '@/lib/env';
+import { firebaseSetupHint, isFirebaseConfigured } from '@/lib/env';
 
 /**
- * Shown instead of the app when Supabase credentials are missing or malformed.
+ * Shown instead of the app when Firebase config is missing or malformed.
  *
  * Seedwel Hub must never render invented data, so with no backend we stop and
  * explain exactly what to do.
  */
-export function SupabaseGate() {
+export function FirebaseGate() {
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-ink-50 px-5 py-12">
       <BrandLockup />
@@ -21,34 +20,40 @@ export function SupabaseGate() {
           <div className="flex items-start gap-3">
             <Icon name="warning" size={22} className="mt-0.5 shrink-0 text-amber-600" />
             <div>
-              <h1 className="text-base font-extrabold text-amber-900">Connect your Supabase project</h1>
+              <h1 className="text-base font-extrabold text-amber-900">Connect your Firebase project</h1>
               <p className="mt-1 text-sm text-amber-900/85">
-                {supabaseSetupHint || 'The Supabase credentials in .env could not be used.'}
+                {firebaseSetupHint || 'The Firebase config in .env could not be used.'}
               </p>
             </div>
           </div>
         </div>
 
         <ol className="sh-card-flat divide-y divide-ink-100 text-sm">
-          <Step n={1} title="Create or open your Supabase project">
+          <Step n={1} title="Create or open your Firebase project">
             <p>
-              Go to <a className="font-semibold text-brand-700 underline" href="https://supabase.com/dashboard" target="_blank" rel="noreferrer">supabase.com/dashboard</a> and
-              note the project URL (it looks like <code className="rounded bg-ink-100 px-1 font-mono text-xs">https://xyz.supabase.co</code>).
+              Go to <a className="font-semibold text-brand-700 underline" href="https://console.firebase.google.com" target="_blank" rel="noreferrer">console.firebase.google.com</a>,
+              add a <strong>Web app</strong>, then copy the official <code className="rounded bg-ink-100 px-1 font-mono text-xs">firebaseConfig</code>.
             </p>
           </Step>
-          <Step n={2} title="Apply the schema">
+          <Step n={2} title="Enable Authentication + Firestore">
             <p>
-              Open <span className="font-semibold">SQL Editor</span> and run each file in
-              <code className="mx-1 rounded bg-ink-100 px-1 font-mono text-xs">supabase/sql/</code> in numeric order:
-              0001 foundation → 0002 identity → 0003 marketplace → 0004 inventory → 0005 sales →
-              0006 purchasing → 0007 documents &amp; platform → 0008 RLS → 0009 functions →
-              0010 triggers → 0011 seed → 0012 public payments.
+              Turn on <strong>Email/Password</strong> in Authentication, create a <strong>Cloud Firestore</strong>
+              database, then deploy the rules in
+              <code className="mx-1 rounded bg-ink-100 px-1 font-mono text-xs">firebase/firestore.rules</code> and
+              <code className="mx-1 rounded bg-ink-100 px-1 font-mono text-xs">firebase/storage.rules</code>.
             </p>
           </Step>
           <Step n={3} title="Set the environment variables">
             <pre className="mt-2 overflow-x-auto rounded-xl bg-ink-950 p-3 font-mono text-[11px] leading-relaxed text-white/90">
-{`VITE_SUPABASE_URL=${env.supabaseUrl || 'https://<project-ref>.supabase.co'}
-VITE_SUPABASE_ANON_KEY=<your publishable key>
+{`VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_PROJECT_ID=...
+VITE_FIREBASE_STORAGE_BUCKET=...
+VITE_FIREBASE_MESSAGING_SENDER_ID=...
+VITE_FIREBASE_APP_ID=...
+VITE_FIREBASE_MEASUREMENT_ID=...
+VITE_CLOUDINARY_CLOUD_NAME=...
+VITE_CLOUDINARY_PRESET=...
 VITE_DEFAULT_COUNTRY=ZM
 VITE_DEFAULT_CURRENCY=ZMW`}
             </pre>
@@ -58,11 +63,11 @@ VITE_DEFAULT_CURRENCY=ZMW`}
               restart the dev server.
             </p>
           </Step>
-          <Step n={4} title="Reload">
+          <Step n={4} title="Deploy/verify the security rules">
             <p>
-              The publishable (anon) key is safe in the browser — Row Level Security in
-              <code className="mx-1 rounded bg-ink-100 px-1 font-mono text-xs">0008_rls_policies.sql</code> is what
-              protects your data, not the key.
+              Use <code className="rounded bg-ink-100 px-1 font-mono text-xs">firebase deploy --only firestore:rules,storage:rules</code>.
+              The web API key and upload preset are public identifiers — Firestore rules and custom claims are what
+              protect the data. Never put the Cloudinary API secret or Firebase service-account key in this repo.
             </p>
           </Step>
         </ol>
@@ -96,4 +101,4 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
   );
 }
 
-export { isSupabaseConfigured };
+export { isFirebaseConfigured };
