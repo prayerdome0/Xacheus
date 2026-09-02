@@ -863,7 +863,7 @@ export const registerAsSeller = (input: Record<string, unknown>) =>
 /* ── Order operations ─────────────────────────────────────────────────────── */
 
 export type OrderStatusInput =
-  | 'pending' | 'confirmed' | 'processing' | 'ready' | 'shipped' | 'delivered' | 'cancelled' | 'returned';
+  | 'pending' | 'confirmed' | 'processing' | 'ready' | 'shipped' | 'out_for_delivery' | 'delivered' | 'cancelled' | 'returned';
 
 export interface OrderStatusResult {
   order_id: UUID;

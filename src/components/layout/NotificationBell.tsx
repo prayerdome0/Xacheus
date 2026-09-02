@@ -123,10 +123,14 @@ export function NotificationBell({ scope = 'all', compact = false }: {
             ))}
           </ul>
 
-          <footer className="border-t border-ink-200 bg-ink-50/60 p-2.5">
+          <footer className="space-y-1 border-t border-ink-200 bg-ink-50/60 p-2.5">
             <Button variant="ghost" size="sm" block onClick={() => { setOpen(false); navigate('/notifications'); }}
               iconRight="chevronRight">
               View all notifications
+            </Button>
+            <Button variant="ghost" size="sm" block onClick={() => { setOpen(false); navigate('/account/notifications-settings'); }}
+              iconRight="chevronRight">
+              Notification settings
             </Button>
           </footer>
         </div>

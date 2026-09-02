@@ -63,6 +63,14 @@ export const cloudinaryConfig = {
   unsignedPreset: (import.meta.env.VITE_CLOUDINARY_PRESET as string | undefined) ?? '',
 };
 
+/** True when enough public Cloudinary config is present to do unsigned uploads. */
+export const isCloudinaryConfigured = Boolean(cloudinaryConfig.cloudName && cloudinaryConfig.unsignedPreset);
+
+/** Shared upload endpoint. The API secret is never needed here (unsigned preset). */
+export const cloudinaryUploadUrl = cloudinaryConfig.cloudName
+  ? `https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/image/upload`
+  : '';
+
 /* ── Locale / feature flags ────────────────────────────────────────────────── */
 
 export const env = {

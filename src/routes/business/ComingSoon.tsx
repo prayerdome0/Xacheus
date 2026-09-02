@@ -382,23 +382,6 @@ export function MarketingModule() {
   );
 }
 
-export function MessagesModule() {
-  return (
-    <ComingSoon
-      title="Messages"
-      subtitle="Buyer conversations, WhatsApp and internal notes"
-      icon="💬"
-      items={[
-        'Buyers can already open a conversation about a product or an order',
-        'This screen adds the seller inbox: unread counts, assignment, priority',
-        'Canned replies, WhatsApp hand-off and attachment support',
-        'Conversation linked to the customer, product and order',
-      ]}
-      working={[{ label: 'Orders', to: '/business/orders' }, { label: 'Your messages as a buyer', to: '/account/messages' }]}
-    />
-  );
-}
-
 export function AiModule() {
   return (
     <ComingSoon

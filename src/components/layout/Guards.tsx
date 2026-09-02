@@ -2,7 +2,6 @@ import { type ReactNode } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
-import { BrandLockup } from './Logo';
 import { Button, EmptyState, Notice } from '@/components/ui/Primitives';
 import { Icon } from '@/components/ui/Icon';
 import { missingPermissionMessage } from '@/lib/permissions';
@@ -105,8 +104,15 @@ export function RequirePermission({ children, permission, permissions }: {
 
 export function FullScreenLoader({ label = 'Loading…' }: { label?: string }) {
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center gap-5 bg-ink-50 px-6">
-      <BrandLockup />
+    <div className="flex min-h-dvh flex-col items-center justify-center gap-5 bg-white px-6">
+      <img
+        src="/brand/wordmarklogo.png"
+        alt={BRAND.name}
+        width={1080}
+        height={217}
+        className="block w-[min(72vw,320px)] object-contain"
+        draggable={false}
+      />
       <div className="flex items-center gap-2 text-sm font-semibold text-ink-500">
         <span className="h-4 w-4 animate-spin rounded-full border-2 border-brand-600 border-t-transparent" />
         {label}

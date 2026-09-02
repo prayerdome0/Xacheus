@@ -72,9 +72,12 @@ export async function getProfile(uid: string): Promise<Profile | null> {
   return profileFromDoc(uid, snap.data());
 }
 
-/** Create or refresh a profile for a newly signed-up user. */
-export async function createProfile(user: AppUser): Promise<Profile> {
-  const data = profileData(profileDefaults(user));
+/** Create or refresh a profile for a newly signed-up user.
+ *  `overrides` carries the worldwide registration fields (country, currency,
+ *  timezone, language, city, region, address, postal code) so a user in Nairobi
+ *  or Toronto is configured for their own locale, not the platform default. */
+export async function createProfile(user: AppUser, overrides: Partial<Profile> = {}): Promise<Profile> {
+  const data = profileData({ ...profileDefaults(user), ...overrides });
   await setDoc(doc(getFirebaseDb(), 'users', user.id), data, { merge: true });
   return profileFromDoc(user.id, data);
 }

@@ -8,6 +8,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
 import { supabase } from '@/lib/supabase';
+import { createPaymentLink } from '@/lib/api';
+import { cloudinaryUpload } from '@/lib/cloudinary';
 import { useQuery } from '@/hooks/useQuery';
 import { formatMoney, toNum } from '@/lib/currency';
 import { formatDate, formatDateTime, relativeTime } from '@/lib/dates';
@@ -340,6 +342,7 @@ function CancelOrderButton({ order }: { order: Order }) {
 export function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { error: toastError } = useToast();
   const [order, setOrder] = useState<(Order & { items: OrderItem[]; business?: Record<string, unknown> }) | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -374,6 +377,34 @@ export function OrderDetailPage() {
 
   const currency = order.currency;
   const history = (order.status_history ?? []) as { status: string; at: string; by?: string }[];
+  const business = order.business as Record<string, unknown> | undefined;
+  const businessId = (business?.id as UUID | undefined) ?? null;
+  const [payBusy, setPayBusy] = useState(false);
+
+  /** "I've Made Payment" — create (or reuse) a payment link for this order and
+   *  route the buyer to the page where they declare amount, method, reference
+   *  and proof. The seller confirms it on the Payments screen before money is
+   *  recorded. */
+  const payNow = async () => {
+    if (!businessId) return;
+    setPayBusy(true);
+    try {
+      const res = await createPaymentLink({
+        business_id: businessId,
+        amount: toNum(toNum(order.balance_due) > 0 ? order.balance_due : order.total),
+        currency,
+        order_id: order.id,
+        customer_name: order.shipping_name ?? order.customer?.name ?? undefined,
+        allow_custom_amount: true,
+        label: `Order ${order.order_number}`,
+      });
+      navigate(`/pay/${res.code}`);
+    } catch (e) {
+      toastError('Could not start payment', e instanceof Error ? e.message : 'Please try again.');
+    } finally {
+      setPayBusy(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -388,6 +419,16 @@ export function OrderDetailPage() {
         <StatusBadge status={order.payment_status} />
         <Button variant="outline" size="sm" icon="arrowLeft" onClick={() => navigate('/orders')}>My orders</Button>
       </div>
+
+      {toNum(order.balance_due) > 0 && (
+        <div className="flex flex-col items-start justify-between gap-2 rounded-2xl border border-brand-200 bg-brand-50 p-4 sm:flex-row sm:items-center">
+          <div>
+            <p className="text-sm font-extrabold text-brand-800">Payment still due</p>
+            <p className="text-xs text-brand-700">{formatMoney(order.balance_due, currency)} — review your order, then tap “I’ve Made Payment”.</p>
+          </div>
+          <Button icon="wallet" loading={payBusy} onClick={() => void payNow()}>I’ve Made Payment</Button>
+        </div>
+      )}
 
       {/* Status timeline */}
       {history.length > 0 && (
@@ -805,18 +846,23 @@ export function MyMessagesPage() {
   );
 
   const [draft, setDraft] = useState('');
+  const [link, setLink] = useState('');
   const [sending, setSending] = useState(false);
 
-  const send = async () => {
-    if (!activeId || !user || !draft.trim()) return;
+  const send = async (attachment?: { type: 'image' | 'link'; url: string; name?: string }) => {
+    if (!activeId || !user || (!draft.trim() && !attachment)) return;
     setSending(true);
     const name = displayName({ display_name: user.user_metadata?.display_name as string, full_name: user.user_metadata?.full_name as string, email: user.email });
     const { error } = await supabase.from('messages').insert({
       conversation_id: activeId, sender_id: user.id, sender_type: 'user', sender_name: name,
-      body: draft.trim(), is_read: false,
+      body: attachment?.type === 'link' ? link.trim()
+        : attachment?.type === 'image' ? (draft.trim() || 'Sent an image.')
+        : draft.trim(),
+      attachment: attachment ?? null,
+      is_read: false,
     });
     setSending(false);
-    if (!error) { setDraft(''); void messages.refresh(); }
+    if (!error) { setDraft(''); setLink(''); void messages.refresh(); void conversations.refresh(); }
   };
 
   return (
@@ -859,24 +905,50 @@ export function MyMessagesPage() {
         ) : (
           <>
             <ul className="flex-1 space-y-2.5 overflow-y-auto p-4">
-              {messages.data.map((m) => (
-                <li key={m.id} className={`flex ${m.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm ${
-                    m.sender_type === 'user' ? 'bg-brand-600 text-white' : 'bg-ink-100 text-ink-800'
-                  }`}>
-                    {m.sender_type !== 'user' && <p className="text-[11px] font-bold opacity-70">{m.sender_name}</p>}
-                    <p className="whitespace-pre-line">{m.body}</p>
-                    <p className={`mt-1 text-[10px] ${m.sender_type === 'user' ? 'text-white/60' : 'text-ink-400'}`}>
-                      {formatDateTime(m.created_at)}
-                    </p>
-                  </div>
-                </li>
-              ))}
+              {messages.data.map((m) => {
+                const att = (m as { attachment?: { type?: string; url?: string; name?: string } | null }).attachment ?? null;
+                const imgUrl = att?.type === 'image' ? att.url : null;
+                return (
+                  <li key={m.id} className={`flex ${m.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm ${
+                      m.sender_type === 'user' ? 'bg-brand-600 text-white' : 'bg-ink-100 text-ink-800'
+                    }`}>
+                      {m.sender_type !== 'user' && <p className="text-[11px] font-bold opacity-70">{m.sender_name}</p>}
+                      {imgUrl && <img src={imgUrl} alt={att?.name ?? 'attachment'} className="mb-1.5 max-h-52 rounded-lg object-cover" />}
+                      <p className="whitespace-pre-line">{m.body}</p>
+                      <p className={`mt-1 text-[10px] ${m.sender_type === 'user' ? 'text-white/60' : 'text-ink-400'}`}>
+                        {formatDateTime(m.created_at)}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
-            <div className="flex items-end gap-2 border-t border-ink-100 p-3">
-              <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2}
-                placeholder="Write a reply…" className="flex-1" />
-              <Button icon="send" loading={sending} onClick={() => void send()} disabled={!draft.trim()}>Send</Button>
+            <div className="space-y-2 border-t border-ink-100 p-3">
+              <div className="flex items-end gap-2">
+                <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(); } }}
+                  placeholder="Write a reply…" className="flex-1" />
+                <label className="shrink-0 cursor-pointer rounded-xl border border-ink-200 px-3 py-2 text-ink-600 hover:bg-ink-50">
+                  <span aria-hidden>📎</span>
+                  <input type="file" accept="image/*" className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0] ?? null; e.target.value = '';
+                      if (!f) return;
+                      setSending(true);
+                      try {
+                        const up = await cloudinaryUpload(f);
+                        await send({ type: 'image', url: up.url, name: up.name });
+                      } catch { /* surfaced below */ }
+                      finally { setSending(false); }
+                    }} />
+                </label>
+                <Button icon="send" loading={sending} onClick={() => void send()} disabled={!draft.trim()}>Send</Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input placeholder="Paste a link to share (optional)" value={link} onChange={(e) => setLink(e.target.value)} className="flex-1" />
+                <Button variant="outline" size="sm" icon="link" disabled={!link.trim() || sending} onClick={() => void send({ type: 'link', url: link.trim() })}>Share</Button>
+              </div>
             </div>
           </>
         )}
@@ -1171,6 +1243,7 @@ export function NotificationsPage() {
           <p className="text-sm text-ink-500">Orders, payments, messages, stock alerts and AI proposals.</p>
         </div>
         <div className="flex gap-2">
+          <Button size="sm" variant="outline" icon="settings" onClick={() => navigate('/account/notifications-settings')}>Settings</Button>
           <Button size="sm" variant="outline" icon="check" onClick={() => void markAll()}>Mark all read</Button>
         </div>
       </div>

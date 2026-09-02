@@ -45,6 +45,13 @@ export interface SignUpInput {
   phone?: string;
   phoneCountryCode?: string;
   countryCode?: string;
+  currency?: string;
+  language?: string;
+  timeZone?: string;
+  city?: string;
+  region?: string;
+  addressLine1?: string;
+  postalCode?: string;
   roles?: UserRole[];
   primaryRole?: UserRole;
   headline?: string;
@@ -198,7 +205,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (fbUser.displayName !== input.fullName) {
         await updateFirebaseProfile(fbUser, { displayName: input.fullName });
       }
-      await createProfile(appUser);
+      await createProfile(appUser, {
+        country_code: input.countryCode,
+        currency: input.currency,
+        language: input.language,
+        time_zone: input.timeZone,
+        city: input.city ?? null,
+        region: input.region ?? null,
+        address_line1: input.addressLine1 ?? null,
+        postal_code: input.postalCode ?? null,
+      });
     } catch (e) {
       // Best-effort: do not leave a half-created account behind.
       await fbUser.delete().catch(() => {});

@@ -82,7 +82,7 @@ const STATUS_TONES: Record<string, BadgeTone> = {
   void: 'neutral', cancelled: 'red',
   // orders
   pending: 'amber', confirmed: 'amber', processing: 'amber', ready: 'blue', shipped: 'blue',
-  delivered: 'green', completed: 'green', returned: 'red', rejected: 'red', refunded: 'red',
+  out_for_delivery: 'blue', delivered: 'green', completed: 'green', returned: 'red', rejected: 'red', refunded: 'red',
   // misc
   active: 'green', inactive: 'neutral', suspended: 'red', pending_verification: 'amber',
   verified: 'green', archived: 'neutral', open: 'blue', in_transit: 'blue', received: 'green',

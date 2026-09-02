@@ -1,10 +1,12 @@
-import { Component, Suspense, lazy, type ErrorInfo, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useState, type ErrorInfo, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
 import { ToastViewport } from '@/components/ui/Overlays';
 import { BareShell, PublicShell } from '@/components/layout/PublicShell';
 import { BusinessShell } from '@/components/layout/BusinessShell';
-import { FullScreenLoader, NotFound, RedirectIfAuthed, RequireAuth, RequireBusiness } from '@/components/layout/Guards';
+import { BrandSplash, BrandLoader } from '@/components/layout/BrandSplash';
+import { NotFound, RedirectIfAuthed, RequireAuth, RequireBusiness } from '@/components/layout/Guards';
+import { PushForegroundListener } from '@/components/layout/PushForegroundListener';
 import { AuthProvider } from '@/context/AuthContext';
 import { BusinessProvider } from '@/context/BusinessContext';
 import { CartProvider } from '@/context/CartContext';
@@ -57,6 +59,7 @@ const MyReviewsPage = lazyNamed(() => import('@/routes/account/Account'), 'MyRev
 const MyMessagesPage = lazyNamed(() => import('@/routes/account/Account'), 'MyMessagesPage');
 const AccountSettingsPage = lazyNamed(() => import('@/routes/account/Account'), 'AccountSettingsPage');
 const NotificationsPage = lazyNamed(() => import('@/routes/account/Account'), 'NotificationsPage');
+const NotificationSettingsPage = lazy(() => import('@/routes/account/NotificationSettings'));
 
 const SharedDocumentPage = lazyNamed(() => import('@/routes/shared/SharedDoc'), 'SharedDocumentPage');
 const PayPage = lazyNamed(() => import('@/routes/shared/SharedDoc'), 'PayPage');
@@ -71,6 +74,15 @@ const ProductDetailBusinessPage = lazyNamed(() => import('@/routes/business/Prod
 const OrdersPage = lazy(() => import('@/routes/business/Orders'));
 const BusinessOrderDetailPage = lazyNamed(() => import('@/routes/business/Orders'), 'OrderDetailPage');
 const OrderReturnPage = lazyNamed(() => import('@/routes/business/Orders'), 'OrderReturnPage');
+const QuotationsModule = lazy(() => import('@/routes/business/Quotations'));
+const QuotationEditorPage = lazyNamed(() => import('@/routes/business/Quotations'), 'QuotationEditorPage');
+const QuotationDetailPage = lazyNamed(() => import('@/routes/business/Quotations'), 'QuotationDetailPage');
+const InvoicesModule = lazy(() => import('@/routes/business/Invoices'));
+const InvoiceEditorPage = lazyNamed(() => import('@/routes/business/Invoices'), 'InvoiceEditorPage');
+const InvoiceDetailPage = lazyNamed(() => import('@/routes/business/Invoices'), 'InvoiceDetailPage');
+const ReceiptsModule = lazy(() => import('@/routes/business/Receipts'));
+const ReceiptEditorPage = lazyNamed(() => import('@/routes/business/Receipts'), 'ReceiptEditorPage');
+const PaymentsModule = lazy(() => import('@/routes/business/Payments'));
 const PosPage = lazy(() => import('@/routes/business/Pos'));
 const CustomerDisplayPage = lazyNamed(() => import('@/routes/business/Pos'), 'CustomerDisplayPage');
 
@@ -88,14 +100,11 @@ const FinanceModule = lazyNamed(modules, 'FinanceModule');
 const GrowthModule = lazyNamed(modules, 'GrowthModule');
 const ImportModule = lazyNamed(modules, 'ImportModule');
 const InventoryModule = lazyNamed(modules, 'InventoryModule');
-const InvoicesModule = lazyNamed(modules, 'InvoicesModule');
 const MarketingModule = lazyNamed(modules, 'MarketingModule');
-const MessagesModule = lazyNamed(modules, 'MessagesModule');
+const MessagesModule = lazy(() => import('@/routes/business/Messages'));
 const MoreModule = lazyNamed(modules, 'MoreModule');
 const PaymentLinksModule = lazyNamed(modules, 'PaymentLinksModule');
-const PaymentsModule = lazyNamed(modules, 'PaymentsModule');
-const QuotationsModule = lazyNamed(modules, 'QuotationsModule');
-const ReceiptsModule = lazyNamed(modules, 'ReceiptsModule');
+
 const ReportsModule = lazyNamed(modules, 'ReportsModule');
 const ReturnsModule = lazyNamed(modules, 'ReturnsModule');
 const ServicesModule = lazyNamed(modules, 'ServicesModule');
@@ -162,7 +171,7 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, BoundaryStat
 /* ── Small helpers ─────────────────────────────────────────────────────────── */
 
 function PageFallback() {
-  return <FullScreenLoader label="Loading…" />;
+  return <BrandLoader label="Loading…" />;
 }
 
 /** Routes that exist in the navigation but not yet in this build. */
@@ -183,6 +192,18 @@ function LegacyShareRedirect() {
 
 export default function App() {
   const location = useLocation();
+  const [booted, setBooted] = useState(false);
+
+  // Application-wide boot splash: particles converge into the wordmark, which
+  // sharpens and glows before fading into the app. Plays once per hard load.
+  if (!booted) {
+    return (
+      <BrandSplash
+        onDone={() => setBooted(true)}
+        label="Welcome to Seedwel Hub — Buy. Sell. Manage. Grow."
+      />
+    );
+  }
 
   if (!isFirebaseConfigured) return <FirebaseGate />;
 
@@ -252,6 +273,7 @@ export default function App() {
                         <Route path="messages" element={<MyMessagesPage />} />
                         <Route path="settings" element={<AccountSettingsPage />} />
                         <Route path="notifications" element={<NotificationsPage />} />
+                        <Route path="notifications-settings" element={<NotificationSettingsPage />} />
                         <Route path="*" element={<NotFound title="That account page does not exist" />} />
                       </Route>
                     </Route>
@@ -283,10 +305,15 @@ export default function App() {
                       <Route path="pos/display" element={<CustomerDisplayPage />} />
 
                       {/* Scaffolded: the database work is applied, the screens are not */}
-                      <Route path="invoices/*" element={<InvoicesModule />} />
-                      <Route path="quotations/*" element={<QuotationsModule />} />
-                      <Route path="receipts/*" element={<ReceiptsModule />} />
-                      <Route path="payments/*" element={<PaymentsModule />} />
+                      <Route path="quotations" element={<QuotationsModule />} />
+                      <Route path="quotations/new" element={<QuotationEditorPage />} />
+                      <Route path="quotations/:id" element={<QuotationDetailPage />} />
+                      <Route path="invoices" element={<InvoicesModule />} />
+                      <Route path="invoices/new" element={<InvoiceEditorPage />} />
+                      <Route path="invoices/:id" element={<InvoiceDetailPage />} />
+                      <Route path="receipts" element={<ReceiptsModule />} />
+                      <Route path="receipts/new" element={<ReceiptEditorPage />} />
+                      <Route path="payments" element={<PaymentsModule />} />
                       <Route path="payment-links/*" element={<PaymentLinksModule />} />
                       <Route path="returns/*" element={<ReturnsModule />} />
                       <Route path="customers/*" element={<CustomersModule />} />
@@ -329,6 +356,10 @@ export default function App() {
                 {/* ToastProvider only owns state; the viewport lives here so it
                     floats above every shell, including modals and the POS. */}
                 <ToastViewport />
+
+                {/* Surface Web Push / FCM messages that arrive while the app is
+                    open as toasts (background messages come from sw.js). */}
+                <PushForegroundListener />
               </CartProvider>
             </ModeProvider>
           </BusinessProvider>

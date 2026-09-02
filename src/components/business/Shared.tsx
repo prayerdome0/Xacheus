@@ -225,15 +225,17 @@ export const ORDER_FLOW: { status: OrderStatusInput; label: string; icon: 'check
   { status: 'processing', label: 'Start preparing', icon: 'package' },
   { status: 'ready', label: 'Mark ready', icon: 'box' },
   { status: 'shipped', label: 'Mark shipped', icon: 'truck' },
+  { status: 'out_for_delivery', label: 'Out for delivery', icon: 'truck' },
   { status: 'delivered', label: 'Mark delivered', icon: 'success' },
 ];
 
 const NEXT_STATUSES: Record<string, OrderStatusInput[]> = {
   pending: ['confirmed', 'processing', 'ready', 'cancelled'],
-  confirmed: ['processing', 'ready', 'shipped', 'delivered', 'cancelled'],
-  processing: ['ready', 'shipped', 'delivered', 'cancelled'],
-  ready: ['delivered', 'shipped', 'cancelled'],
-  shipped: ['delivered', 'cancelled'],
+  confirmed: ['processing', 'ready', 'shipped', 'out_for_delivery', 'delivered', 'cancelled'],
+  processing: ['ready', 'shipped', 'out_for_delivery', 'delivered', 'cancelled'],
+  ready: ['out_for_delivery', 'delivered', 'shipped', 'cancelled'],
+  shipped: ['out_for_delivery', 'delivered', 'cancelled'],
+  out_for_delivery: ['delivered', 'cancelled'],
   delivered: ['returned'],
   cancelled: [],
   returned: [],
