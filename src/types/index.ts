@@ -1585,3 +1585,52 @@ export interface CartLine extends DraftLine {
   is_wholesale: boolean;
   tax_rate: number;
 }
+
+/* ── Community groups (supabase: groups / group_members / group_messages) ── */
+
+export interface Group {
+  id: UUID;
+  business_id: UUID | null;
+  owner_id: UUID | null;
+  name: string;
+  slug: string | null;
+  description: string | null;
+  image: string | null;
+  category: string | null;
+  visibility: 'public' | 'private';
+  country_code: string;
+  member_count: number;
+  is_approval_needed: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type GroupMemberRole = 'owner' | 'admin' | 'member' | 'moderator';
+export type GroupMemberStatus = 'active' | 'invited' | 'banned' | 'left';
+
+export interface GroupMember {
+  id: UUID;
+  group_id: UUID;
+  user_id: UUID;
+  role: GroupMemberRole;
+  status: GroupMemberStatus;
+  joined_at: string;
+  profile?: { full_name: string | null; display_name: string | null; avatar_url: string | null } | null;
+}
+
+export interface GroupMessage {
+  id: UUID;
+  group_id: UUID;
+  sender_id: UUID | null;
+  sender_name: string;
+  sender_role: string;
+  body: string;
+  attachment: Record<string, unknown> | null;
+  reference_type: string | null;
+  reference_id: UUID | null;
+  reference_url: string | null;
+  reference_title: string | null;
+  reference_img: string | null;
+  is_edited: boolean;
+  created_at: string;
+}

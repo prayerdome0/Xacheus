@@ -99,7 +99,7 @@ const GrowthModule = lazyNamed(modules, 'GrowthModule');
 const ImportModule = lazyNamed(modules, 'ImportModule');
 const InventoryModule = lazyNamed(modules, 'InventoryModule');
 const MarketingModule = lazyNamed(modules, 'MarketingModule');
-const MessagesModule = lazyNamed(modules, 'MessagesModule');
+const MessagesModule = lazy(() => import('@/routes/business/Messages'));
 const MoreModule = lazyNamed(modules, 'MoreModule');
 const PaymentLinksModule = lazyNamed(modules, 'PaymentLinksModule');
 
