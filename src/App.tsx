@@ -72,6 +72,14 @@ const ProductDetailBusinessPage = lazyNamed(() => import('@/routes/business/Prod
 const OrdersPage = lazy(() => import('@/routes/business/Orders'));
 const BusinessOrderDetailPage = lazyNamed(() => import('@/routes/business/Orders'), 'OrderDetailPage');
 const OrderReturnPage = lazyNamed(() => import('@/routes/business/Orders'), 'OrderReturnPage');
+const QuotationsModule = lazy(() => import('@/routes/business/Quotations'));
+const QuotationEditorPage = lazyNamed(() => import('@/routes/business/Quotations'), 'QuotationEditorPage');
+const QuotationDetailPage = lazyNamed(() => import('@/routes/business/Quotations'), 'QuotationDetailPage');
+const InvoicesModule = lazy(() => import('@/routes/business/Invoices'));
+const InvoiceEditorPage = lazyNamed(() => import('@/routes/business/Invoices'), 'InvoiceEditorPage');
+const InvoiceDetailPage = lazyNamed(() => import('@/routes/business/Invoices'), 'InvoiceDetailPage');
+const ReceiptsModule = lazy(() => import('@/routes/business/Receipts'));
+const ReceiptEditorPage = lazyNamed(() => import('@/routes/business/Receipts'), 'ReceiptEditorPage');
 const PosPage = lazy(() => import('@/routes/business/Pos'));
 const CustomerDisplayPage = lazyNamed(() => import('@/routes/business/Pos'), 'CustomerDisplayPage');
 
@@ -89,14 +97,11 @@ const FinanceModule = lazyNamed(modules, 'FinanceModule');
 const GrowthModule = lazyNamed(modules, 'GrowthModule');
 const ImportModule = lazyNamed(modules, 'ImportModule');
 const InventoryModule = lazyNamed(modules, 'InventoryModule');
-const InvoicesModule = lazyNamed(modules, 'InvoicesModule');
 const MarketingModule = lazyNamed(modules, 'MarketingModule');
 const MessagesModule = lazyNamed(modules, 'MessagesModule');
 const MoreModule = lazyNamed(modules, 'MoreModule');
 const PaymentLinksModule = lazyNamed(modules, 'PaymentLinksModule');
 const PaymentsModule = lazyNamed(modules, 'PaymentsModule');
-const QuotationsModule = lazyNamed(modules, 'QuotationsModule');
-const ReceiptsModule = lazyNamed(modules, 'ReceiptsModule');
 const ReportsModule = lazyNamed(modules, 'ReportsModule');
 const ReturnsModule = lazyNamed(modules, 'ReturnsModule');
 const ServicesModule = lazyNamed(modules, 'ServicesModule');
@@ -296,9 +301,14 @@ export default function App() {
                       <Route path="pos/display" element={<CustomerDisplayPage />} />
 
                       {/* Scaffolded: the database work is applied, the screens are not */}
-                      <Route path="invoices/*" element={<InvoicesModule />} />
-                      <Route path="quotations/*" element={<QuotationsModule />} />
-                      <Route path="receipts/*" element={<ReceiptsModule />} />
+                      <Route path="quotations" element={<QuotationsModule />} />
+                      <Route path="quotations/new" element={<QuotationEditorPage />} />
+                      <Route path="quotations/:id" element={<QuotationDetailPage />} />
+                      <Route path="invoices" element={<InvoicesModule />} />
+                      <Route path="invoices/new" element={<InvoiceEditorPage />} />
+                      <Route path="invoices/:id" element={<InvoiceDetailPage />} />
+                      <Route path="receipts" element={<ReceiptsModule />} />
+                      <Route path="receipts/new" element={<ReceiptEditorPage />} />
                       <Route path="payments/*" element={<PaymentsModule />} />
                       <Route path="payment-links/*" element={<PaymentLinksModule />} />
                       <Route path="returns/*" element={<ReturnsModule />} />

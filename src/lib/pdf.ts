@@ -109,6 +109,10 @@ export interface PdfOptions {
   footer?: string | null;
   columns?: { discount?: boolean; tax?: boolean; unit?: boolean };
   compact?: boolean;
+  /** Seedwel Hub branding control. When `show` is true (free plan default) a
+   *  small "Powered by Seedwel Hub" watermark wordmark appears in the footer.
+   *  Paid plans pass `{ show: false }` to remove it. */
+  branding?: { show?: boolean };
 }
 
 /** Fetch an image as a data URL so jsPDF can embed it (avoids CORS tainting). */
@@ -533,6 +537,10 @@ export async function buildDocumentPdf(opts: PdfOptions): Promise<jsPDF> {
   }
 
   // ── Footer on every page ────────────────────────────────────────────────────
+  // Fetch the real Seedwel Hub wordmark once so the "Powered by Seedwel Hub"
+  // watermark is the supplied asset, not a recreated logo.
+  const showBranding = opts.branding?.show ?? true;
+  const brandLogo = showBranding ? await imageToDataUrl('/brand/wordmarklogo.png') : null;
   const pages = doc.getNumberOfPages();
   for (let p = 1; p <= pages; p += 1) {
     doc.setPage(p);
@@ -548,7 +556,23 @@ export async function buildDocumentPdf(opts: PdfOptions): Promise<jsPDF> {
       opts.business.invoice_footer ??
       `${BRAND.name} — ${BRAND.companyLine}`;
     doc.text(wrap(doc, footerText, CW - 30, 7)[0] ?? footerText, M, pH - 9.5);
-    doc.text(`${BRAND.name} · ${BRAND.domain}`, M, pH - 6);
+
+    if (showBranding && brandLogo) {
+      // Small wordmark watermark bottom-left: "Powered by Seedwel Hub" from the
+      // real asset. Kept subtle so it never obscures the document.
+      const bw = 34;
+      const bh = 34 / (brandLogo.w / Math.max(brandLogo.h, 1));
+      try {
+        doc.addImage(brandLogo.data, 'PNG', M, pH - 5.2, bw, bh);
+      } catch { /* fall back to text below */ }
+      // "Powered by Seedwel Hub" is baked into the wordmark image, but add a
+      // crisp text label next to it in case the image is unavailable.
+      doc.setTextColor(107, 114, 128);
+      doc.setFontSize(6.5);
+      doc.text('Powered by Seedwel Hub', M + bw + 2, pH - 4.2);
+    } else {
+      doc.text(`${BRAND.name} · ${BRAND.domain}`, M, pH - 6);
+    }
     doc.text(`Page ${p} of ${pages}`, W - M, pH - 9.5, { align: 'right' });
     doc.text(opts.documentNumber, W - M, pH - 6, { align: 'right' });
   }
@@ -623,9 +647,10 @@ export interface InvoicePdfInput {
   items: InvoiceItem[];
   payments?: Payment[];
   origin?: string;
+  branding?: { show?: boolean };
 }
 
-export async function buildInvoicePdf({ invoice, business, items, payments, origin }: InvoicePdfInput): Promise<jsPDF> {
+export async function buildInvoicePdf({ invoice, business, items, payments, origin, branding }: InvoicePdfInput): Promise<jsPDF> {
   const isCredit = invoice.kind === 'credit_note';
   const isDebit = invoice.kind === 'debit_note';
   const title = isCredit ? 'Credit note' : isDebit ? 'Debit note' : invoice.kind === 'proforma' ? 'Pro-forma invoice' : 'Invoice';
@@ -672,6 +697,7 @@ export async function buildInvoicePdf({ invoice, business, items, payments, orig
     footer: isCredit
       ? `This credit note adjusts ${invoice.reference ?? 'the original invoice'}. ${BRAND.companyLine}`
       : business.invoice_footer,
+    branding,
   });
 }
 
@@ -680,9 +706,10 @@ export interface QuotationPdfInput {
   business: Business;
   items: QuotationItem[];
   origin?: string;
+  branding?: { show?: boolean };
 }
 
-export async function buildQuotationPdf({ quotation, business, items, origin }: QuotationPdfInput): Promise<jsPDF> {
+export async function buildQuotationPdf({ quotation, business, items, origin, branding }: QuotationPdfInput): Promise<jsPDF> {
   const isProforma = quotation.kind === 'proforma';
   return buildDocumentPdf({
     title: isProforma ? 'Pro-forma invoice' : 'Quotation',
@@ -719,6 +746,7 @@ export async function buildQuotationPdf({ quotation, business, items, origin }: 
     footer: isProforma
       ? `This pro-forma invoice is not a tax invoice. ${BRAND.companyLine}`
       : `This quotation is valid for ${quotation.validity_days} days. ${BRAND.companyLine}`,
+    branding,
   });
 }
 
@@ -821,8 +849,9 @@ export async function buildReceiptPdf(args: {
   invoiceNumber?: string | null;
   orderNumber?: string | null;
   origin?: string;
+  branding?: { show?: boolean };
 }): Promise<jsPDF> {
-  const { receipt, business, invoiceNumber, orderNumber, origin } = args;
+  const { receipt, business, invoiceNumber, orderNumber, origin, branding } = args;
   const doc = new jsPDF({ unit: 'mm', format: [80, 200], compress: true });
   const W = doc.internal.pageSize.getWidth();
   const M = 5;
@@ -945,6 +974,21 @@ export async function buildReceiptPdf(args: {
   doc.setFontSize(7);
   doc.text('Thank you for your business.', W / 2, y, { align: 'center' });
   y += 3.4;
+
+  const showBranding = branding?.show ?? true;
+  if (showBranding) {
+    // "Powered by Seedwel Hub" watermark from the real wordmark asset.
+    const brandLogo = await imageToDataUrl('/brand/wordmarklogo.png');
+    if (brandLogo) {
+      const bw = 26;
+      const bh = 26 / (brandLogo.w / Math.max(brandLogo.h, 1));
+      try { doc.addImage(brandLogo.data, 'PNG', W / 2 - bw / 2, y, bw, bh); y += bh + 2; } catch { /* fall through */ }
+    }
+    doc.setFontSize(6);
+    doc.setTextColor(...MUTED);
+    doc.text('Powered by Seedwel Hub', W / 2, y, { align: 'center' });
+    y += 3;
+  }
   doc.setFontSize(6);
   doc.text(`${BRAND.name} · ${BRAND.domain}`, W / 2, y, { align: 'center' });
   y += 3;
