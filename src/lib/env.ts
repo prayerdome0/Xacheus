@@ -26,6 +26,7 @@ const firebaseStorageBucket = import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as st
 const firebaseMessagingSenderId = import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined;
 const firebaseAppId = import.meta.env.VITE_FIREBASE_APP_ID as string | undefined;
 const firebaseMeasurementId = import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string | undefined;
+const firebaseVapidPublicKey = import.meta.env.VITE_FIREBASE_VAPID_PUBLIC_KEY as string | undefined;
 
 export const firebaseConfig = {
   apiKey: firebaseApiKey ?? '',
@@ -36,6 +37,9 @@ export const firebaseConfig = {
   appId: firebaseAppId ?? '',
   measurementId: firebaseMeasurementId ?? '',
 };
+
+/** Public Web Push key. The private key must stay in Cloud Functions. */
+export const vapidPublicKey = firebaseVapidPublicKey ?? '';
 
 /** True when the app has enough Firebase public config to start. */
 export const isFirebaseConfigured =
