@@ -21,33 +21,13 @@
 -- ═══════════════════════════════════════════════════════════════════════════
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 1. CONVERSATION ROLLUP ON EVERY MESSAGE
+-- 1. SELLER AUTO-REPLY (once per conversation)
 -- ─────────────────────────────────────────────────────────────────────────────
--- Keep the inbox list cheap to render: the conversation row already carries
--- `last_message_at`, `last_message_preview` and the unread counters, so bump
--- them here on every insert instead of making every client do two writes.
-create or replace function public.tg_messages_bump_conversation()
-returns trigger language plpgsql security definer set search_path = public as $$
-begin
-  update public.conversations c
-     set last_message_at     = new.created_at,
-         last_message_preview = left(new.body, 120),
-         unread_business     = c.unread_business + case when new.sender_type = 'user' then 1 else 0 end,
-         unread_user         = c.unread_user + case when new.sender_type in ('business','system','ai') then 1 else 0 end,
-         updated_at          = now()
-   where c.id = new.conversation_id;
-  return null;
-end $$;
+-- Conversation rollup and message notifications are already handled by the
+-- `message_rollup` trigger in 0010. We deliberately do NOT add a second rollup
+-- trigger here — two AFTER INSERT triggers on `messages` would double-count the
+-- unread counters.
 
-drop trigger if exists messages_bump_conversation on public.messages;
-create trigger messages_bump_conversation
-  after insert on public.messages
-  for each row when (pg_trigger_depth() < 3)
-  execute function public.tg_messages_bump_conversation();
-
--- ─────────────────────────────────────────────────────────────────────────────
--- 2. SELLER AUTO-REPLY (once per conversation)
--- ─────────────────────────────────────────────────────────────────────────────
 -- When a buyer sends the first message to a business whose `chat.auto_reply`
 -- setting is enabled, answer on the seller's behalf. Fires only for real buyer
 -- messages (`sender_type = 'user'`) and only when the business has not already
@@ -206,6 +186,7 @@ create trigger group_messages_bump
 -- Business staff may mark buyer messages as read in the conversations they can
 -- access (so the seller's inbox can clear its unread counter). The existing
 -- `messages_update` policy only allows the message's sender, so we add one.
+drop policy if exists messages_mark_read on public.messages;
 create policy "messages_mark_read" on public.messages
   for update using (sender_id = auth.uid() or public.is_admin()
     or exists (select 1 from public.conversations c where c.id = messages.conversation_id

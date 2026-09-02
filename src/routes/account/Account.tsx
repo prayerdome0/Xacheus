@@ -1243,6 +1243,7 @@ export function NotificationsPage() {
           <p className="text-sm text-ink-500">Orders, payments, messages, stock alerts and AI proposals.</p>
         </div>
         <div className="flex gap-2">
+          <Button size="sm" variant="outline" icon="settings" onClick={() => navigate('/account/notifications-settings')}>Settings</Button>
           <Button size="sm" variant="outline" icon="check" onClick={() => void markAll()}>Mark all read</Button>
         </div>
       </div>

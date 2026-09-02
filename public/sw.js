@@ -69,3 +69,47 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('message', (event) => {
   if (event.data === 'skipWaiting') self.skipWaiting();
 });
+
+/* ── Web Push (Phase 6) ──────────────────────────────────────────────────────
+ * The app subscribes this browser to Web Push (VAPID) and stores the token in
+ * `push_tokens`. A server / Cloud Function sends message data with
+ * `title`, `body`, `url` and `tag`. When the tab is closed the browser wakes
+ * this worker and we show a notification; when it is open the app's
+ * <PushForegroundListener/> receives the message via the FCM SDK instead.
+ */
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { body: event.data ? event.data.text() : '' };
+  }
+
+  const title = data.title || 'Seedwel Hub';
+  const options = {
+    body: data.body || '',
+    icon: '/brand/icon-192.png',
+    badge: '/brand/icon-192.png',
+    tag: data.tag || `seedwel-${Date.now()}`,
+    data: { url: data.url || '/' },
+    actions: [{ action: 'open', title: 'Open Seedwel Hub' }],
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) {
+          client.navigate(url);
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow(url);
+    }),
+  );
+});

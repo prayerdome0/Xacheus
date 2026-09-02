@@ -6,6 +6,7 @@ import { BareShell, PublicShell } from '@/components/layout/PublicShell';
 import { BusinessShell } from '@/components/layout/BusinessShell';
 import { BrandSplash, BrandLoader } from '@/components/layout/BrandSplash';
 import { NotFound, RedirectIfAuthed, RequireAuth, RequireBusiness } from '@/components/layout/Guards';
+import { PushForegroundListener } from '@/components/layout/PushForegroundListener';
 import { AuthProvider } from '@/context/AuthContext';
 import { BusinessProvider } from '@/context/BusinessContext';
 import { CartProvider } from '@/context/CartContext';
@@ -58,6 +59,7 @@ const MyReviewsPage = lazyNamed(() => import('@/routes/account/Account'), 'MyRev
 const MyMessagesPage = lazyNamed(() => import('@/routes/account/Account'), 'MyMessagesPage');
 const AccountSettingsPage = lazyNamed(() => import('@/routes/account/Account'), 'AccountSettingsPage');
 const NotificationsPage = lazyNamed(() => import('@/routes/account/Account'), 'NotificationsPage');
+const NotificationSettingsPage = lazy(() => import('@/routes/account/NotificationSettings'));
 
 const SharedDocumentPage = lazyNamed(() => import('@/routes/shared/SharedDoc'), 'SharedDocumentPage');
 const PayPage = lazyNamed(() => import('@/routes/shared/SharedDoc'), 'PayPage');
@@ -271,6 +273,7 @@ export default function App() {
                         <Route path="messages" element={<MyMessagesPage />} />
                         <Route path="settings" element={<AccountSettingsPage />} />
                         <Route path="notifications" element={<NotificationsPage />} />
+                        <Route path="notifications-settings" element={<NotificationSettingsPage />} />
                         <Route path="*" element={<NotFound title="That account page does not exist" />} />
                       </Route>
                     </Route>
@@ -353,6 +356,10 @@ export default function App() {
                 {/* ToastProvider only owns state; the viewport lives here so it
                     floats above every shell, including modals and the POS. */}
                 <ToastViewport />
+
+                {/* Surface Web Push / FCM messages that arrive while the app is
+                    open as toasts (background messages come from sw.js). */}
+                <PushForegroundListener />
               </CartProvider>
             </ModeProvider>
           </BusinessProvider>
