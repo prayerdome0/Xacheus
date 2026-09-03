@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { supabase, rpc } from '@/lib/supabase';
+import { fetchList, fetchRow } from '@/lib/db';
+import { computeGrowthScore as apiGrowthScore } from '@/lib/api';
+import { createBusiness as apiCreateBusiness } from '@/lib/api';
 import { useAuth } from './AuthContext';
 import { effectivePermissions, hasPermission, hasAnyPermission } from '@/lib/permissions';
 import type { Business, BusinessMember, Branch, GrowthScore, Plan, Subscription, Warehouse } from '@/types';
@@ -11,9 +13,9 @@ import type { Business, BusinessMember, Branch, GrowthScore, Plan, Subscription,
  * membership/role, the effective permission set, and the primary branch,
  * warehouse, tax and subscription the seller screens all need.
  *
- * Business Owner Mode: switching between 🛍️ Shop and 🏢 My Business is a UI
- * concern, but everything a seller does must resolve against ONE active
- * business, so it lives here rather than being recomputed per screen.
+ * Data comes from Firestore: `businesses`, `business_members`, `branches`,
+ * `warehouses`, `taxes`, `subscriptions` + `plans`. Rules in
+ * firebase/firestore.rules enforce ownership/membership server-side.
  */
 
 interface BusinessState {
@@ -43,7 +45,7 @@ interface BusinessState {
   growthScore: GrowthScore | null;
   recomputeGrowthScore: () => Promise<void>;
 
-  /** Create the business + automatic store (RPC create_business). */
+  /** Create the business + membership + branch + warehouse + starter plan. */
   createBusiness: (input: Record<string, unknown>) => Promise<{ slug: string; businessId: string } | { error: string }>;
 }
 
@@ -75,29 +77,25 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       // Businesses this account owns.
-      const { data: owned } = await supabase
-        .from('businesses')
-        .select('*')
-        .eq('owner_id', user.id)
-        .is('deleted_at', null)
-        .order('created_at', { ascending: true });
+      const owned = await fetchList<Business>('businesses', {
+        where: [['owner_id', '==', user.id] as never, ['deleted_at', '==', null] as never],
+        orderByField: 'created_at', orderDir: 'asc', limit: 100,
+      });
 
       // Businesses this account is an active member of (employee mode).
-      const { data: memberRows } = await supabase
-        .from('business_members')
-        .select('*, businesses(*)')
-        .eq('user_id', user.id)
-        .eq('status', 'active');
-
-      const memberBusinesses = (memberRows ?? [])
-        .map((r: { businesses?: Business }) => {
-          const b = r.businesses;
-          return b ? { business: b, membership: r as unknown as BusinessMember } : null;
-        })
-        .filter(Boolean) as { business: Business; membership: BusinessMember }[];
+      const memberRows = await fetchList<BusinessMember & { business?: Business }>('business_members', {
+        where: [['user_id', '==', user.id] as never, ['status', '==', 'active'] as never],
+        limit: 200,
+      });
+      const withBusiness = await Promise.all(
+        memberRows.map(async (m) => ({ membership: m, business: await fetchRow<Business>('businesses', m.business_id).catch(() => null) })),
+      );
+      const memberBusinesses = withBusiness
+        .filter((r) => Boolean(r.business))
+        .map((r) => ({ business: r.business as Business, membership: r.membership as unknown as BusinessMember }));
 
       const merged = new Map<string, Business>();
-      (owned ?? []).forEach((b: Business) => merged.set(b.id, b));
+      owned.forEach((b: Business) => merged.set(b.id, b));
       memberBusinesses.forEach(({ business }: { business: Business }) => {
         if (!merged.has(business.id)) merged.set(business.id, business);
       });
@@ -108,7 +106,7 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
         .map((m: { business: Business; membership: BusinessMember }) => m.membership);
 
       // Owner memberships are synthesised so permissions resolve uniformly.
-      (owned ?? []).forEach((b: Business) => {
+      owned.forEach((b: Business) => {
         if (!allMemberships.some((m: BusinessMember) => m.business_id === b.id)) {
           allMemberships.push({
             id: `owner-${b.id}`, business_id: b.id, user_id: user.id, role: 'owner',
@@ -156,30 +154,43 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
         return;
       }
       const id = activeBusiness.id;
-      const [{ data: branchRows }, { data: warehouseRows }, { data: taxRows }, { data: subRows }] =
-        await Promise.all([
-          supabase.from('branches').select('*').eq('business_id', id).eq('is_active', true)
-            .order('is_primary', { ascending: false }),
-          supabase.from('warehouses').select('*').eq('business_id', id).eq('is_active', true)
-            .order('is_primary', { ascending: false }),
-          supabase.from('taxes').select('*').eq('business_id', id).eq('is_active', true)
-            .order('is_default', { ascending: false }).limit(1),
-          supabase.from('subscriptions').select('*, plans(*)').eq('business_id', id)
-            .in('status', ['trialing', 'active', 'past_due']).limit(1),
+      try {
+        const [branchRows, warehouseRows, taxRows, subRows] = await Promise.all([
+          fetchList<Branch>('branches', {
+            where: [['business_id', '==', id] as never, ['is_active', '==', true] as never],
+            orderByField: 'is_primary', orderDir: 'desc', limit: 100,
+          }),
+          fetchList<Warehouse>('warehouses', {
+            where: [['business_id', '==', id] as never, ['is_active', '==', true] as never],
+            orderByField: 'is_primary', orderDir: 'desc', limit: 100,
+          }),
+          fetchList<{ id: string; name: string; rate: number; is_inclusive: boolean }>('taxes', {
+            where: [['business_id', '==', id] as never, ['is_active', '==', true] as never],
+            orderByField: 'is_default', orderDir: 'desc', limit: 1,
+          }),
+          fetchList<Subscription>('subscriptions', {
+            where: [['business_id', '==', id] as never, ['status', 'in', ['trialing', 'active', 'past_due']] as never],
+            orderByField: 'created_at', orderDir: 'desc', limit: 1,
+          }),
         ]);
-      if (!alive) return;
-      setBranches((branchRows ?? []) as Branch[]);
-      setWarehouses((warehouseRows ?? []) as Warehouse[]);
-      const tax = (taxRows ?? [])[0] as
-        | { id: string; name: string; rate: number; is_inclusive: boolean }
-        | undefined;
-      setDefaultTax(tax ? { id: tax.id, name: tax.name, rate: Number(tax.rate), is_inclusive: tax.is_inclusive } : null);
-      const sub = (subRows ?? [])[0] as (Subscription & { plans?: Plan }) | undefined;
-      setSubscription(sub ?? null);
-      setPlan(sub?.plans ?? null);
+        if (!alive) return;
+        setBranches(branchRows as Branch[]);
+        setWarehouses(warehouseRows as Warehouse[]);
+        const tax = (taxRows ?? [])[0] as
+          | { id: string; name: string; rate: number; is_inclusive: boolean }
+          | undefined;
+        setDefaultTax(tax ? { id: tax.id, name: tax.name, rate: Number(tax.rate), is_inclusive: Boolean(tax.is_inclusive) } : null);
+        const sub = (subRows ?? [])[0] as Subscription | undefined;
+        setSubscription(sub ?? null);
+        setPlan(sub?.plan_id ? await fetchRow<Plan>('plans', sub.plan_id).catch(() => null) : null);
+      } catch {
+        if (!alive) return;
+        setError('Could not load the business workspace data.');
+      }
     };
     void loadBusinessData();
     return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBusiness]);
 
   const permissions = useMemo(
@@ -206,8 +217,8 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
   const recomputeGrowthScore = useCallback(async () => {
     if (!activeBusiness) return;
     try {
-      const score = await rpc<GrowthScore>('compute_growth_score', { p_business_id: activeBusiness.id });
-      setGrowthScore(score);
+      const score = await apiGrowthScore(activeBusiness.id);
+      setGrowthScore(score as unknown as GrowthScore);
     } catch {
       setGrowthScore(null);
     }
@@ -215,16 +226,14 @@ export function BusinessProvider({ children }: { children: ReactNode }) {
 
   const createBusiness = useCallback<BusinessState['createBusiness']>(async (input) => {
     try {
-      const res = await rpc<{ business_id: string; store_id: string; slug: string }>('create_business', {
-        p_input: input,
-      });
+      const res = await apiCreateBusiness({ ...(input as Record<string, unknown>), owner_id: user?.id } as never);
       await load();
       setActiveBusinessId(res.business_id);
       return { slug: res.slug, businessId: res.business_id };
     } catch (e) {
       return { error: e instanceof Error ? e.message.replace(/^.*?exception:\s*/i, '') : 'Could not create the business.' };
     }
-  }, [load, setActiveBusinessId]);
+  }, [load, setActiveBusinessId, user?.id]);
 
   const value = useMemo<BusinessState>(() => ({
     businesses, memberships, activeBusiness, activeMembership, setActiveBusinessId,

@@ -8,7 +8,7 @@ import { MoneyInput, StatusBadge } from '@/components/ui';
 import { PageHeader } from '@/components/layout/BusinessShell';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import {
   createQuotation, createShareToken, fetchQuotation, convertQuotationToInvoice,
 } from '@/lib/api';
@@ -98,7 +98,7 @@ export default function QuotationsModule() {
     setError(null);
     setRows(null);
     try {
-      const { data, error: err } = await supabase
+      const { data, error: err } = await db
         .from('quotations')
         .select('*, items:quotation_items(*), customer:customers(id,name,phone,email,city)')
         .eq('business_id', activeBusiness.id)

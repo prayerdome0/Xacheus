@@ -8,7 +8,8 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
 import { useToast } from '@/context/ToastContext';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
+import { sendUserMessage } from '@/lib/messaging';
 import { getStore, searchProducts, searchBusinesses, type BusinessSearchRow, type StorePayload } from '@/lib/api';
 import { formatMoney, toNum } from '@/lib/currency';
 import { formatDate, formatTime, relativeTime } from '@/lib/dates';
@@ -17,7 +18,7 @@ import { whatsappUrl, mailtoUrl, absoluteUrl } from '@/lib/share';
 import { BRAND, DAYS, DAY_LABELS } from '@/lib/constants';
 import { useGeolocation } from '@/hooks/useUi';
 import { useQuery } from '@/hooks/useQuery';
-import type { Business, Conversation, Product, Review, Store, UUID } from '@/types';
+import type { Business, Product, Review, Store, UUID } from '@/types';
 
 /**
  * Automatic online store: seedwelhub.com/store/<slug>
@@ -92,7 +93,7 @@ export default function StorePage() {
 
   const reviews = useQuery<Review & { profile?: { avatar_url?: string | null } }>(
     () => business
-      ? supabase.from('reviews')
+      ? db.from('reviews')
           .select('*, profile:profiles(id,avatar_url,display_name,full_name)')
           .eq('business_id', business.id).eq('status', 'published')
           .order('created_at', { ascending: false }).limit(20)
@@ -102,7 +103,7 @@ export default function StorePage() {
 
   const services = useQuery<{ id: UUID; name: string; description: string | null; price: number; currency: string; duration_minutes: number | null; is_published: boolean }>(
     () => business
-      ? supabase.from('services')
+      ? db.from('services')
           .select('id,name,description,price,currency,duration_minutes,is_published')
           .eq('business_id', business.id).eq('is_published', true)
           .order('created_at', { ascending: false }).limit(24)
@@ -508,36 +509,16 @@ function ContactModal({ open, onClose, business }: { open: boolean; onClose: () 
     if (!message.trim()) { toastError('Write a message first'); return; }
     setBusy(true);
     try {
-      const { data: convo, error: cErr } = await supabase.from('conversations')
-        .insert({
-          business_id: business.id,
-          participant_user_id: user.id,
-          participant_name: user.user_metadata?.display_name
-            ?? user.user_metadata?.full_name
-            ?? user.email?.split('@')[0]
-            ?? 'Seedwel shopper',
-          participant_email: user.email,
-          subject: subject.trim() || `Enquiry from ${BRAND.name}`,
-          kind: 'marketplace',
-          status: 'open',
-          last_message_preview: message.trim().slice(0, 120),
-        })
-        .select('id')
-        .single();
-      if (cErr) throw cErr;
-      const id = (convo as Conversation).id;
-      const { error: mErr } = await supabase.from('messages').insert({
-        conversation_id: id,
-        sender_id: user.id,
-        sender_type: 'user',
-        sender_name: user.user_metadata?.display_name
-          ?? user.user_metadata?.full_name
-          ?? user.email?.split('@')[0]
-          ?? 'Shopper',
+      const senderName = user.user_metadata?.display_name
+        ?? user.user_metadata?.full_name
+        ?? user.email?.split('@')[0]
+        ?? 'Seedwel shopper';
+      await sendUserMessage({
+        business: { id: business.id, name: business.name, slug: business.slug, logo_url: business.logo_url },
+        buyer: { id: user.id, name: senderName, phone: user.phone ?? null, email: user.email },
         body: message.trim(),
-        is_read: false,
+        subject: subject.trim() || `Enquiry from ${BRAND.name}`,
       });
-      if (mErr) throw mErr;
       success('Message sent', `${business.name} will see it in their inbox.`);
       setSubject(''); setMessage('');
       onClose();

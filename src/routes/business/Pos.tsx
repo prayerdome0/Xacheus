@@ -10,7 +10,7 @@ import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
 import { useCategories } from '@/hooks/useCategories';
 import { useDebounce } from '@/hooks/useUi';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import { createOrder, recordPayment, upsertCustomer, type OrderLineInput } from '@/lib/api';
 import { formatMoney, toNum } from '@/lib/currency';
 import { computeTotals, changeDue, priceForQuantity } from '@/lib/calc';
@@ -128,7 +128,7 @@ export default function PosPage() {
     let alive = true;
     (async () => {
       setCatalogueLoading(true);
-      let query = supabase.from('products')
+      let query = db.from('products')
         .select('*')
         .eq('business_id', activeBusiness.id)
         .is('deleted_at', null)
@@ -136,7 +136,7 @@ export default function PosPage() {
         .limit(60);
       if (categoryId) query = query.eq('category_id', categoryId);
       const { data } = await query;
-      if (alive) { setCatalogue((data ?? []) as Product[]); setCatalogueLoading(false); }
+      if (alive) { setCatalogue((data ?? []) as unknown as Product[]); setCatalogueLoading(false); }
     })();
     return () => { alive = false; };
   }, [activeBusiness, categoryId]);
@@ -146,13 +146,13 @@ export default function PosPage() {
     let alive = true;
     (async () => {
       const term = debouncedQ.trim().replace(/[,()%]/g, ' ');
-      const { data } = await supabase.from('products')
+      const { data } = await db.from('products')
         .select('*')
         .eq('business_id', activeBusiness.id)
         .is('deleted_at', null)
         .or(`name.ilike.%${term}%,sku.ilike.%${term}%,brand.ilike.%${term}%`)
         .limit(20);
-      if (alive) setSearching((data ?? []) as Product[]);
+      if (alive) setSearching((data ?? []) as unknown as Product[]);
     })();
     return () => { alive = false; };
   }, [activeBusiness, debouncedQ]);
@@ -222,13 +222,13 @@ export default function PosPage() {
     const value = code.trim();
     if (!value || !activeBusiness) return;
     setBusyScan(true);
-    const { data } = await supabase.from('products')
+    const { data } = await db.from('products')
       .select('*')
       .eq('business_id', activeBusiness.id)
       .is('deleted_at', null)
       .or(`barcode.eq.${value},sku.eq.${value.toUpperCase()}`)
       .limit(2);
-    const rows = (data ?? []) as Product[];
+    const rows = (data ?? []) as unknown as Product[];
     setBusyScan(false);
 
     if (rows.length === 0) {
@@ -339,17 +339,17 @@ export default function PosPage() {
       }
 
       if (receiptId) {
-        const { data } = await supabase.from('receipts')
+        const { data } = await db.from('receipts')
           .select('id,receipt_number').eq('id', receiptId).maybeSingle();
-        receiptNumber = (data as { receipt_number: string } | null)?.receipt_number ?? null;
+        receiptNumber = ((data as unknown as { receipt_number: string } | null) ?? null)?.receipt_number ?? null;
       }
 
       const tendered = tenders.reduce((s, t) => s + t.amount, 0);
       const change = Math.max(tendered - toNum(order.total), 0);
 
-      const full = await supabase.from('orders')
+      const full = await db.from('orders')
         .select('*, items:order_items(*)').eq('id', order.order_id).maybeSingle();
-      const fullOrder = (full.data as (Order & { items: OrderItem[] }) | null) ?? null;
+      const fullOrder = (full.data as unknown as (Order & { items: OrderItem[] }) | null) ?? null;
 
       const sale: CompletedSale = {
         orderId: order.order_id,
@@ -924,7 +924,7 @@ function CustomerPickerModal({ open, onClose, businessId, selected, onPick }: {
     let alive = true;
     (async () => {
       setLoading(true);
-      let query = supabase.from('customers')
+      let query = db.from('customers')
         .select('*').eq('business_id', businessId).is('deleted_at', null)
         .order('last_order_at', { ascending: false, nullsFirst: false }).limit(25);
       if (debounced.trim()) {
@@ -932,7 +932,7 @@ function CustomerPickerModal({ open, onClose, businessId, selected, onPick }: {
         query = query.or(`name.ilike.%${term}%,phone.ilike.%${term}%,email.ilike.%${term}%,company_name.ilike.%${term}%`);
       }
       const { data } = await query;
-      if (alive) { setRows((data ?? []) as Customer[]); setLoading(false); }
+      if (alive) { setRows((data ?? []) as unknown as Customer[]); setLoading(false); }
     })();
     return () => { alive = false; };
   }, [open, businessId, debounced]);
@@ -942,10 +942,10 @@ function CustomerPickerModal({ open, onClose, businessId, selected, onPick }: {
     setBusy(true);
     try {
       const id = await upsertCustomer(businessId, { name: name.trim(), phone: phone.trim() || undefined });
-      const { data } = await supabase.from('customers').select('*').eq('id', id).maybeSingle();
+      const { data } = await db.from('customers').select('*').eq('id', id).maybeSingle();
       if (data) {
-        onPick(data as Customer);
-        success('Customer added', (data as Customer).name);
+        onPick(data as unknown as Customer);
+        success('Customer added', (data as unknown as Customer).name);
         setName(''); setPhone(''); onClose();
       }
     } catch (e) {

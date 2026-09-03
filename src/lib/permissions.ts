@@ -1,12 +1,11 @@
 import type { Business, BusinessMember, MemberRole } from '@/types';
 
 /**
- * Client-side mirror of role_permissions() / can() in
- * supabase/sql/0008_rls_policies.sql.
+ * Client-side mirror of the role → permission table used by BusinessContext.
  *
- * IMPORTANT: this is only for hiding UI the user cannot use. The database
- * enforces the real rule with Row Level Security, so a modified client can
- * never read or write data it is not entitled to.
+ * IMPORTANT: this is only for hiding UI the user cannot use. Firestore
+ * security rules (firebase/firestore.rules) enforce the real rule server-side,
+ * so a modified client can never read or write data it is not entitled to.
  */
 
 const ALL = '*';

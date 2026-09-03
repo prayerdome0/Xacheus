@@ -13,7 +13,8 @@ import { ImageUploader, type UploadedImage } from '@/components/ui/ImageUploader
 import { PageHeader } from '@/components/layout/BusinessShell';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
-import { supabase, BUCKETS } from '@/lib/supabase';
+import { db, fetchList, fetchById, patchRow, newId, type DbWhere } from '@/lib/db';
+import { BUCKETS } from '@/lib/media';
 import { useCategories } from '@/hooks/useCategories';
 import { useDebounce } from '@/hooks/useUi';
 import { formatMoney, toNum } from '@/lib/currency';
@@ -37,6 +38,34 @@ import type { Product, ProductVariant, UUID } from '@/types';
  */
 
 type ProductRow = Product & { category?: { id: UUID; name: string; slug: string } | null };
+
+/** Snapshot of the owning business, embedded in every product document at save
+ *  time so catalogue screens render without per-row reads (Firestore rules
+ *  still guard the reads; this only mirrors what the old views joined). */
+function productBusinessSnapshot(b: { id: string; name: string; slug: string; logo_url?: string | null; city?: string | null; country_code?: string | null; verification_status?: string | null; rating_avg?: unknown; badges?: unknown; accepts_orders?: unknown; delivery_enabled?: unknown; delivery_fee?: unknown; free_delivery_over?: unknown; base_currency?: string | null }): Record<string, unknown> {
+  return {
+    id: b.id,
+    name: b.name,
+    slug: b.slug,
+    logo_url: b.logo_url ?? null,
+    city: b.city ?? null,
+    country_code: b.country_code ?? 'ZM',
+    verification_status: b.verification_status ?? 'unverified',
+    rating_avg: Number(b.rating_avg ?? 0) || 0,
+    badges: Array.isArray(b.badges) ? b.badges : [],
+    accepts_orders: b.accepts_orders !== false,
+    delivery_enabled: b.delivery_enabled === true,
+    delivery_fee: Number(b.delivery_fee ?? 0) || 0,
+    free_delivery_over: b.free_delivery_over != null ? Number(b.free_delivery_over) : null,
+    base_currency: b.base_currency ?? 'ZMW',
+  };
+}
+
+function matchesTerm(p: { name?: string | null; sku?: string | null; barcode?: string | null; brand?: string | null }, term: string): boolean {
+  if (!term) return true;
+  const t = term.toLowerCase();
+  return [p.name, p.sku, p.barcode, p.brand].some((f) => f != null && String(f).toLowerCase().includes(t));
+}
 
 export function ProductsPage() {
   const { activeBusiness, can } = useBusiness();
@@ -80,33 +109,49 @@ export function ProductsPage() {
     setLoading(true);
     setError(null);
     try {
-      let query = supabase.from('products')
-        .select('*, category:categories(id,name,slug)', { count: 'exact' })
-        .eq('business_id', activeBusiness.id)
-        .is('deleted_at', null)
-        .order('updated_at', { ascending: false })
-        .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+      const term = q.trim().replace(/[,()%]/g, ' ');
 
-      if (q.trim()) {
-        const term = q.trim().replace(/[,()%]/g, ' ');
-        query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,barcode.ilike.%${term}%,brand.ilike.%${term}%`);
+      // Low-stock compares stock against each product's own alert level, which
+      // Firestore cannot express as a single query — read the tracked batch
+      // once and filter client-side (stock_status is maintained on every stock
+      // write, so the filter itself stays a simple equality check).
+      if (stockFilter === 'low') {
+        const where: DbWhere[] = [
+          ['business_id', '==', activeBusiness.id] as DbWhere,
+          ['track_inventory', '==', true] as DbWhere,
+          ['stock_status', '==', 'low_stock'] as DbWhere,
+        ];
+        if (status === 'draft' || status === 'archived' || status) where.push(['status', '==', status === 'published' || status === 'unpublished' ? '__never__' : status] as DbWhere);
+        if (status === 'published') where.push(['is_published', '==', true] as DbWhere);
+        else if (status === 'unpublished') where.push(['is_published', '==', false] as DbWhere);
+        if (categoryId) where.push(['category_id', '==', categoryId] as DbWhere);
+        const all = await fetchList<ProductRow>('products', {
+          where, orderByField: 'updated_at', orderDir: 'desc', limit: 1000,
+        });
+        const filtered = all.filter((p) => matchesTerm(p, term));
+        setTotal(filtered.length);
+        setRows(filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE));
+      } else {
+        let query = db.from('products')
+          .select('*')
+          .eq('business_id', activeBusiness.id)
+          .is('deleted_at', null)
+          .order('updated_at', { ascending: false })
+          .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
+        if (term) query = query.or(`name.ilike.%${term}%,sku.ilike.%${term}%,barcode.ilike.%${term}%,brand.ilike.%${term}%`);
+        if (status === 'draft') query = query.eq('status', 'draft');
+        else if (status === 'published') query = query.eq('is_published', true);
+        else if (status === 'unpublished') query = query.eq('is_published', false);
+        else if (status === 'archived') query = query.eq('status', 'archived');
+        else if (status) query = query.eq('status', status);
+        if (categoryId) query = query.eq('category_id', categoryId);
+        if (stockFilter === 'out') query = query.eq('track_inventory', true).lte('stock', 0);
+        else if (stockFilter === 'in') query = query.eq('track_inventory', true).gt('stock', 0);
+        const { data, error: e, count } = await query;
+        if (e) throw e;
+        setRows((data ?? []) as ProductRow[]);
+        setTotal(count ?? 0);
       }
-      if (status === 'draft') query = query.eq('status', 'draft');
-      else if (status === 'published') query = query.eq('is_published', true);
-      else if (status === 'unpublished') query = query.eq('is_published', false);
-      else if (status === 'archived') query = query.eq('status', 'archived');
-      else if (status) query = query.eq('status', status);
-      if (categoryId) query = query.eq('category_id', categoryId);
-      // Stock filters use the column pair the DB guarantees (stock vs stock_alert
-      // is compared in SQL through the status column, kept in sync by trigger).
-      if (stockFilter === 'out') query = query.eq('track_inventory', true).lte('stock', 0);
-      else if (stockFilter === 'low') query = query.eq('track_inventory', true).gt('stock', 0).eq('status', 'out_of_stock');
-      else if (stockFilter === 'in') query = query.eq('track_inventory', true).gt('stock', 0);
-
-      const { data, error: e, count } = await query;
-      if (e) throw e;
-      setRows((data ?? []) as ProductRow[]);
-      setTotal(count ?? 0);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load products.');
       setRows([]);
@@ -126,7 +171,7 @@ export function ProductsPage() {
   };
 
   const setPublished = async (ids: UUID[], published: boolean) => {
-    const { error: e } = await supabase.from('products')
+    const { error: e } = await db.from('products')
       .update({ is_published: published, published_at: published ? new Date().toISOString() : null,
                 status: published ? 'active' : 'draft' })
       .in('id', ids);
@@ -137,7 +182,7 @@ export function ProductsPage() {
   };
 
   const archive = async (p: ProductRow) => {
-    const { error: e } = await supabase.from('products')
+    const { error: e } = await db.from('products')
       .update({ status: 'archived', is_published: false }).eq('id', p.id);
     if (e) { toastError('Could not archive', e.message); return; }
     success('Product archived', p.name);
@@ -145,10 +190,10 @@ export function ProductsPage() {
   };
 
   const duplicate = async (p: ProductRow) => {
-    const { data, error: e } = await supabase.from('products').select('*').eq('id', p.id).single();
+    const { data, error: e } = await db.from('products').select('*').eq('id', p.id).single();
     if (e || !data) { toastError('Could not duplicate', e?.message); return; }
-    const copy = data as Product;
-    const { error: insErr } = await supabase.from('products').insert({
+    const copy = data as unknown as Product;
+    const { error: insErr } = await db.from('products').insert({
       ...stripCopy(copy),
       name: `${copy.name} (copy)`,
       sku: copy.sku ? `${copy.sku}-COPY` : null,
@@ -158,6 +203,8 @@ export function ProductsPage() {
       is_published: false,
       published_at: null,
       stock: 0,
+      stock_status: copy.track_inventory ? 'out_of_stock' : null,
+      variants: [],
       sold_count: 0,
       view_count: 0,
       rating_avg: 0,
@@ -169,7 +216,7 @@ export function ProductsPage() {
   };
 
   const remove = async (p: ProductRow) => {
-    const { error: e } = await supabase.from('products')
+    const { error: e } = await db.from('products')
       .update({ deleted_at: new Date().toISOString(), is_published: false }).eq('id', p.id);
     if (e) { toastError('Could not delete', e.message); return; }
     success('Product deleted', `${p.name} is no longer visible. Stock history is preserved.`);
@@ -740,12 +787,12 @@ export function ProductEditorPage() {
     let alive = true;
     (async () => {
       setLoading(true);
-      const { data, error: e } = await supabase.from('products')
+      const { data, error: e } = await db.from('products')
         .select('*, variants:product_variants(*)')
         .eq('id', id).maybeSingle();
       if (!alive) return;
       if (e || !data) { setError(e?.message ?? 'That product no longer exists.'); setLoading(false); return; }
-      const p = data as Product & { variants?: ProductVariant[] };
+      const p = data as unknown as Product & { variants?: ProductVariant[] };
       setForm({
         name: p.name ?? '', short_description: p.short_description ?? '', description: p.description ?? '',
         brand: p.brand ?? '', model: p.model ?? '', sku: p.sku ?? '', barcode: p.barcode ?? '',
@@ -813,7 +860,7 @@ export function ProductEditorPage() {
   }, [selectedCategory]);
 
   const margin = marginPercent(form.price, form.cost_price);
-  const profitPerUnit = form.price - form.cost_price;
+  const profitPerUnit: number = Number(form.price ?? 0) - Number(form.cost_price ?? 0);
 
   const validate = (): string | null => {
     if (!form.name.trim()) return 'Give the product a name.';
@@ -860,10 +907,10 @@ export function ProductEditorPage() {
       track_inventory: form.track_inventory,
       stock_alert: form.stock_alert,
       stock_max: form.stock_max,
-      // Opening stock only on create — the DB bootstraps the inventory row and
-      // keeps products.stock as the aggregate. Later changes go through
-      // adjust_stock so every movement is recorded.
-      ...(isNew ? { stock: form.track_inventory ? form.stock : 0 } : {}),
+      // Stock always starts at 0 on create — adjustStock (called right after
+      // insert) moves the opening balance in and records the movement row, so
+      // the product document and the audit trail can never disagree.
+      ...(isNew ? { stock: 0, stock_status: form.track_inventory ? 'out_of_stock' : null } : {}),
       allow_backorder: form.allow_backorder,
       weight_kg: form.weight_kg,
       requires_delivery: form.requires_delivery,
@@ -888,16 +935,27 @@ export function ProductEditorPage() {
     };
 
     try {
+      // Product documents carry the snapshots the storefront renders (owning
+      // business + category) so no per-row join is needed anywhere else.
+      const categoryDoc = form.category_id
+        ? await fetchById<{ id: string; name: string; slug: string; path?: string | null }>('categories', form.category_id).catch(() => null)
+        : null;
+      const snap: Record<string, unknown> = {
+        business: productBusinessSnapshot(activeBusiness as never),
+        category: categoryDoc ? { id: categoryDoc.id, name: categoryDoc.name ?? '', slug: categoryDoc.slug ?? '', path: categoryDoc.path ?? null, icon: null } : null,
+      };
+
       let productId: UUID | undefined = id as UUID | undefined;
       if (isNew) {
-        const { data, error: e } = await supabase.from('products')
-          .insert({ ...payload, business_id: activeBusiness.id })
+        const { data, error: e } = await db.from('products')
+          .insert({ ...payload, ...snap, business_id: activeBusiness.id })
           .select('id')
           .single();
         if (e) throw e;
         productId = (data as { id: UUID }).id;
 
-        // Record the opening balance as a movement so the audit trail starts here.
+        // Record the opening balance as a movement so the audit trail starts
+        // here — the product doc starts at 0 and adjustStock moves it in.
         if (form.track_inventory && form.stock !== 0) {
           const { adjustStock } = await import('@/lib/api');
           await adjustStock({
@@ -910,13 +968,10 @@ export function ProductEditorPage() {
             referenceType: 'product',
             referenceId: productId,
             reason: 'Opening stock set when the product was created',
-          }).catch(() => {
-            // Stock was already bootstrapped by the insert trigger; a failed
-            // movement row must not lose the product.
-          });
+          }).catch(() => undefined);
         }
       } else {
-        const { error: e } = await supabase.from('products').update(payload).eq('id', id);
+        const { error: e } = await db.from('products').update({ ...payload, ...snap }).eq('id', id);
         if (e) throw e;
       }
 
@@ -936,35 +991,40 @@ export function ProductEditorPage() {
     }
   };
 
-  /** Upsert variants: rows with an id are updated, new rows inserted, the rest deleted. */
+  /** Upsert variants: variants live *inside* the product document, so editing
+   *  them is one document patch (rows with an id are kept/updated, the rest
+   *  are removed — exactly the old delete-others semantics). */
   const saveVariants = async (productId: UUID) => {
-    const keep = form.variants.filter((v) => v.id).map((v) => v.id as UUID);
-    let del = supabase.from('product_variants').delete().eq('product_id', productId);
-    del = keep.length > 0 ? del.not('id', 'in', `(${keep.join(',')})`) : del;
-    await del;
+    const existing = await fetchById<Product & { variants?: ProductVariant[] }>('products', productId).catch(() => null);
+    const keepIds = new Set(form.variants.filter((v) => v.id).map((v) => v.id as UUID));
+    const kept: ProductVariant[] = (existing?.variants ?? []).filter((v) => keepIds.has(v.id));
 
     let order = 0;
     for (const v of form.variants) {
       order += 1;
-      const payload = {
+      const rec: ProductVariant = {
+        id: (v.id as UUID) ?? newId(),
         product_id: productId,
         name: v.name.trim() || `Option ${order}`,
         sku: v.sku.trim() || null,
         barcode: v.barcode.trim() || null,
         price: v.price && v.price > 0 ? v.price : null,
-        cost_price: canSeeCost ? v.cost_price : undefined,
+        compare_at_price: null,
+        cost_price: toNum(v.cost_price ?? 0),
         wholesale_price: v.wholesale_price && v.wholesale_price > 0 ? v.wholesale_price : null,
-        stock: v.stock,
-        stock_alert: v.stock_alert,
+        stock: toNum(v.stock ?? 0),
+        stock_alert: toNum(v.stock_alert ?? 0),
         image_url: v.image_url,
         option_values: v.option_values,
         is_active: v.is_active,
         is_default: v.is_default,
         sort_order: order,
       };
-      if (v.id) await supabase.from('product_variants').update(payload).eq('id', v.id);
-      else await supabase.from('product_variants').insert(payload);
+      const idx = kept.findIndex((k) => k.id === rec.id);
+      if (idx >= 0) kept[idx] = rec; else kept.push(rec);
     }
+    kept.sort((a, b) => toNum(a.sort_order) - toNum(b.sort_order));
+    await patchRow('products', productId, { variants: kept });
   };
 
   const generateBarcode = () => {
@@ -1446,7 +1506,7 @@ function TaxSelect({ value, onChange }: { value: string; onChange: (v: string) =
   useEffect(() => {
     if (!activeBusiness) return;
     (async () => {
-      const { data } = await supabase.from('taxes')
+      const { data } = await db.from('taxes')
         .select('id,name,rate,is_default').eq('business_id', activeBusiness.id).eq('is_active', true);
       setTaxes((data ?? []) as never);
     })();
@@ -1607,7 +1667,7 @@ function RecentMovements({ productId }: { productId: UUID }) {
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.from('inventory_movements')
+      const { data } = await db.from('inventory_movements')
         .select('id,movement_type,quantity_change,created_at,reference_number,reason')
         .eq('product_id', productId).order('created_at', { ascending: false }).limit(8);
       setRows((data ?? []) as never);
@@ -1655,8 +1715,8 @@ export function ProductDetailBusinessPage() {
     if (!id) return;
     setLoading(true);
     const [{ data }, { data: mv }] = await Promise.all([
-      supabase.from('products').select('*, variants:product_variants(*), category:categories(id,name,slug)').eq('id', id).maybeSingle(),
-      supabase.from('inventory_movements')
+      db.from('products').select('*, variants:product_variants(*), category:categories(id,name,slug)').eq('id', id).maybeSingle(),
+      db.from('inventory_movements')
         .select('id,movement_type,quantity_change,quantity_before,quantity_after,created_at,reference_number,reason,performed_by_name')
         .eq('product_id', id).order('created_at', { ascending: false }).limit(20),
     ]);

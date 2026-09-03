@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/layout/BusinessShell';
 import { RecordPaymentModal, type PaymentTarget } from '@/components/business/Shared';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import { resolvePaymentSubmission } from '@/lib/api';
 import { formatMoney } from '@/lib/currency';
 import { formatDateTime } from '@/lib/dates';
@@ -85,13 +85,13 @@ export default function PaymentsModule() {
     setError(null);
     try {
       const [pendingRes, paymentsRes] = await Promise.all([
-        supabase
+        db
           .from('payment_link_submissions')
           .select('*, payment_link:payment_links(code,label), invoice:invoices(invoice_number), order:orders(order_number)')
           .eq('business_id', activeBusiness.id)
           .eq('status', 'submitted')
           .order('created_at', { ascending: false }),
-        supabase
+        db
           .from('payments')
           .select('*, invoice:invoices(invoice_number), order:orders(order_number)')
           .eq('business_id', activeBusiness.id)

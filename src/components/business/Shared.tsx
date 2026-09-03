@@ -7,7 +7,7 @@ import {
 import { MoneyInput, StatusBadge, CopyValue } from '@/components/ui';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import { useDebounce } from '@/hooks/useUi';
 import { assignDelivery, recordPayment, updateOrderStatus, type OrderStatusInput } from '@/lib/api';
 import { formatMoney, toNum } from '@/lib/currency';
@@ -591,7 +591,7 @@ export function PaymentsList({ invoiceId, orderId, currency, emptyText = 'No pay
     if (!invoiceId && !orderId) { setRows([]); setLoading(false); return; }
     let alive = true;
     (async () => {
-      let q = supabase.from('payments')
+      let q = db.from('payments')
         .select('id,payment_number,method,provider,provider_reference,amount,currency,status,received_at,recorded_by_name,receipt_id')
         .order('received_at', { ascending: false });
       q = invoiceId ? q.eq('invoice_id', invoiceId) : q.eq('order_id', orderId!);
@@ -838,7 +838,7 @@ export function DocumentLinesEditor({ lines, onChange, businessId, currency, def
     (async () => {
       setLoading(true);
       const term = debounced.trim().replace(/[,()%]/g, ' ');
-      const base = supabase.from('products')
+      const base = db.from('products')
         .select('id,name,sku,price,currency,stock,unit,primary_image_url,is_taxable')
         .eq('business_id', businessId).is('deleted_at', null).limit(25);
       const { data } = term
@@ -1026,7 +1026,7 @@ export function CustomerField({ businessId, value, onChange, allowCreate = true 
     (async () => {
       setLoading(true);
       const term = debounced.trim().replace(/[,()%]/g, ' ');
-      let query = supabase.from('customers').select('*')
+      let query = db.from('customers').select('*')
         .eq('business_id', businessId).is('deleted_at', null)
         .order('total_spent', { ascending: false, nullsFirst: false }).limit(25);
       if (term) query = query.or(`name.ilike.%${term}%,phone.ilike.%${term}%,email.ilike.%${term}%,company_name.ilike.%${term}%`);
@@ -1042,10 +1042,11 @@ export function CustomerField({ businessId, value, onChange, allowCreate = true 
     try {
       const { upsertCustomer } = await import('@/lib/api');
       const id = await upsertCustomer(businessId, { name: name.trim(), phone: phone.trim() || undefined });
-      const { data } = await supabase.from('customers').select('*').eq('id', id).maybeSingle();
+      const { data } = await db.from('customers').select('*').eq('id', id).maybeSingle();
       if (data) {
-        onChange(data as Customer);
-        success('Customer added', (data as Customer).name);
+        const row = data as unknown as Customer;
+        onChange(row);
+        success('Customer added', row.name);
         setName(''); setPhone(''); setOpen(false);
       }
     } catch (e) {

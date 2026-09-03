@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { fetchList, type DbWhere } from '@/lib/db';
 import type { Category } from '@/types';
 
 /**
- * Marketplace category tree.
+ * Marketplace category tree (Firestore `categories`).
  *
  * Loaded once per session and cached in memory + localStorage: categories are
  * platform reference data, they change rarely and every screen needs them.
@@ -43,17 +43,23 @@ export async function loadCategories(force = false): Promise<Category[]> {
   }
   if (inflight) return inflight;
   inflight = (async () => {
-    const { data, error } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('is_active', true)
-      .order('sort_order', { ascending: true })
-      .order('name', { ascending: true });
-    inflight = null;
-    if (error) throw new Error(error.message);
-    const rows = (data ?? []) as Category[];
-    writeCache(rows);
-    return rows;
+    try {
+      const rows = await fetchList<Category>('categories', {
+        where: [['is_active', '==', true] as DbWhere],
+        orderByField: 'sort_order', orderDir: 'asc', limit: 300,
+      });
+      // Stable secondary sort by name (two server orderBys would need a
+      // composite index; client-side tiebreak keeps it index-free).
+      rows.sort((a, b) =>
+        (Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0)) || (a.name ?? '').localeCompare(b.name ?? ''),
+      );
+      writeCache(rows);
+      return rows;
+    } catch (e) {
+      throw new Error(e instanceof Error ? e.message : 'Could not load categories.');
+    } finally {
+      inflight = null;
+    }
   })();
   return inflight;
 }

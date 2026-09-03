@@ -7,7 +7,7 @@ import { useCart } from '@/context/CartContext';
 import { useToast } from '@/context/ToastContext';
 import { useCategories } from '@/hooks/useCategories';
 import { useQuery } from '@/hooks/useQuery';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import { searchBusinesses, type BusinessSearchRow } from '@/lib/api';
 import { BRAND } from '@/lib/constants';
 import { formatMoney, toNum } from '@/lib/currency';
@@ -87,7 +87,7 @@ export default function LandingPage() {
   const geo = useGeolocation(false);
 
   const featured = useQuery<Product>(
-    () => supabase
+    () => db
       .from('products')
       .select('*, business:businesses(id,name,slug,logo_url,city,country_code,verification_status,rating_avg,badges), category:categories(id,name,slug,path,icon)')
       .eq('is_published', true).eq('is_featured', true).is('deleted_at', null)
@@ -97,7 +97,7 @@ export default function LandingPage() {
   );
 
   const newest = useQuery<Product>(
-    () => supabase
+    () => db
       .from('products')
       .select('*, business:businesses(id,name,slug,logo_url,city,country_code,verification_status,rating_avg,badges), category:categories(id,name,slug,path,icon)')
       .eq('is_published', true).is('deleted_at', null)
@@ -107,7 +107,7 @@ export default function LandingPage() {
   );
 
   const deals = useQuery<Deal & { product?: Product }>(
-    () => supabase
+    () => db
       .from('deals')
       .select('*, product:products(id,name,slug,price,compare_at_price,currency,primary_image_url,stock,rating_avg,rating_count,business_id)')
       .eq('is_active', true)
@@ -592,15 +592,16 @@ export function TrendingRail({ onPick }: { onPick: (term: string) => void }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      const { data } = await supabase
+      const res = await db
         .from('products')
         .select('brand,name,view_count,sold_count')
         .eq('is_published', true).is('deleted_at', null)
         .order('view_count', { ascending: false })
         .limit(60);
-      if (!alive) return;
+      if (!alive || res.error) return;
+      const rows = (res.data ?? []) as unknown as { brand?: string | null; name?: string; view_count?: number }[];
       const counts = new Map<string, number>();
-      (data ?? []).forEach((r: { brand?: string | null; name?: string; view_count?: number }) => {
+      rows.forEach((r) => {
         const key = (r.brand || (r.name ?? '').split(' ')[0] || '').trim();
         if (!key || key.length < 3) return;
         counts.set(key, (counts.get(key) ?? 0) + Number(r.view_count ?? 0));
@@ -631,7 +632,7 @@ export function useBestSellers(businessId: UUID | null, limit = 8) {
   return useQuery<Product>(
     () => {
       if (!businessId) return null;
-      return supabase
+      return db
         .from('products')
         .select('*, business:businesses(id,name,slug,logo_url,city,country_code,verification_status,rating_avg,badges)')
         .eq('business_id', businessId).eq('is_published', true).is('deleted_at', null)

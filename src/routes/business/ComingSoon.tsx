@@ -33,9 +33,9 @@ export function ComingSoon({ title, subtitle, icon = 'settings', items, working 
           <div className="min-w-0">
             <h2 className="text-base font-extrabold">In progress — not in this build yet</h2>
             <p className="mt-1 text-sm text-ink-600">
-              The database tables, row-level security policies and stored functions for this module are already
-              applied by <code className="rounded bg-ink-100 px-1 font-mono text-xs">supabase/sql/</code>, so nothing
-              about the data model changes when the screens land. What is missing is this interface.
+              The underlying Firestore collections and the rules that guard them are already in place
+              (see <code className="rounded bg-ink-100 px-1 font-mono text-xs">firebase/firestore.rules</code>), so
+              nothing about the data model changes when the screens land. What is missing is this interface.
             </p>
           </div>
         </div>
@@ -130,7 +130,7 @@ export function ReceiptsModule() {
       subtitle="Every payment produces a numbered receipt"
       icon="🧾"
       items={[
-        'Receipts are already generated automatically by record_payment — this screen lists and reprints them',
+        'Every confirmed payment already produces a numbered receipt — this screen lists and reprints them',
         '80 mm thermal PDF and A4 versions',
         'Public verify link so a customer can check a receipt is genuine',
         'Refund and reversal receipts',
@@ -164,7 +164,7 @@ export function PaymentLinksModule() {
       subtitle="Send a link, get paid — no invoice needed"
       icon="🔗"
       items={[
-        'create_payment_link is already in the database and returns /pay/<code>',
+        'A payment link returns a public /pay/<code> page where the customer pays',
         'Fixed or customer-chosen amounts, expiry dates, allowed methods',
         'Public payment page with your branding and mobile-money instructions',
         'Links back to the invoice or order they settle',
@@ -181,7 +181,7 @@ export function ReturnsModule() {
       subtitle="Approve, receive, restock and refund"
       icon="↩️"
       items={[
-        'create_return and process_return are already implemented in the database',
+        'Returns start from an order and receiving restocks through the order flow',
         'Approve or reject with a note the customer sees',
         'Receive the goods and restock them with a return_in movement',
         'Refund with an automatic credit note against the original invoice',
@@ -217,9 +217,9 @@ export function InventoryModule() {
       subtitle="Multi-warehouse inventory, movements, transfers and stocktakes"
       icon="📦"
       items={[
-        'adjust_stock and transfer_stock are already implemented and write every movement',
+        'Stock adjustments and transfers record an inventory movement every time',
         'Per-warehouse quantities, reserved stock and reorder points',
-        'Stock valuation at cost (hidden from cashiers and salespeople by RLS)',
+        'Stock valuation at cost (role permission: hidden from cashiers and salespeople)',
         'Transfers between warehouses and counted stocktakes',
         'Low-stock alerts feed the dashboard task list today',
       ]}
@@ -271,7 +271,7 @@ export function SuppliersModule() {
       items={[
         'Supplier records with outstanding balances and lead times',
         'Purchase orders that receive into a warehouse and write purchase movements',
-        'Supplier bills paid through the same record_payment ledger',
+        'Supplier bills settle through the same payments ledger',
         'Reorder suggestions from sales velocity and reorder points',
       ]}
       working={[{ label: 'Stock levels', to: '/business/products' }]}
@@ -502,7 +502,7 @@ export function AuditModule() {
       subtitle="Who did what, and when"
       icon="🛡️"
       items={[
-        'Fifteen tables already write to audit_logs through database triggers',
+        'Order status changes and stock movements leave a full history in Firestore',
         'This screen adds search, filters and export',
         'Two-factor authentication, sessions and suspension controls',
       ]}
