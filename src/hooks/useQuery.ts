@@ -52,8 +52,17 @@ export interface QueryState<T> {
   setData: (next: T[]) => void;
 }
 
+function isBuilderResult(v: unknown): v is { data: unknown; error: QueryError | null } {
+  return typeof v === 'object' && v !== null && 'data' in v && 'error' in v;
+}
+
+/** Normalise the two source shapes this hook accepts:
+ *  - legacy query-builder chains (resolve to `{ data, error }`), and
+ *  - Promise-based helpers such as `fetchList` (resolve straight to `T[]`). */
+export type QuerySource = PromiseLike<unknown>;
+
 export function useQuery<T>(
-  factory: () => QueryBuilder<T> | null,
+  factory: () => QuerySource | null,
   deps: unknown[] = [],
   opts: { enabled?: boolean; initial?: T[] } = {},
 ): QueryState<T> {
@@ -74,15 +83,19 @@ export function useQuery<T>(
     try {
       const builder = factoryRef.current();
       if (!builder) { setData([]); setLoading(false); setRefreshing(false); return; }
-      const res = await builder;
+      const res: unknown = await builder;
       if (!mounted.current) return;
-      if (res.error) {
-        // 42501 / PGRST204 mean RLS said no: report it honestly rather than
-        // showing an empty screen that looks like "no data yet".
-        setError(res.error.message);
-        setData([]);
+      if (isBuilderResult(res)) {
+        if (res.error) {
+          setError(res.error.message);
+          setData([]);
+        } else {
+          setData(((res.data ?? []) as unknown[]) as T[]);
+        }
+      } else if (Array.isArray(res)) {
+        setData(res as unknown as T[]);
       } else {
-        setData(((res.data ?? []) as unknown[]) as T[]);
+        setData([]);
       }
     } catch (e) {
       if (!mounted.current) return;

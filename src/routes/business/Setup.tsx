@@ -7,7 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
 import { useCategories } from '@/hooks/useCategories';
-import { BUCKETS } from '@/lib/supabase';
+import { BUCKETS } from '@/lib/media';
 import { createBusiness, isSlugAvailable, suggestSlug } from '@/lib/api';
 import { slugify, isReservedSlug, isValidSlug, normalisePhone } from '@/lib/slug';
 import { BRAND, BUSINESS_TYPES, COUNTRY_LABELS, DAYS, DAY_LABELS, countryCurrency } from '@/lib/constants';

@@ -99,3 +99,97 @@ export async function hasRegisteredPushToken(userId: UUID): Promise<boolean> {
     return false;
   }
 }
+
+/* ── Notification creation (Firestore) ────────────────────────────────────── */
+
+import { addRow, fetchList, nowIso, type DbWhere } from './db';
+
+export interface AppNotificationInput {
+  user_id: string;
+  business_id?: string | null;
+  type: NotificationType | string;
+  title: string;
+  body?: string | null;
+  icon?: string | null;
+  action_url?: string | null;
+  entity_type?: string | null;
+  entity_id?: string | null;
+  priority?: 'low' | 'normal' | 'high';
+}
+
+/** Create one in-app notification document. */
+export async function createAppNotification(input: AppNotificationInput): Promise<string> {
+  const id = await addRow<{ id: string }>('notifications', {
+    user_id: input.user_id,
+    business_id: input.business_id ?? null,
+    type: input.type,
+    title: input.title,
+    body: input.body ?? null,
+    icon: input.icon ?? null,
+    action_url: input.action_url ?? null,
+    entity_type: input.entity_type ?? null,
+    entity_id: input.entity_id ?? null,
+    priority: input.priority ?? 'normal',
+    is_read: false,
+    is_archived: false,
+    read_at: null,
+    created_at: nowIso(),
+    updated_at: nowIso(),
+  });
+  return id.id;
+}
+
+/** Notify the active members of a business (owners/administrators/staff) —
+ *  used by order, payment, message and document events so sellers see them in
+ *  the bell, exactly like the database triggers used to. */
+export async function notifyBusinessMembers(
+  businessId: string,
+  input: Omit<AppNotificationInput, 'user_id' | 'business_id'> & { business_id?: string | null },
+  opts: { exceptUserId?: string | null; roles?: string[] } = {},
+): Promise<number> {
+  if (!businessId) return 0;
+  const roles = opts.roles ?? ['owner', 'administrator', 'manager', 'sales', 'staff', 'member'];
+  const members = await fetchList<{ id: string; user_id: string; role: string; status: string }>(
+    'business_members',
+    {
+      where: [
+        ['business_id', '==', businessId] as DbWhere,
+        ['status', '==', 'active'] as DbWhere,
+      ],
+      limit: 50,
+    },
+  );
+  let created = 0;
+  await Promise.all(
+    members
+      .filter((m) => roles.includes(m.role) && m.user_id !== opts.exceptUserId)
+      .map(async (m) => {
+        try {
+          await createAppNotification({
+            user_id: m.user_id,
+            business_id: businessId,
+            ...input,
+          });
+          created += 1;
+        } catch {
+          /* best effort per recipient */
+        }
+      }),
+  );
+  return created;
+}
+
+/** Notify a single buyer/user account. */
+export async function notifyUser(
+  userId: string | null | undefined,
+  input: Omit<AppNotificationInput, 'user_id' | 'business_id'>,
+  businessId: string | null = null,
+): Promise<boolean> {
+  if (!userId) return false;
+  try {
+    await createAppNotification({ user_id: userId, business_id: businessId, ...input });
+    return true;
+  } catch {
+    return false;
+  }
+}

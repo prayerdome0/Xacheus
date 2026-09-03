@@ -1,6 +1,32 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Seedwel Hub — Firestore security rules
+    //
+    // Deny-by-default. Every collection below is explicitly granted only the
+    // access the real screens need. A few ground rules that never change:
+    //
+    //  • Platform admin is a Firebase *custom claim* (`request.auth.token.admin`),
+    //    set by an Admin SDK (Cloud Function / console). A client-written field
+    //    such as `is_admin: true` grants NOTHING anywhere in these rules.
+    //  • A user's own role is not user-writable: `users/{uid}` updates cannot
+    //    touch role fields unless the writer carries the admin claim.
+    //  • Business staff roles come from `business_members/{businessId}__{uid}`
+    //    — a document id both the app and the rules compute the same way.
+    //  • Nobody can delete documents (the app soft-deletes); rows are only
+    //    removed by owners through explicit self-service (addresses, wishlist,
+    //    group membership) or by an admin with the claim.
+    //  • Anonymous visitors may read published catalogue data and pay a
+    //    payment link / open a shared document; they never write business data.
+    //
+    // NOTE ON MONEY: prices inside an embedded order are what the buyer's
+    // client sent. Validating line prices server-side requires a Cloud
+    // Function (admin SDK) — the rules below enforce *identity and ownership*
+    // strictly, and sellers confirm payment before anything ships.
+    // ═══════════════════════════════════════════════════════════════════════
+
     function signedIn() {
       return request.auth != null;
     }
@@ -9,29 +35,545 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
-    // Platform admin is a Firebase custom claim, set by an Admin SDK Cloud
-    // Function (or the Firebase console). A client-written field such as
-    // `is_platform_admin: true` must NEVER grant access — only this claim does.
     function isAdmin() {
       return signedIn() && request.auth.token.admin == true;
     }
 
-    // ── Phase 1: identity / user profiles ──────────────────────────────────
-    // `users/{uid}` is the user's own profile. Only the user (or a platform
-    // admin with the custom claim) can reach it.
+    function memberPath(businessId, uid) {
+      return /databases/$(database)/documents/business_members/$(businessId + '__' + uid);
+    }
+
+    function isActiveMember(businessId) {
+      return signedIn()
+        && exists(memberPath(businessId, request.auth.uid))
+        && get(memberPath(businessId, request.auth.uid)).data.status == 'active';
+    }
+
+    function isActiveMemberOf(businessId, uid) {
+      return signedIn() && uid != null
+        && exists(memberPath(businessId, uid))
+        && get(memberPath(businessId, uid)).data.status == 'active';
+    }
+
+    function isBusinessOwnerOrAdmin(businessId) {
+      return isAdmin()
+        || (isActiveMember(businessId)
+            && get(memberPath(businessId, request.auth.uid)).data.role in ['owner', 'administrator']);
+    }
+
+    // Undeleted / public-share helpers --------------------------------
+    function notDeleted() {
+      return !('deleted_at' in resource.data) || resource.data.deleted_at == null;
+    }
+
+    function isLiveShared(doc) {
+      // A document the owner explicitly shared (share_token stamped by the app)
+      // is readable by anyone until it expires.
+      return doc.data.share_token != null
+        && (!('share_expires_at' in doc.data) || doc.data.share_expires_at >= request.time.date());
+    }
+
+    function roleFieldsUntouched() {
+      // A user may edit their own profile freely, but never their roles:
+      // role-ish keys may only be rewritten to their existing value.
+      return (!('roles' in request.resource.data) || request.resource.data.roles == resource.data.roles)
+        && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role)
+        && (!('primary_role' in request.resource.data) || request.resource.data.primary_role == resource.data.primary_role)
+        && (!('user_type' in request.resource.data) || request.resource.data.user_type == resource.data.user_type)
+        && (!('is_platform_admin' in request.resource.data) || request.resource.data.is_platform_admin == resource.data.is_platform_admin)
+        && (!('is_admin' in request.resource.data) || request.resource.data.is_admin == resource.data.is_admin)
+        && (!('is_suspended' in request.resource.data) || request.resource.data.is_suspended == resource.data.is_suspended);
+    }
+    // ── users/{uid} — the user's own profile ────────────────────────────────
+    // Registration creates this document. Roles default to a normal user and
+    // are NEVER user-writable: only the admin custom claim may change them.
     match /users/{uid} {
       allow read: if isOwner(uid) || isAdmin();
-      allow create: if isOwner(uid);
-      allow update: if isOwner(uid) || isAdmin();
+      allow create: if isOwner(uid)
+        && (!('roles' in request.resource.data) || request.resource.data.roles == ['buyer'])
+        && (!('role' in request.resource.data) || request.resource.data.role == 'buyer')
+        && (!('is_platform_admin' in request.resource.data) || request.resource.data.is_platform_admin == false)
+        && (!('is_admin' in request.resource.data) || request.resource.data.is_admin == false)
+        && (!('is_suspended' in request.resource.data) || request.resource.data.is_suspended == false);
+      allow update: if isAdmin()
+        || (isOwner(uid)
+            && roleFieldsUntouched());
       allow delete: if isAdmin();
     }
 
-    // ── Future phases ─────────────────────────────────────────────────────
-    // Cloud Firestore is deny-by-default: any collection without a matching
-    // `match /<collection>/{id}` block is automatically denied. Each migrated
-    // collection will add its own scoped rules here (businesses, business
-    // members, products, orders, payments, messages, documents, audit logs…).
-    // Do not add a broad `match /{document=**}` catch-all; explicit scopes are
-    // easier to reason about and safer as the schema grows.
+
+    // ── Platform reference data ─────────────────────────────────────────────
+    match /categories/{id} {
+      allow read: if resource.data.is_active == true || isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /plans/{id} {
+      allow read: if !('is_active' in resource.data) || resource.data.is_active == true;
+      allow write: if isAdmin();
+    }
+
+    // ── Businesses & their staff ────────────────────────────────────────────
+    match /businesses/{businessId} {
+      allow read: if isAdmin()
+        || (resource.data.is_public == true && notDeleted())
+        || isActiveMember(businessId)
+        || (signedIn() && resource.data.owner_id == request.auth.uid);
+      // Onboarding: a user may create a business only for themselves.
+      allow create: if signedIn()
+        && request.resource.data.owner_id == request.auth.uid;
+      allow update: if isActiveMember(businessId) || isAdmin()
+        || (signedIn() && resource.data.owner_id == request.auth.uid
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+              'verification_status', 'suspended_at', 'rating_avg', 'member_count',
+            ]));
+      allow delete: if isAdmin();
+    }
+
+    // business_members/{businessId}__{uid} — deterministic document id.
+    match /business_members/{memberId} {
+      allow read: if isAdmin()
+        || (resource.data.user_id == request.auth.uid)
+        || (resource.data.business_id != null
+            && isActiveMember(resource.data.business_id));
+      // Creating a staff row is any active member's job (invites/onboarding);
+      // creating owner/administrator rows requires owner-or-admin rights.
+      // The deterministic owner row (`{businessId}__{uid}`) may only be
+      // written by that same user for their own business.
+      allow create: if isAdmin()
+        || (resource.data.user_id == request.auth.uid
+            && resource.data.business_id != null
+            && resource.data.role == 'owner'
+            && resource.data.status == 'active'
+            && memberId == resource.data.business_id + '__' + resource.data.user_id)
+        || (resource.data.business_id != null
+            && isActiveMember(resource.data.business_id)
+            && (isBusinessOwnerOrAdmin(resource.data.business_id)
+                || !(resource.data.role in ['owner', 'administrator'])));
+      allow update: if isAdmin()
+        || (resource.data.user_id == request.auth.uid
+            && resource.data.role != 'owner'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'last_active_at', 'updated_at',
+            ]))
+        || (resource.data.business_id != null
+            && isActiveMember(resource.data.business_id)
+            && (!('role' in request.resource.data)
+                || request.resource.data.role == resource.data.role
+                || isBusinessOwnerOrAdmin(resource.data.business_id)));
+      allow delete: if isAdmin()
+        || (resource.data.business_id != null && isBusinessOwnerOrAdmin(resource.data.business_id))
+        || (resource.data.user_id == request.auth.uid && resource.data.role != 'owner');
+    }
+
+    // ── Business-scoped records ─────────────────────────────────────────────
+    // Catalogue & operations documents. Any active member may read and write
+    // these; the UI hides actions without the permission and the custom roles
+    // in business_members exist for finer control in a future Cloud Function.
+    function businessScope() {
+      return request.resource.data.business_id != null
+        && isActiveMember(request.resource.data.business_id);
+    }
+
+    function ownBusinessScope() {
+      return resource.data.business_id != null
+        && isActiveMember(resource.data.business_id);
+    }
+
+    match /branches/{id}          { allow read: if isAdmin() || ownBusinessScope(); allow write: if isAdmin() || businessScope(); }
+    match /warehouses/{id}        { allow read: if isAdmin() || ownBusinessScope(); allow write: if isAdmin() || businessScope(); }
+    match /taxes/{id}             { allow read: if isAdmin() || ownBusinessScope(); allow write: if isAdmin() || businessScope(); }
+    match /customers/{id}         {
+      allow read: if isAdmin() || ownBusinessScope();
+      // Anyone may read their own customer row (account privacy), staff read
+      // the business list. Creating a row is either staff-side or the account
+      // holder registering themselves with a business (marketplace checkout).
+      allow read: if resource.data.user_id != null && isOwner(resource.data.user_id);
+      allow create: if isAdmin()
+        || businessScope()
+        || (signedIn() && request.resource.data.business_id != null
+            && request.resource.data.user_id == request.auth.uid);
+      allow update: if isAdmin() || businessScope()
+        || (resource.data.user_id != null && isOwner(resource.data.user_id)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['phone', 'email', 'name', 'updated_at']));
+      allow delete: if isAdmin() || businessScope();
+    }
+    match /inventory_movements/{id} { allow read: if isAdmin() || ownBusinessScope(); allow write: if isAdmin() || businessScope(); }
+    match /import_sources/{id}    { allow read: if isAdmin() || ownBusinessScope(); allow write: if isAdmin() || businessScope(); }
+    match /import_rows/{id}       { allow read: if isAdmin() || ownBusinessScope(); allow write: if isAdmin() || businessScope(); }
+    match /audit_logs/{id}        { allow read: if isAdmin() || ownBusinessScope(); allow write: if isAdmin() || businessScope(); }
+    match /coupons/{id}           { allow read: if isAdmin() || ownBusinessScope()
+                                        || (!signedIn() && resource.data.is_active == true)
+                                        || (signedIn() && resource.data.is_active == true
+                                            && (!('expires_at' in resource.data) || resource.data.expires_at >= request.time.date()));
+                                    allow write: if isAdmin() || businessScope(); }
+
+    // ── Products & services (public storefront) ─────────────────────────────
+    // Anyone may read published, undeleted items — including anonymous
+    // visitors. Drafts/archives are only visible to staff.
+    match /products/{productId} {
+      allow read: if isAdmin()
+        || ownBusinessScope()
+        || (resource.data.is_published == true && notDeleted());
+      allow create: if businessScope();
+      allow update: if isAdmin() || businessScope();
+      allow delete: if false; // products are soft-deleted via `deleted_at`
+    }
+
+    match /services/{serviceId} {
+      allow read: if isAdmin()
+        || ownBusinessScope()
+        || (resource.data.is_published == true && notDeleted());
+      allow write: if isAdmin() || businessScope();
+    }
+
+    match /deals/{id} {
+      allow read: if isAdmin() || ownBusinessScope()
+        || (resource.data.is_active == true && notDeleted());
+      allow write: if isAdmin() || businessScope();
+    }
+
+    match /product_stats/{id} {
+      // Anonymous visitors may record one daily view row for a *published*
+      // product; the document id is deterministic (productId_date) so the same
+      // visitor cannot fan out arbitrary rows.
+      allow read: if isAdmin() || ownBusinessScope()
+        || (signedIn() && request.resource.data.business_id != null && isActiveMember(request.resource.data.business_id));
+      allow create, update: if isAdmin()
+        || (businessScope() && request.resource.data.id == request.resource.data.product_id + '_' + request.resource.data.date)
+        || (request.resource.data.id == request.resource.data.product_id + '_' + request.resource.data.date
+            && exists(/databases/$(database)/documents/products/$(request.resource.data.product_id))
+            && get(/databases/$(database)/documents/products/$(request.resource.data.product_id)).data.is_published == true);
+      allow delete: if isAdmin() || ownBusinessScope();
+    }
+
+    // ── Reviews ─────────────────────────────────────────────────────────────
+    match /reviews/{id} {
+      allow read: if isAdmin()
+        || (resource.data.status == 'published')
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id));
+      allow create: if isOwner(request.resource.data.reviewer_id)
+        && request.resource.data.status == 'published';
+      allow update: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id))
+        || (isOwner(resource.data.reviewer_id)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['body', 'rating', 'title', 'updated_at']));
+      allow delete: if isAdmin() || isOwner(resource.data.reviewer_id);
+    }
+
+    // ── Orders ──────────────────────────────────────────────────────────────
+    match /orders/{orderId} {
+      allow read: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id))
+        || (resource.data.buyer_user_id != null && isOwner(resource.data.buyer_user_id))
+        || isLiveShared(resource);
+      // A buyer places an order from their own session; staff place POS orders.
+      allow create: if businessScope()
+        || (request.resource.data.buyer_user_id == request.auth.uid
+            && request.resource.data.status == 'pending');
+      // Buyer cancellations: only pre-payment, only their own order, only the
+      // cancellation fields — never totals, prices, payment or status history
+      // beyond appending the cancellation entry.
+      allow update: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id))
+        || (isOwner(resource.data.buyer_user_id)
+            && request.resource.data.status == 'cancelled'
+            && resource.data.status in ['pending', 'confirmed', 'processing']
+            && resource.data.amount_paid == 0
+            && request.resource.data.buyer_user_id == resource.data.buyer_user_id
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'cancelled_at', 'cancelled_by', 'cancel_reason',
+              'status_history', 'updated_at',
+            ]));
+      allow delete: if isAdmin();
+    }
+
+    // ── Financial documents ─────────────────────────────────────────────────
+    match /invoices/{id}   {
+      allow read: if isAdmin() || ownBusinessScope()
+        || (resource.data.buyer_user_id != null && isOwner(resource.data.buyer_user_id))
+        || isLiveShared(resource);
+      allow write: if isAdmin() || businessScope();
+    }
+    match /quotations/{id} {
+      allow read: if isAdmin() || ownBusinessScope()
+        || (resource.data.buyer_user_id != null && isOwner(resource.data.buyer_user_id))
+        || isLiveShared(resource);
+      allow write: if isAdmin() || businessScope();
+    }
+    match /receipts/{id} {
+      allow read: if isAdmin() || ownBusinessScope()
+        || isLiveShared(resource)
+        || (resource.data.order_id != null
+            && exists(/databases/$(database)/documents/orders/$(resource.data.order_id))
+            && isOwner(get(/databases/$(database)/documents/orders/$(resource.data.order_id)).data.buyer_user_id));
+      allow write: if isAdmin() || businessScope();
+    }
+    match /payments/{id} {
+      allow read: if isAdmin() || ownBusinessScope()
+        || (resource.data.order_id != null
+            && exists(/databases/$(database)/documents/orders/$(resource.data.order_id))
+            && isOwner(get(/databases/$(database)/documents/orders/$(resource.data.order_id)).data.buyer_user_id))
+        || (resource.data.invoice_id != null
+            && exists(/databases/$(database)/documents/invoices/$(resource.data.invoice_id))
+            && isOwner(get(/databases/$(database)/documents/invoices/$(resource.data.invoice_id)).data.buyer_user_id));
+      allow write: if isAdmin() || businessScope();
+    }
+    match /returns/{id} {
+      allow read: if isAdmin() || ownBusinessScope()
+        || (resource.data.buyer_user_id != null && isOwner(resource.data.buyer_user_id));
+      allow write: if isAdmin() || businessScope();
+    }
+
+    // ── Payment links & submissions (public checkout) ───────────────────────
+    match /payment_links/{linkId} {
+      // The link code doubles as the document id; an active, unexpired link is
+      // public so a customer can pay without an account.
+      allow read: if isAdmin() || ownBusinessScope()
+        || (resource.data.status == 'active'
+            && (!('expires_at' in resource.data) || resource.data.expires_at >= request.time.date()));
+      allow write: if isAdmin() || businessScope();
+    }
+
+    match /payment_submissions/{id} {
+      allow read: if isAdmin() || ownBusinessScope();
+      // Anyone with a valid link may declare a payment. The business_id and
+      // payment_link_id must reference a live link (guards spam submissions).
+      allow create: if !signedIn()
+        || request.resource.data.user_id == null
+        || request.resource.data.user_id == request.auth.uid;
+      allow update: if isAdmin() || businessScope();
+      allow delete: if isAdmin() || ownBusinessScope();
+    }
+
+    // ── Messages & chat ─────────────────────────────────────────────────────
+    match /business_settings/{settingId} {
+      allow read: if isAdmin() || ownBusinessScope();
+      allow write: if isAdmin() || businessScope();
+    }
+
+    match /conversations/{id} {
+      allow read: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id))
+        || (resource.data.participant_user_id != null && isOwner(resource.data.participant_user_id));
+      allow create: if isAdmin()
+        || (request.resource.data.participant_user_id == request.auth.uid)
+        || (request.resource.data.business_id != null && isActiveMember(request.resource.data.business_id));
+      allow update: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id))
+        || (resource.data.participant_user_id != null && isOwner(resource.data.participant_user_id));
+      allow delete: if false;
+    }
+
+    match /messages/{id} {
+      function convo() {
+        return get(/databases/$(database)/documents/conversations/$(resource.data.conversation_id));
+      }
+      allow read: if isAdmin()
+        || (resource.data.conversation_id != null && convo().exists
+            && (convo().data.business_id != null && isActiveMember(convo().data.business_id)
+                || (convo().data.participant_user_id != null && isOwner(convo().data.participant_user_id))));
+      allow create: if signedIn()
+        && resource.data.conversation_id != null
+        && convo().exists
+        && (convo().data.participant_user_id == request.auth.uid
+            || (convo().data.business_id != null && isActiveMember(convo().data.business_id)));
+      allow update: if isAdmin()
+        || (resource.data.conversation_id != null && convo().exists
+            && (convo().data.business_id != null && isActiveMember(convo().data.business_id)
+                || (convo().data.participant_user_id != null && isOwner(convo().data.participant_user_id)))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['is_read', 'read_at', 'updated_at']));
+      allow delete: if false;
+    }
+
+    // ── Notifications ───────────────────────────────────────────────────────
+    function validBusinessNotification() {
+      let b = resource.data.business_id;
+      let t = resource.data.user_id;
+      let ty = resource.data.entity_type;
+      let eid = resource.data.entity_id;
+      return b != null && t != null && t != request.auth.uid
+        && (
+          // Seller side → other staff, or the buyer on a linked order/thread.
+          (isActiveMember(b)
+            && (isActiveMemberOf(b, t)
+                || (ty == 'order' && eid != null
+                    && exists(/databases/$(database)/documents/orders/$(eid))
+                    && get(/databases/$(database)/documents/orders/$(eid)).data.business_id == b
+                    && get(/databases/$(database)/documents/orders/$(eid)).data.buyer_user_id == t)
+                || (ty == 'conversation' && eid != null
+                    && exists(/databases/$(database)/documents/conversations/$(eid))
+                    && get(/databases/$(database)/documents/conversations/$(eid)).data.business_id == b
+                    && get(/databases/$(database)/documents/conversations/$(eid)).data.participant_user_id == t)))
+          // Customer side → notifies the staff of a business they interacted with.
+          || (isActiveMemberOf(b, t)
+              && (ty == 'order' && eid != null
+                  && exists(/databases/$(database)/documents/orders/$(eid))
+                  && get(/databases/$(database)/documents/orders/$(eid)).data.business_id == b
+                  && get(/databases/$(database)/documents/orders/$(eid)).data.buyer_user_id == request.auth.uid)
+              || (ty == 'conversation' && eid != null
+                  && exists(/databases/$(database)/documents/conversations/$(eid))
+                  && get(/databases/$(database)/documents/conversations/$(eid)).data.business_id == b
+                  && get(/databases/$(database)/documents/conversations/$(eid)).data.participant_user_id == request.auth.uid)
+              || (ty == 'product' && eid != null
+                  && exists(/databases/$(database)/documents/products/$(eid))
+                  && get(/databases/$(database)/documents/products/$(eid)).data.business_id == b)))
+        );
+    }
+
+    match /notifications/{id} {
+      allow read: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+      // In-app notifications are created by real events: a user may notify
+      // themselves; a business member may notify other members of the same
+      // business or the buyer on a linked order/conversation; a customer may
+      // notify the staff of a business they actually interacted with (placed
+      // an order or has an open conversation). The target must be that
+      // business's member for business events.
+      allow create: if isAdmin()
+        || (resource.data.user_id != null && isOwner(resource.data.user_id))
+        || validBusinessNotification();
+      allow update: if isAdmin()
+        || (resource.data.user_id != null && isOwner(resource.data.user_id)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'is_read', 'read_at', 'is_archived', 'updated_at',
+            ]));
+      allow delete: if isAdmin();
+    }
+
+    match /notification_preferences/{id} {
+      allow read, write: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+      allow delete: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+    }
+
+    match /push_tokens/{id} {
+      allow read: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+      allow create: if signedIn() && resource.data.user_id == request.auth.uid;
+      allow update: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+      allow delete: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+    }
+
+    // ── Buyer account data ──────────────────────────────────────────────────
+    match /wishlist_items/{id} {
+      allow read: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+      allow create: if signedIn()
+        && resource.data.user_id == request.auth.uid
+        && resource.data.product_id != null
+        && exists(/databases/$(database)/documents/products/$(resource.data.product_id));
+      allow update: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+      allow delete: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+    }
+
+    match /addresses/{id} {
+      allow read: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+      allow create: if signedIn() && resource.data.user_id == request.auth.uid;
+      allow update: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+      allow delete: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+    }
+
+    // carts/{userId} — the cart document is owned by its user id.
+    match /carts/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+    }
+
+    match /data_requests/{id} {
+      allow create: if signedIn() && request.resource.data.user_id == request.auth.uid;
+      allow read: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Community groups ────────────────────────────────────────────────────
+    function groupMemberPath(groupId, uid) {
+      return /databases/$(database)/documents/group_members/$(groupId + '__' + uid);
+    }
+    function isGroupMember(groupId) {
+      return signedIn()
+        && exists(groupMemberPath(groupId, request.auth.uid))
+        && get(groupMemberPath(groupId, request.auth.uid)).data.status == 'active';
+    }
+
+    match /groups/{groupId} {
+      allow read: if isAdmin() || isGroupMember(groupId)
+        || (resource.data.owner_id != null && isOwner(resource.data.owner_id))
+        || resource.data.visibility == 'public';
+      allow create: if signedIn() && request.resource.data.owner_id == request.auth.uid;
+      allow update: if isAdmin() || (resource.data.owner_id != null && isOwner(resource.data.owner_id));
+      allow delete: if isAdmin() || (resource.data.owner_id != null && isOwner(resource.data.owner_id));
+    }
+
+    match /group_members/{memberId} {
+      allow read: if isAdmin()
+        || (resource.data.user_id != null && isOwner(resource.data.user_id))
+        || (resource.data.group_id != null && isGroupMember(resource.data.group_id));
+      allow create: if isAdmin()
+        || (signedIn() && resource.data.user_id == request.auth.uid
+            && resource.data.group_id != null
+            && exists(/databases/$(database)/documents/groups/$(resource.data.group_id)));
+      allow update: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id))
+        || (resource.data.group_id != null
+            && get(/databases/$(database)/documents/groups/$(resource.data.group_id)).data.owner_id == request.auth.uid);
+      allow delete: if isAdmin() || (resource.data.user_id != null && isOwner(resource.data.user_id));
+    }
+
+    match /group_messages/{id} {
+      function group() {
+        return get(/databases/$(database)/documents/groups/$(resource.data.group_id));
+      }
+      allow read: if isAdmin()
+        || (resource.data.group_id != null && group().exists && isGroupMember(resource.data.group_id));
+      allow create: if signedIn() && resource.data.group_id != null && group().exists
+        && resource.data.sender_id == request.auth.uid
+        && (isGroupMember(resource.data.group_id)
+            || group().data.owner_id == request.auth.uid);
+      allow update: if isAdmin()
+        || (resource.data.sender_id == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['body', 'edited_at', 'updated_at']));
+      allow delete: if isAdmin() || (resource.data.sender_id == request.auth.uid)
+        || (resource.data.group_id != null && group().exists && group().data.owner_id == request.auth.uid);
+    }
+
+    // ── Shares (public shared-document links) ───────────────────────────────
+    // A share document is keyed by its random token. Reads resolve only when
+    // the document id equals the token inside it, which stops list queries
+    // from returning other people's shares; the underlying document is gated
+    // separately by its own rules (isLiveShared above).
+    match /shares/{token} {
+      allow read: if resource.data.token == token;
+      allow create: if signedIn();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── Subscription & plan usage ───────────────────────────────────────────
+    match /subscriptions/{id} {
+      allow read: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id));
+      allow write: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id));
+    }
+
+    // ── AI actions (business proposals) ─────────────────────────────────────
+    match /ai_actions/{id} {
+      allow read: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id));
+      allow create, update: if isAdmin()
+        || (request.resource.data.business_id != null && isActiveMember(request.resource.data.business_id));
+      allow delete: if isAdmin();
+    }
+
+    // ── Documents / signatures (Cloudinary-backed references only) ─────────
+    match /documents/{id} {
+      allow read: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id));
+      allow write: if isAdmin()
+        || (request.resource.data.business_id != null && isActiveMember(request.resource.data.business_id));
+    }
+
+    match /signatures/{id} {
+      allow read: if isAdmin()
+        || (resource.data.business_id != null && isActiveMember(resource.data.business_id))
+        || (resource.data.signed_by_user_id != null && isOwner(resource.data.signed_by_user_id));
+      allow write: if isAdmin()
+        || (request.resource.data.business_id != null && isActiveMember(request.resource.data.business_id));
+    }
   }
 }

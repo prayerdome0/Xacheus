@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { supabase } from '@/lib/supabase';
+import { fetchList, writeRow } from '@/lib/db';
+import { validateCoupon } from '@/lib/api';
 import { useAuth } from './AuthContext';
 import { computeTotals, priceForQuantity } from '@/lib/calc';
 import { roundMoney, toNum } from '@/lib/currency';
@@ -9,10 +10,11 @@ import type { CartLine, Money, Product, UUID } from '@/types';
 /**
  * Shopping cart.
  *
- * Local-first (works offline and for guests), synced to public.carts /
- * public.cart_items when the shopper is signed in so the cart follows them
- * between devices. Items are grouped per business because each business
- * fulfils and invoices its own order — one basket can produce several orders.
+ * Local-first (works offline and for guests), synced to Firestore
+ * (`carts/{userId}` — one cart document per signed-in shopper, items embedded)
+ * so the cart follows the user between devices. Items are grouped per business
+ * because each business fulfils and invoices its own order — one basket can
+ * produce several orders.
  */
 
 const STORAGE_KEY = 'seedwel-cart-v1';
@@ -44,6 +46,15 @@ interface CartState {
   setDelivery: (businessId: UUID, method: 'pickup' | 'delivery', fee: number) => void;
   delivery: Record<UUID, { method: 'pickup' | 'delivery'; fee: number }>;
   has: (productId: UUID, variantId?: UUID | null) => boolean;
+}
+
+interface StoredCartItem {
+  product_id: UUID;
+  variant_id: UUID | null;
+  quantity: number;
+  unit_price: number;
+  is_wholesale: boolean;
+  product?: Product;
 }
 
 const CartContext = createContext<CartState | null>(null);
@@ -83,30 +94,29 @@ export function CartProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     let alive = true;
     (async () => {
-      const { data: cart } = await supabase
-        .from('carts')
-        .select('id, cart_items(*, products(*))')
-        .eq('user_id', user.id)
-        .eq('status', 'active')
-        .maybeSingle();
-      if (!alive) return;
-      const items = ((cart as unknown as { cart_items?: unknown[] })?.cart_items ?? []) as {
-        product_id: UUID; variant_id: UUID | null; quantity: number; unit_price: number;
-        is_wholesale: boolean; products?: Product;
-      }[];
-      if (items.length === 0) return;
-      setLines((prev) => {
-        const map = new Map(prev.map((l) => [l.key, l]));
-        items.forEach((it) => {
-          const p = it.products;
-          if (!p) return;
-          const key = lineKey(it.product_id, it.variant_id);
-          if (!map.has(key)) {
-            map.set(key, productToLine(p, it.quantity, it.variant_id));
-          }
+      try {
+        const cart = await fetchList<{ id: string; items?: StoredCartItem[] }>('carts', {
+          where: [['user_id', '==', user.id] as never, ['status', '==', 'active'] as never],
+          limit: 1,
         });
-        return Array.from(map.values());
-      });
+        if (!alive) return;
+        const items = cart[0]?.items ?? [];
+        if (items.length === 0) return;
+        setLines((prev) => {
+          const map = new Map(prev.map((l) => [l.key, l]));
+          items.forEach((it) => {
+            const p = it.product;
+            if (!p) return;
+            const key = lineKey(it.product_id, it.variant_id);
+            if (!map.has(key)) {
+              map.set(key, productToLine(p, it.quantity, it.variant_id));
+            }
+          });
+          return Array.from(map.values());
+        });
+      } catch {
+        /* offline — local cart remains authoritative */
+      }
     })();
     return () => { alive = false; };
   }, [user]);
@@ -114,59 +124,42 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const persist = useCallback(async (next: CartLine[]) => {
     if (!user) return;
     try {
-      const { data: cart } = await supabase
-        .from('carts')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('status', 'active')
-        .maybeSingle();
-      const cartId = (cart as { id?: UUID } | null)?.id;
       const totals = computeTotals({ lines: next });
-
-      if (!cartId) {
-        if (next.length === 0) return;
-        const { data: created, error } = await supabase
-          .from('carts')
-          .insert({
-            user_id: user.id,
-            currency: 'ZMW',
-            subtotal: totals.subtotal,
-            discount: totals.discount,
-            tax_total: totals.tax,
-            delivery_fee: totals.delivery,
-            total: totals.total,
-            item_count: totals.itemCount,
-          })
-          .select('id')
-          .single();
-        if (error || !created) return;
-        await supabase.from('cart_items').insert(next.map((l) => ({
-          cart_id: (created as { id: UUID }).id,
-          product_id: l.product_id,
-          variant_id: l.variant_id ?? null,
-          quantity: l.quantity,
-          unit_price: l.unit_price,
-          is_wholesale: l.is_wholesale,
-        })));
-        return;
+      const payload: Record<string, unknown> = {
+        user_id: user.id,
+        currency: 'ZMW',
+        subtotal: totals.subtotal,
+        discount: totals.discount,
+        tax_total: totals.tax,
+        delivery_fee: totals.delivery,
+        total: totals.total,
+        item_count: totals.itemCount,
+        status: 'active',
+        updated_at: new Date().toISOString(),
+      };
+      const items: StoredCartItem[] = next.map((l) => ({
+        product_id: l.product_id ?? '',
+        variant_id: l.variant_id ?? null,
+        quantity: l.quantity,
+        unit_price: l.unit_price,
+        is_wholesale: l.is_wholesale,
+        product: l.product ?? undefined,
+      }));
+      if (items.length === 0) {
+        payload.items = [];
+        payload.item_count = 0;
+        payload.total = 0;
+        payload.subtotal = 0;
+      } else {
+        payload.items = items;
+        payload.created_at = new Date().toISOString();
       }
-
-      const id = cartId as UUID;
-      await supabase.from('cart_items').delete().eq('cart_id', id);
-      if (next.length > 0) {
-        await supabase.from('cart_items').insert(next.map((l) => ({
-          cart_id: id,
-          product_id: l.product_id,
-          variant_id: l.variant_id ?? null,
-          quantity: l.quantity,
-          unit_price: l.unit_price,
-          is_wholesale: l.is_wholesale,
-        })));
-      }
-      await supabase.from('carts').update({
-        subtotal: totals.subtotal, discount: totals.discount, tax_total: totals.tax,
-        delivery_fee: totals.delivery, total: totals.total, item_count: totals.itemCount,
-      }).eq('id', id);
+      // carts/{userId} is the user's own cart document — created on first sync.
+      const existing = await fetchList<{ id: string }>('carts', {
+        where: [['user_id', '==', user.id] as never, ['status', '==', 'active'] as never], limit: 1,
+      });
+      const id = existing[0]?.id ?? user.id;
+      await writeRow<{ id: string }>('carts', id, { ...payload, items } as never);
     } catch {
       /* offline — the local cart remains authoritative for this session */
     }
@@ -240,19 +233,15 @@ export function CartProvider({ children }: { children: ReactNode }) {
     if (!first) return { ok: false, discount: 0, message: 'Your cart is empty.' };
     const subtotal = roundMoney(lines.reduce((s, l) => s + l.unit_price * l.quantity, 0));
     try {
-      const { data, error } = await supabase.rpc('validate_coupon', {
-        p_code: trimmed, p_business_id: first.business_id, p_subtotal: subtotal,
-      });
-      if (error) throw error;
-      const res = (data ?? {}) as { valid: boolean; discount?: number; reason?: string; required?: number };
-      if (!res?.valid) {
+      const res = await validateCoupon(trimmed, first.business_id, subtotal);
+      if (!res.valid) {
         const messages: Record<string, string> = {
           not_found: 'That code is not valid for this store.',
           exhausted: 'This coupon has reached its usage limit.',
-          min_subtotal: `Spend at least ${res.required ?? ''} to use this coupon.`,
+          min_subtotal: `Spend at least ${toNum(res.required ?? 0)} to use this coupon.`,
           per_customer_limit: 'You have already used this coupon.',
         };
-        return { ok: false, discount: 0, message: messages[res?.reason ?? ''] ?? 'That code could not be applied.' };
+        return { ok: false, discount: 0, message: messages[res.reason ?? ''] ?? 'That code could not be applied.' };
       }
       setCouponCode(trimmed.toUpperCase());
       setCouponDiscount(toNum(res.discount));

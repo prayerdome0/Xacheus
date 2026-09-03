@@ -7,16 +7,18 @@ import { AvatarUploader } from '@/components/ui/ImageUploader';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
-import { supabase } from '@/lib/supabase';
 import { createPaymentLink } from '@/lib/api';
 import { cloudinaryUpload } from '@/lib/cloudinary';
 import { useQuery } from '@/hooks/useQuery';
+import { db, fetchList, fetchRow, fetchById, patchRow, deleteRow, nowIso, type DbWhere } from '@/lib/db';
+import { sendUserReply, markUserConversationRead } from '@/lib/messaging';
+import { notifyBusinessMembers } from '@/lib/notifications';
 import { formatMoney, toNum } from '@/lib/currency';
 import { formatDate, formatDateTime, relativeTime } from '@/lib/dates';
 import { displayName } from '@/lib/format';
 import { normalisePhone } from '@/lib/slug';
 import { whatsappUrl } from '@/lib/share';
-import { BUCKETS } from '@/lib/supabase';
+import { BUCKETS } from '@/lib/media';
 import { BRAND, COUNTRY_LABELS, ORDER_STATUS_LABELS } from '@/lib/constants';
 import type {
   Address, Customer, DataRequest, Order, OrderItem, Product, UUID, WishlistItem,
@@ -92,18 +94,18 @@ export function AccountOverview() {
   const navigate = useNavigate();
 
   const orders = useQuery<Order>(
-    () => user ? supabase.from('orders').select('id,order_number,status,payment_status,total,currency,placed_at,business:businesses(name,slug,logo_url,verification_status)')
+    () => user ? db.from('orders').select('id,order_number,status,payment_status,total,currency,placed_at,business:businesses(name,slug,logo_url,verification_status)')
       .eq('buyer_user_id', user.id).order('placed_at', { ascending: false }).limit(5) : null,
     [user?.id],
   );
 
   const wishlist = useQuery<{ id: UUID }>(
-    () => user ? supabase.from('wishlist_items').select('id').eq('user_id', user.id) : null,
+    () => user ? db.from('wishlist_items').select('id').eq('user_id', user.id) : null,
     [user?.id],
   );
 
   const unread = useQuery<{ id: UUID }>(
-    () => user ? supabase.from('notifications').select('id').eq('user_id', user.id).eq('is_read', false).limit(1) : null,
+    () => user ? db.from('notifications').select('id').eq('user_id', user.id).eq('is_read', false).limit(1) : null,
     [user?.id],
   );
 
@@ -186,14 +188,16 @@ export function MyOrdersPage() {
   const orders = useQuery<Order>(
     () => {
       if (!user) return null;
-      let query = supabase.from('orders')
-        .select('*, items:order_items(id,name,quantity,unit_price,image_url,product_id), business:businesses(name,slug,logo_url,phone,whatsapp,verification_status)')
-        .eq('buyer_user_id', user.id)
-        .order('placed_at', { ascending: false })
-        .limit(100);
-      if (status) query = query.eq('status', status);
-      if (q.trim()) query = query.ilike('order_number', `%${q.trim()}%`);
-      return query;
+      const term = q.trim().toLowerCase();
+      return fetchList<Order>('orders', {
+        where: [
+          ['buyer_user_id', '==', user.id] as DbWhere,
+          ...(status ? [['status', '==', status] as DbWhere] : []),
+        ],
+        orderByField: 'placed_at', orderDir: 'desc', limit: 300,
+      }).then((rows) =>
+        term ? rows.filter((o) => (o.order_number ?? '').toLowerCase().includes(term)) : rows,
+      );
     },
     [user?.id, status, q],
   );
@@ -304,14 +308,39 @@ function CancelOrderButton({ order }: { order: Order }) {
 
   const cancel = async () => {
     setBusy(true);
-    const { error } = await supabase.from('orders')
-      .update({ status: 'cancelled', cancel_reason: reason.trim() || 'Cancelled by buyer', cancelled_at: new Date().toISOString() })
-      .eq('id', order.id);
-    setBusy(false);
-    if (error) { toastError('Could not cancel the order', error.message); return; }
-    success('Order cancelled', `${order.order_number} — stock has been returned to the seller.`);
-    setOpen(false);
-    window.location.reload();
+    try {
+      const now = nowIso();
+      const note = reason.trim() || 'Cancelled by buyer';
+      await patchRow('orders', order.id, {
+        status: 'cancelled',
+        cancel_reason: note,
+        cancelled_at: now,
+        cancelled_by: 'buyer',
+        status_history: [
+          ...(((order as Order & { status_history?: unknown[] }).status_history ?? [])),
+          { status: 'cancelled', at: now, note, by: null },
+        ],
+      });
+      if (order.business_id) {
+        void notifyBusinessMembers(order.business_id, {
+          type: 'order',
+          title: `Order ${order.order_number} cancelled by the buyer`,
+          body: note,
+          icon: 'cart',
+          action_url: `/business/orders/${order.id}`,
+          entity_type: 'order',
+          entity_id: order.id,
+          priority: 'high',
+        });
+      }
+      success('Order cancelled', `${order.order_number} — any reserved stock is released back to the seller.`);
+      setOpen(false);
+      window.location.reload();
+    } catch (e) {
+      toastError('Could not cancel the order', e instanceof Error ? e.message : undefined);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -345,24 +374,37 @@ export function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { error: toastError } = useToast();
-  const [order, setOrder] = useState<(Order & { items: OrderItem[]; business?: Record<string, unknown> }) | null>(null);
+  const [order, setOrder] = useState<(Order & {
+    items: OrderItem[]; business?: Record<string, unknown>;
+    invoices?: unknown[]; payments?: unknown[];
+  }) | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [payBusy, setPayBusy] = useState(false);
 
   useEffect(() => {
     if (!id) return;
     let alive = true;
     (async () => {
       setLoading(true);
-      const { data, error: e } = await supabase.from('orders')
-        .select('*, items:order_items(*), business:businesses(*), invoices(id,invoice_number,status,total,balance_due,share_token), payments(id,payment_number,amount,method,received_at,status), receipts(id,receipt_number,amount)')
-        .eq('id', id)
-        .maybeSingle();
-      if (!alive) return;
-      if (e) setError(e.message);
-      else if (!data) setError('That order does not exist or is not on your account.');
-      else setOrder(data as never);
-      setLoading(false);
+      setError(null);
+      try {
+        const data = await fetchById<Order & { items?: OrderItem[]; business?: Record<string, unknown> }>('orders', id);
+        if (!alive) return;
+        if (!data) { setError('That order does not exist or is not on your account.'); return; }
+        // The order document embeds items and a business summary; invoices and
+        // payments for it live in their own collections (rules restrict reads).
+        const [invoices, payments] = await Promise.all([
+          fetchList<Record<string, unknown>>('invoices', { where: [['order_id', '==', id] as DbWhere], limit: 10 }).catch(() => []),
+          fetchList<Record<string, unknown>>('payments', { where: [['order_id', '==', id] as DbWhere], orderByField: 'received_at', orderDir: 'desc', limit: 30 }).catch(() => []),
+        ]);
+        if (!alive) return;
+        setOrder({ ...data, items: data.items ?? [], invoices, payments } as never);
+      } catch (e) {
+        if (alive) setError(e instanceof Error ? e.message : 'Could not load this order.');
+      } finally {
+        if (alive) setLoading(false);
+      }
     })();
     return () => { alive = false; };
   }, [id]);
@@ -381,7 +423,6 @@ export function OrderDetailPage() {
   const history = (order.status_history ?? []) as { status: string; at: string; by?: string }[];
   const business = order.business as Record<string, unknown> | undefined;
   const businessId = (business?.id as UUID | undefined) ?? null;
-  const [payBusy, setPayBusy] = useState(false);
 
   /** "I've Made Payment" — create (or reuse) a payment link for this order and
    *  route the buyer to the page where they declare amount, method, reference
@@ -576,19 +617,33 @@ export function WishlistPage() {
   const load = async () => {
     if (!user) return;
     setLoading(true);
-    const { data } = await supabase.from('wishlist_items')
-      .select('*, product:products(*, business:businesses(id,name,slug,logo_url,city,country_code,verification_status,rating_avg,badges))')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-    setItems((data ?? []) as never);
-    setLoading(false);
+    try {
+      const rows = await fetchList<WishlistItem & { product?: Product }>('wishlist_items', {
+        where: [['user_id', '==', user.id] as DbWhere],
+        orderByField: 'created_at', orderDir: 'desc', limit: 300,
+      });
+      // Wishlist documents written before the product snapshot was embedded
+      // still open their product by id.
+      const enriched = await Promise.all(rows.map(async (w) => {
+        if (w.product || !w.product_id) return w;
+        const product = await fetchRow<Product>('products', w.product_id).catch(() => null);
+        return product ? { ...w, product } : w;
+      }));
+      setItems(enriched as never);
+    } catch {
+      setItems([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user?.id]);
 
   const remove = async (id: UUID) => {
-    await supabase.from('wishlist_items').delete().eq('id', id);
-    setItems((prev) => prev.filter((i) => i.id !== id));
+    try {
+      await deleteRow('wishlist_items', id);
+      setItems((prev) => prev.filter((i) => i.id !== id));
+    } catch { /* stays in the list; next visit re-syncs */ }
   };
 
   if (loading) return <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <div key={i} className="sh-skeleton h-24 rounded-2xl" />)}</div>;
@@ -642,7 +697,7 @@ export function AddressesPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Address | null>(null);
   const addresses = useQuery<Address>(
-    () => user ? supabase.from('addresses').select('*').eq('user_id', user.id).order('is_default', { ascending: false }) : null,
+    () => user ? db.from('addresses').select('*').eq('user_id', user.id).order('is_default', { ascending: false }) : null,
     [user?.id],
   );
 
@@ -677,8 +732,8 @@ export function AddressesPage() {
       phone: form.phone ? normalisePhone(form.phone) : null, is_default: form.is_default,
     };
     const { error } = editing
-      ? await supabase.from('addresses').update(payload).eq('id', editing.id)
-      : await supabase.from('addresses').insert(payload);
+      ? await db.from('addresses').update(payload).eq('id', editing.id)
+      : await db.from('addresses').insert(payload);
     if (error) { toastError('Could not save the address', error.message); return; }
     success(editing ? 'Address updated' : 'Address saved');
     setOpen(false);
@@ -686,7 +741,7 @@ export function AddressesPage() {
   };
 
   const remove = async (a: Address) => {
-    const { error } = await supabase.from('addresses').delete().eq('id', a.id);
+    const { error } = await db.from('addresses').delete().eq('id', a.id);
     if (error) { toastError('Could not delete', error.message); return; }
     success('Address removed');
     void addresses.refresh();
@@ -772,9 +827,21 @@ export function MyReviewsPage() {
     product_id: UUID | null; is_verified_purchase: boolean; seller_reply: string | null;
     product?: Product | null;
   }>(
-    () => user ? supabase.from('reviews')
-      .select('*, product:products(id,name,slug,primary_image_url)')
-      .eq('reviewer_id', user.id).order('created_at', { ascending: false }) : null,
+    () => {
+      if (!user) return null;
+      return fetchList<{
+        id: UUID; rating: number; title: string | null; body: string | null; created_at: string;
+        product_id: UUID | null; is_verified_purchase: boolean; seller_reply: string | null;
+        product?: Product | null;
+      }>('reviews', {
+        where: [['reviewer_id', '==', user.id] as DbWhere],
+        orderByField: 'created_at', orderDir: 'desc', limit: 200,
+      }).then((rows) => Promise.all(rows.map(async (r) => {
+        if (r.product || !r.product_id) return r;
+        const product = await fetchRow<Pick<Product, 'id' | 'name' | 'slug' | 'primary_image_url'>>('products', r.product_id).catch(() => null);
+        return product ? { ...r, product: product as Product } : r;
+      })));
+    },
     [user?.id],
   );
 
@@ -827,25 +894,44 @@ export function MyReviewsPage() {
 
 export function MyMessagesPage() {
   const { user } = useAuth();
+  const { error: toastError } = useToast();
   const [activeId, setActiveId] = useState<UUID | null>(null);
-  const conversations = useQuery<{
-    id: UUID; business_id: UUID; subject: string | null; status: string;
+  type BuyerConversationRow = {
+    id: UUID; business_id: UUID | null; subject: string | null; status: string;
     last_message_preview: string | null; last_message_at: string; unread_user: number;
-    business?: { name: string; slug: string; logo_url: string | null };
-  }>(
-    () => user ? supabase.from('conversations')
-      .select('*, business:businesses(name,slug,logo_url)')
-      .eq('participant_user_id', user.id).order('last_message_at', { ascending: false }) : null,
+    business?: { id: string; name: string; slug: string; logo_url: string | null } | null;
+  };
+  const conversations = useQuery<BuyerConversationRow>(
+    () => user ? fetchList<BuyerConversationRow>('conversations', {
+      where: [['participant_user_id', '==', user.id] as DbWhere],
+      orderByField: 'last_message_at', orderDir: 'desc', limit: 100,
+    }) : null,
     [user?.id],
   );
 
   const messages = useQuery<{
     id: UUID; body: string; sender_type: string; sender_name: string; created_at: string; is_read: boolean;
   }>(
-    () => activeId ? supabase.from('messages').select('*').eq('conversation_id', activeId)
-      .is('deleted_at', null).order('created_at', { ascending: true }).limit(200) : null,
+    () => activeId ? fetchList<{
+      id: UUID; body: string; sender_type: string; sender_name: string; created_at: string; is_read: boolean;
+    }>('messages', {
+      where: [['conversation_id', '==', activeId] as DbWhere],
+      orderByField: 'created_at', orderDir: 'asc', limit: 200,
+    }) : null,
     [activeId],
   );
+
+  // Opening a thread clears its unread badge (the messages themselves are
+  // marked read too, so the next poll / push reflects the true state).
+  useEffect(() => {
+    if (!activeId) return;
+    let alive = true;
+    markUserConversationRead(activeId)
+      .then(() => { if (alive) void conversations.refresh(); })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [activeId]);
 
   const [draft, setDraft] = useState('');
   const [link, setLink] = useState('');
@@ -854,17 +940,23 @@ export function MyMessagesPage() {
   const send = async (attachment?: { type: 'image' | 'link'; url: string; name?: string }) => {
     if (!activeId || !user || (!draft.trim() && !attachment)) return;
     setSending(true);
-    const name = displayName({ display_name: user.user_metadata?.display_name as string, full_name: user.user_metadata?.full_name as string, email: user.email });
-    const { error } = await supabase.from('messages').insert({
-      conversation_id: activeId, sender_id: user.id, sender_type: 'user', sender_name: name,
-      body: attachment?.type === 'link' ? link.trim()
+    try {
+      const name = displayName({ display_name: user.user_metadata?.display_name as string, full_name: user.user_metadata?.full_name as string, email: user.email });
+      const body = attachment?.type === 'link' ? link.trim()
         : attachment?.type === 'image' ? (draft.trim() || 'Sent an image.')
-        : draft.trim(),
-      attachment: attachment ?? null,
-      is_read: false,
-    });
-    setSending(false);
-    if (!error) { setDraft(''); setLink(''); void messages.refresh(); void conversations.refresh(); }
+        : draft.trim();
+      await sendUserReply({
+        conversationId: activeId,
+        buyer: { id: user.id, name },
+        body,
+        attachment: attachment ? { type: attachment.type, url: attachment.url, name: attachment.name ?? null } : null,
+      });
+      setDraft(''); setLink(''); void messages.refresh(); void conversations.refresh();
+    } catch (e) {
+      toastError('Could not send', e instanceof Error ? e.message : undefined);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -962,7 +1054,8 @@ export function MyMessagesPage() {
 /* ── Settings & security ───────────────────────────────────────────────────── */
 
 export function AccountSettingsPage() {
-  const { user, profile, updateProfile, updatePassword } = useAuth();
+  const { user, profile, updateProfile, updatePassword, signOut } = useAuth();
+  const navigate = useNavigate();
   const { success, error: toastError } = useToast();
   const [busy, setBusy] = useState(false);
   const [pwOpen, setPwOpen] = useState(false);
@@ -1012,7 +1105,7 @@ export function AccountSettingsPage() {
 
   const requestData = async (kind: 'export' | 'delete') => {
     if (!user) return;
-    const { error } = await supabase.from('data_requests').insert({
+    const { error } = await db.from('data_requests').insert({
       user_id: user.id, request_type: kind === 'export' ? 'export' : 'deletion',
       status: 'pending',
       notes: kind === 'export'
@@ -1080,13 +1173,13 @@ export function AccountSettingsPage() {
               {profile?.two_factor_enabled ? 'Turn off' : 'Turn on'}
             </Button>
           } />
-        <SettingRow icon="history" title="Active sessions"
-          text="Sign out everywhere if you used a shared or public device."
+        <SettingRow icon="history" title="Active session"
+          text="Ends this session on this device. You stay signed in on your other devices."
           action={<Button size="sm" variant="outline" onClick={async () => {
-            await supabase.auth.signOut({ scope: 'global' });
-            success('Signed out of all sessions');
-            window.location.href = '/';
-          }}>Sign out everywhere</Button>} />
+            await signOut();
+            success('Signed out');
+            navigate('/');
+          }}>Sign out</Button>} />
       </section>
 
       <section className="sh-card-flat divide-y divide-ink-100">
@@ -1211,7 +1304,7 @@ export function NotificationsPage() {
   const load = async () => {
     if (!user) return;
     setLoading(true);
-    let q = supabase.from('notifications')
+    let q = db.from('notifications')
       .select('*, business:businesses(name,slug)')
       .eq('user_id', user.id).eq('is_archived', false)
       .order('created_at', { ascending: false }).limit(100);
@@ -1225,14 +1318,14 @@ export function NotificationsPage() {
 
   const markAll = async () => {
     if (!user) return;
-    await supabase.from('notifications').update({ is_read: true, read_at: new Date().toISOString() })
+    await db.from('notifications').update({ is_read: true, read_at: new Date().toISOString() })
       .eq('user_id', user.id).eq('is_read', false);
     success('All notifications marked read');
     void load();
   };
 
   const open = async (n: (typeof items)[number]) => {
-    await supabase.from('notifications').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', n.id);
+    await db.from('notifications').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', n.id);
     setItems((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
     if (n.action_url) navigate(n.action_url);
   };

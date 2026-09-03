@@ -10,7 +10,7 @@ import { BusinessAvatar, StatTile, StatusBadge } from '@/components/ui';
 import { PageHeader } from '@/components/layout/BusinessShell';
 import { useAuth } from '@/context/AuthContext';
 import { useBusiness } from '@/context/BusinessContext';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import {
   dashboardSummary, salesSeries, topProducts, lowStockAlerts, overdueInvoices,
   type DashboardSummary, type TopProductRow, type LowStockRow, type OverdueInvoiceRow,
@@ -71,7 +71,7 @@ export default function BusinessDashboard() {
           ? overdueInvoices(id, 6).catch(() => ({ items: [] as OverdueInvoiceRow[], total_outstanding: 0 }))
           : Promise.resolve({ items: [] as OverdueInvoiceRow[], total_outstanding: 0 }),
         can('orders.read')
-          ? supabase.from('orders').select('*, customer:customers(id,name), business:businesses(id,name,slug)')
+          ? db.from('orders').select('*, customer:customers(id,name), business:businesses(id,name,slug)')
               .eq('business_id', id).order('placed_at', { ascending: false }).limit(6)
           : Promise.resolve({ data: [], error: null }),
       ]);

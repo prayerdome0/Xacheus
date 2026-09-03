@@ -1,17 +1,40 @@
-import { isCloudinaryConfigured } from './env';
 import { cloudinaryUpload } from './cloudinary';
-import { BUCKETS, storagePath, uploadFile, removeFile, type Bucket } from './supabase';
+import { isCloudinaryConfigured } from './env';
 
 /**
- * Upload abstraction.
+ * Upload abstraction — Cloudinary only.
  *
- * Media is uploaded to Cloudinary (unsigned preset, no folders) when the public
- * config is present, otherwise it falls back to the legacy Supabase Storage
- * bucket so a fresh clone with only Firebase still works. The DB stores the
- * returned `url`; `path` and `provider` let us remove the file later.
+ * Seedwel Hub keeps all public images/video on Cloudinary. The database stores
+ * the Cloudinary URL of the finished asset; deleting an unsigned upload is a
+ * server-side job (the API secret never ships to the browser), so removing a
+ * media reference simply drops the URL.
+ *
+ * `BUCKETS` is kept as a vocabulary of logical media scopes (avatars, product
+ * photos, business logos, documents…). Cloudinary's unsigned preset does not
+ * need folders; the scope is used for the public_id prefix when the preset
+ * allows it, and is otherwise descriptive.
  */
 
-export type MediaProvider = 'cloudinary' | 'supabase';
+export const BUCKETS = {
+  avatars: 'avatars',
+  businesses: 'businesses',
+  products: 'products',
+  documents: 'documents',
+  signatures: 'signatures',
+  imports: 'imports',
+  support: 'support',
+  exports: 'exports',
+} as const;
+
+export type Bucket = (typeof BUCKETS)[keyof typeof BUCKETS];
+
+/** A safe public_id fragment so the same file name never collides. */
+export function storagePath(scope: string, sub: string, filename: string): string {
+  const safe = filename.replace(/[^\w.-]+/g, '_').slice(-80);
+  return `${scope}/${sub}/${Date.now()}-${safe}`;
+}
+
+export type MediaProvider = 'cloudinary';
 
 export interface MediaUpload {
   url: string;
@@ -28,32 +51,26 @@ export async function uploadMediaFile(spec: {
   scope: string;
   sub?: string;
 }): Promise<MediaUpload> {
-  if (isCloudinaryConfigured) {
-    const res = await cloudinaryUpload(spec.file);
-    return { ...res, provider: 'cloudinary' };
+  if (!isCloudinaryConfigured) {
+    throw new Error('Cloudinary is not configured. Add VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_PRESET to .env.');
   }
-
-  const path = storagePath(spec.scope, spec.sub ?? 'general', spec.file.name);
-  const res = await uploadFile(spec.bucket, path, spec.file, { contentType: spec.file.type });
-  if (!res.url) throw new Error('That bucket is private; images must go to a public bucket.');
-  return { url: res.url, path: res.path, name: spec.file.name, size: spec.file.size, provider: 'supabase' };
+  const res = await cloudinaryUpload(spec.file);
+  return {
+    url: res.url,
+    path: res.path ?? storagePath(spec.scope, spec.sub ?? 'general', spec.file.name),
+    name: spec.file.name,
+    size: spec.file.size,
+    type: spec.file.type,
+    provider: 'cloudinary',
+  };
 }
 
 /**
- * Remove a media object.
- *
- * Cloudinary unsigned uploads cannot be deleted from the browser (that needs
- * the API secret, which never ships to the client), so for Cloudinary we simply
- * drop the reference — the asset is garbage-collected by a server-side job
- * later. Supabase storage objects are removed as before.
+ * Remove a media reference. Cloudinary unsigned uploads cannot be deleted from
+ * the browser (that needs the API secret, which never ships to the client), so
+ * we drop the reference only — a server-side job garbage-collects the asset.
  */
-export async function removeMediaFile(u: {
-  path: string;
-  provider?: MediaProvider;
-  bucket?: Bucket;
-}): Promise<void> {
-  if (u.provider === 'cloudinary') return;
-  if (u.bucket) await removeFile(u.bucket, u.path);
+export async function removeMediaFile(_u: { path: string; provider?: string; bucket?: Bucket }): Promise<void> {
+  return;
 }
 
-export { BUCKETS, type Bucket };

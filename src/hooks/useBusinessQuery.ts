@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { supabase } from '@/lib/supabase';
+import { db, type QueryBuilderLike } from '@/lib/db';
 import { useBusiness } from '@/context/BusinessContext';
 import { useQuery } from './useQuery';
 import type { UUID } from '@/types';
@@ -9,7 +9,8 @@ import type { UUID } from '@/types';
  *
  * If the caller's role lacks the permission, the query is not issued at all and
  * `denied` is set — the screen then shows the "your role does not include…"
- * message instead of an empty table. RLS still enforces the rule server-side.
+ * message instead of an empty table. Firestore rules still enforce the same
+ * boundary server-side.
  */
 
 export interface BusinessQueryOptions {
@@ -18,12 +19,12 @@ export interface BusinessQueryOptions {
   enabled?: boolean;
   order?: { column: string; ascending?: boolean };
   limit?: number;
-  extra?: (q: ReturnType<typeof supabase.from>) => ReturnType<typeof supabase.from>;
+  extra?: (q: QueryBuilderLike) => QueryBuilderLike;
 }
 
 export function useBusinessQuery<T>(
   table: string,
-  select: string,
+  _select: string,
   opts: BusinessQueryOptions = {},
 ) {
   const { activeBusiness, can, canAny } = useBusiness();
@@ -42,13 +43,13 @@ export function useBusinessQuery<T>(
     () => {
       if (!businessId || !allowed || opts.enabled === false) return null;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      let q: any = supabase.from(table).select(select).eq('business_id', businessId);
+      let q: any = db.from(table).eq('business_id', businessId);
       if (opts.order) q = q.order(opts.order.column, { ascending: opts.order.ascending ?? false });
       if (opts.limit) q = q.limit(opts.limit);
       if (opts.extra) q = opts.extra(q);
       return q as never;
     },
-    [businessId, table, select, allowed, opts.enabled, opts.order?.column, opts.order?.ascending, opts.limit],
+    [businessId, table, allowed, opts.enabled, opts.order?.column, opts.order?.ascending, opts.limit],
     { enabled: Boolean(businessId) && allowed && opts.enabled !== false },
   );
 

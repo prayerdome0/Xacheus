@@ -15,7 +15,7 @@ import {
 } from '@/components/business/Shared';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import { createInvoiceFromOrder, createShareToken, fetchOrder } from '@/lib/api';
 import { formatMoney, toNum } from '@/lib/currency';
 import { formatDate, formatDateTime, relativeTime } from '@/lib/dates';
@@ -88,7 +88,7 @@ export default function OrdersPage() {
     setLoading(true);
     setError(null);
     try {
-      let query = supabase.from('orders')
+      let query = db.from('orders')
         .select('*, customer:customers(id,name,phone,email), invoices:invoices(id,invoice_number,status,total,balance_due)',
           { count: 'exact' })
         .eq('business_id', activeBusiness.id)
@@ -470,12 +470,16 @@ export function OrderDetailPage() {
     setLoading(true);
     setError(null);
     try {
-      const { data, error: e } = await supabase.from('orders')
-        .select('*, items:order_items(*), customer:customers(id,name,phone,email,city), invoices:invoices(id,invoice_number,status,total,balance_due,share_token)')
-        .eq('id', id).maybeSingle();
+      const { data, error: e } = await db.from('orders').select('*').eq('id', id).maybeSingle();
       if (e) throw e;
       if (!data) { setError('That order does not exist or is not yours.'); setOrder(null); return; }
-      setOrder(data as OrderRow);
+      // Invoices for this order live in their own collection; the document
+      // carries items + customer snapshot, we attach the invoice summaries.
+      const invs = await db.from('invoices')
+        .select('id,invoice_number,status,total,balance_due,share_token')
+        .eq('order_id', id).order('issue_date', { ascending: false }).limit(20)
+        .then((r) => ((r.data ?? []) as Array<Record<string, unknown>>));
+      setOrder({ ...data, invoices: invs } as unknown as OrderRow);
     } catch (e) {
       setError(e instanceof Error ? e.message.replace(/^.*?exception:\s*/i, '') : 'Could not load the order.');
     } finally {
@@ -529,7 +533,7 @@ export function OrderDetailPage() {
         const token = invoice.share_token ?? await createShareToken('invoice', invoice.id);
         setShareUrl(`/d/invoice/${token}`);
       } else {
-        const { data } = await supabase.from('receipts')
+        const { data } = await db.from('receipts')
           .select('id,share_token').eq('order_id', order.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
         const receipt = data as { id: UUID; share_token: string | null } | null;
         if (!receipt) {
@@ -554,7 +558,7 @@ export function OrderDetailPage() {
     setSavingNote(true);
     try {
       const stamped = `[${new Date().toLocaleString('en-ZM')}] ${note.trim()}`;
-      const { error: e } = await supabase.from('orders')
+      const { error: e } = await db.from('orders')
         .update({ notes: order.notes ? `${order.notes}\n${stamped}` : stamped })
         .eq('id', order.id);
       if (e) throw e;

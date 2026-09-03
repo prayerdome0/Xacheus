@@ -9,7 +9,8 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
 import { useToast } from '@/context/ToastContext';
-import { supabase } from '@/lib/supabase';
+import { db, fetchList, addRow, patchRow, nowIso, newId } from '@/lib/db';
+import { notifyBusinessMembers } from '@/lib/notifications';
 import { formatMoney, toNum } from '@/lib/currency';
 import { formatDate, relativeTime } from '@/lib/dates';
 import { discountPercent, productImage, reviewSummary } from '@/lib/format';
@@ -54,7 +55,7 @@ export default function ProductDetailPage() {
     setError(null);
     try {
       const isUuid = /^[0-9a-f-]{36}$/i.test(slug);
-      let q = supabase
+      let q = db
         .from('products')
         .select(`*, business:businesses(*), category:categories(id,name,slug,path,icon),
                  variants:product_variants(*)`)
@@ -64,18 +65,24 @@ export default function ProductDetailPage() {
       const { data, error: fetchError } = await q.maybeSingle();
       if (fetchError) throw fetchError;
       if (!data) { setNotFound(true); setProduct(null); return; }
-      const p = data as Product;
+      const p = data as unknown as Product;
       setProduct(p);
       setNotFound(false);
 
       // A view is real signal for sellers: count it, but only once per session.
+      // Anonymous visitors may write the daily stats row (rules verify the
+      // product is published); the product's own view_count field is reserved
+      // for business-side tools because Firestore rules cannot allow anonymous
+      // document updates safely.
       const seen = window.sessionStorage.getItem(`viewed:${p.id}`);
       if (!seen) {
         window.sessionStorage.setItem(`viewed:${p.id}`, '1');
-        void supabase.from('products').update({ view_count: toNum(p.view_count) + 1 }).eq('id', p.id);
-        void supabase.from('product_stats').upsert({
+        void db.from('product_stats').upsert({
+          id: `${p.id}_${new Date().toISOString().slice(0, 10)}`,
           product_id: p.id, date: new Date().toISOString().slice(0, 10), views: 1,
-        }, { onConflict: 'product_id,date' }).then(() => {});
+          business_id: p.business_id,
+          created_at: nowIso(), updated_at: nowIso(),
+        }, { onConflict: 'id' }).then(() => {});
       }
 
       const first = (p.variants ?? []).find((v) => v.is_active !== false) ?? null;
@@ -92,7 +99,7 @@ export default function ProductDetailPage() {
 
   const reviews = useQuery<Review>(
     () => product
-      ? supabase.from('reviews')
+      ? db.from('reviews')
           .select('*, profile:profiles(id,display_name,full_name,avatar_url)')
           .eq('product_id', product.id).eq('status', 'published')
           .order('is_verified_purchase', { ascending: false })
@@ -104,7 +111,7 @@ export default function ProductDetailPage() {
 
   const related = useQuery<Product>(
     () => product
-      ? supabase.from('products')
+      ? db.from('products')
           .select('*, business:businesses(id,name,slug,logo_url,city,country_code,verification_status,rating_avg,badges), category:categories(id,name,slug,path,icon)')
           .eq('is_published', true).is('deleted_at', null).neq('id', product.id)
           .eq('category_id', product.category_id)
@@ -116,7 +123,7 @@ export default function ProductDetailPage() {
 
   const wishlistedNow = useQuery<{ id: UUID }>(
     () => user && product
-      ? supabase.from('wishlist_items').select('id').eq('user_id', user.id).eq('product_id', product.id)
+      ? db.from('wishlist_items').select('id').eq('user_id', user.id).eq('product_id', product.id)
       : null,
     [user?.id, product?.id],
   );
@@ -164,11 +171,11 @@ export default function ProductDetailPage() {
     if (!user) { navigate(`/auth/signin?next=${encodeURIComponent(`/product/${slug}`)}`); return; }
     if (!product) return;
     if (wishlisted) {
-      await supabase.from('wishlist_items').delete().eq('user_id', user.id).eq('product_id', product.id);
+      await db.from('wishlist_items').delete().eq('user_id', user.id).eq('product_id', product.id);
       setWishlisted(false);
       success('Removed from wishlist', product.name);
     } else {
-      const { error: e } = await supabase.from('wishlist_items').insert({
+      const { error: e } = await db.from('wishlist_items').insert({
         user_id: user.id, product_id: product.id, business_id: product.business_id,
       });
       if (e) { toastError('Could not save', e.message); return; }
@@ -733,15 +740,14 @@ function ReviewModal({ open, onClose, product, onSubmitted }: {
     if (!open || !user) { setVerified(false); return; }
     let alive = true;
     (async () => {
-      const { data: orders } = await supabase
-        .from('orders').select('id').eq('buyer_user_id', user.id);
-      const ids = (orders ?? []).map((o: { id: UUID }) => o.id);
-      if (ids.length === 0) { if (alive) setVerified(false); return; }
-      const { count } = await supabase.from('order_items')
-        .select('id', { count: 'exact', head: true })
-        .eq('product_id', product.id)
-        .in('order_id', ids);
-      if (alive) setVerified((count ?? 0) > 0);
+      const orders = await fetchList<{ id: string; status: string; items?: { product_id?: string | null }[] }>('orders', {
+        where: [['buyer_user_id', '==', user.id] as never], limit: 100,
+      }).catch(() => []);
+      if (!alive) return;
+      const bought = orders.some(
+        (o) => o.status !== 'cancelled' && (o.items ?? []).some((l) => l.product_id === product.id),
+      );
+      setVerified(bought);
     })();
     return () => { alive = false; };
   }, [open, user, product.id]);
@@ -750,26 +756,57 @@ function ReviewModal({ open, onClose, product, onSubmitted }: {
     if (!user) { onClose(); navigate(`/auth/signin?next=/product/${product.slug}`); return; }
     if (!comment.trim()) { toastError('Add a few words', 'Tell other buyers what you think.'); return; }
     setBusy(true);
-    const { error: e } = await supabase.from('reviews').insert({
-      business_id: product.business_id,
-      product_id: product.id,
-      reviewer_id: user.id,
-      reviewer_name: user.user_metadata?.display_name
-        ?? user.user_metadata?.full_name
-        ?? user.email?.split('@')[0]
-        ?? 'Seedwel shopper',
-      target_type: 'product',
-      rating,
-      title: title.trim() || null,
-      body: comment.trim(),
-      is_verified_purchase: verified,
-      status: 'published',
-    });
-    setBusy(false);
-    if (e) { toastError('Could not save your review', e.message); return; }
-    success('Thank you for your review', 'It is now visible on the product page.');
-    setRating(5); setTitle(''); setComment('');
-    onSubmitted();
+    const reviewerName = user.user_metadata?.display_name
+      ?? user.user_metadata?.full_name
+      ?? user.email?.split('@')[0]
+      ?? 'Seedwel shopper';
+    try {
+      const id = newId();
+      await addRow<{ id: string }>('reviews', {
+        business_id: product.business_id,
+        product_id: product.id,
+        reviewer_id: user.id,
+        reviewer_name: reviewerName,
+        profile: {
+          id: user.id,
+          avatar_url: user.photoURL ?? null,
+          display_name: reviewerName,
+          full_name: user.user_metadata?.full_name ?? reviewerName,
+        },
+        target_type: 'product',
+        rating,
+        title: title.trim() || null,
+        body: comment.trim(),
+        is_verified_purchase: verified,
+        status: 'published',
+        created_at: nowIso(),
+        updated_at: nowIso(),
+      } as never, id);
+      // Keep the product's rolling rating truthful.
+      const all = await fetchList<{ rating: number | string }>('reviews', {
+        where: [['product_id', '==', product.id] as never, ['status', '==', 'published'] as never], limit: 300,
+      }).catch(() => []);
+      const avg = all.length
+        ? Math.round((all.reduce((sum, r) => sum + Number(r.rating ?? 0), 0) / all.length) * 10) / 10
+        : Number(rating);
+      await patchRow('products', product.id, { rating_avg: avg, rating_count: all.length, updated_at: nowIso() }).catch(() => undefined);
+      void notifyBusinessMembers(product.business_id, {
+        type: 'review',
+        title: `New ${rating}-star review`,
+        body: comment.trim().slice(0, 140),
+        icon: 'star',
+        action_url: '/business/products/' + product.id + '/detail',
+        entity_type: 'product',
+        entity_id: product.id,
+      });
+      success('Thank you for your review', 'It is now visible on the product page.');
+      setRating(5); setTitle(''); setComment('');
+      onSubmitted();
+    } catch (err) {
+      toastError('Could not save your review', err instanceof Error ? err.message : undefined);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

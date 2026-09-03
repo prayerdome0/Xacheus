@@ -5,7 +5,7 @@ import { MoneyInput, StatusBadge } from '@/components/ui';
 import { PageHeader } from '@/components/layout/BusinessShell';
 import { useBusiness } from '@/context/BusinessContext';
 import { useToast } from '@/context/ToastContext';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import { createReceipt } from '@/lib/api';
 import { buildReceiptPdf, savePdf } from '@/lib/pdf';
 import { formatMoney, toNum } from '@/lib/currency';
@@ -38,7 +38,7 @@ export default function ReceiptsModule() {
     setError(null);
     setRows(null);
     try {
-      const { data, error: err } = await supabase
+      const { data, error: err } = await db
         .from('receipts')
         .select('*')
         .eq('business_id', activeBusiness.id)

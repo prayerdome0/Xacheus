@@ -17,21 +17,20 @@ codebase is reused except the brand artwork in `assets/`.
 
 It is not a demo and it has no fake data. There are no mock JSON files, no
 hard-coded product lists and no `setTimeout` pretending to be an API. Every
-number on screen comes from a real database — Firestore for Phase 1 identity,
-and the legacy Supabase/Postgres layer for modules that have not migrated yet.
-Every screen that is not finished says so out loud instead of rendering an
-empty state that looks like "no records yet".
+number on screen comes from a real database — Cloud Firestore, through the
+single data layer in `src/lib/db.ts`. Empty collections render
+"No items available yet", and every unfinished screen says so out loud
+instead of pretending otherwise.
 
 The database is the product. The screens are how you reach it.
 
 ---
 
-> **Migration status:** Seedwel Hub is being moved from Supabase to Firebase.
-> Phase 1 (this branch) replaces authentication and user profiles with Firebase
-> Auth + Cloud Firestore and ships the deny-by-default Firestore/Storage rules.
-> Marketplace, business, orders, documents etc. still use the legacy Supabase
-> data layer until Phase 2+ has migrated each module. See
-> [`docs/FIREBASE_MIGRATION.md`](docs/FIREBASE_MIGRATION.md) for the plan.
+> **Backend:** every module runs on Firebase — Authentication, Cloud Firestore
+> (deny-by-default rules in `firebase/firestore.rules`), Cloud Messaging push —
+> with Cloudinary for media. The previous Supabase backend has been removed
+> from the application entirely; the story of the move is recorded in
+> [`docs/FIREBASE_MIGRATION.md`](docs/FIREBASE_MIGRATION.md).
 
 ---
 
@@ -41,8 +40,9 @@ The database is the product. The screens are how you reach it.
 | --- | --- |
 | Auth | Firebase Authentication (Email/Password, verification, reset) |
 | Identity | Cloud Firestore `users/{uid}` + `firebase/firestore.rules` + custom admin claims |
-| Media phase 2 | Cloudinary (public upload preset in the browser; secret only in Cloud Functions) |
-| Marketplace/business data | Legacy Supabase data layer (Postgres + RLS) — being migrated to Firestore |
+| Media | Cloudinary (public upload preset in the browser; secret only in Cloud Functions) |
+| Database | Cloud Firestore through the central `src/lib/db.ts` layer; related rows are embedded as snapshots on the document at write time |
+| Push | Firebase Cloud Messaging — web push via the service worker, one token document per device in `push_tokens` |
 | Frontend | React 18 + Vite 5 + TypeScript (strict) |
 | Routing | react-router-dom 6, every route lazy-loaded |
 | Styling | Tailwind CSS v4 (`@theme`, `sh-*` component classes, phone-first) |
@@ -75,9 +75,12 @@ The rules live in `firebase/firestore.rules` and `firebase/storage.rules`.
 Admin access must use a **custom claim** (`admin: true`) set by an Admin SDK /
 Cloud Function — never a browser-writable field.
 
-> The old `supabase/sql/` files remain only as the transitional schema for the
-> not-yet-migrated marketplace/business modules. Do not run them in a project
-> that has been replaced; they are being removed module-by-module.
+The rules deny by default: anonymous visitors can only read published
+catalogue rows and pay or verify shared documents; everything else requires
+the owning user or an active membership of the owning business. Platform admin
+is the `admin: true` custom claim — no client-writable field ever grants
+access. `firebase/firestore.indexes.json` declares the composite indexes the
+screens query.
 
 ### 2. Configure the client
 
@@ -123,10 +126,12 @@ npm run build    # tsc -b && vite build → dist/
 
 ### Accounts and roles
 - Email + password sign-up and sign-in, email confirmation, password reset,
-  session restore, sign-out.
+  session restore with an explicit auth-loading state, sign-out.
 - One person can hold many roles at once: `buyer`, `seller`, `business`,
   `employee`, `supplier`, `service_provider`, `admin`.
 - **Shop / My Business mode toggle** — the whole interface changes around it.
+  The admin tab appears on the profile only for a user holding the platform
+  admin claim (never from a doc field).
 - Account centre: profile and avatar, orders with live status, wishlist,
   addresses, my reviews, messages, notifications, security settings, and the
   data-privacy controls (export my data, delete my account) which write real
@@ -137,10 +142,11 @@ npm run build    # tsc -b && vite build → dist/
 ### The marketplace (buyer side)
 - Homepage with categories, trending searches, best sellers, featured and
   verified businesses, deals, nearby.
-- **Search that understands a sentence**: `search_products()` combines
-  full-text, trigram similarity, SKU/barcode exact match and parsed filters, so
-  "black shoes under 500" filters on colour and price. Sort by relevance, price,
-  rating, newest, discount.
+- **Search over the real catalogue**: queries Firestore for published
+  products, services and businesses, and narrows client-side — SKU and barcode
+  hits match exactly, free text is a case-insensitive substring match, so
+  "black shoes under 500" filters on colour and price. Sort by price, rating,
+  newest, discount.
 - Filters: category, price range, rating, business, city, in stock, on sale,
   wholesale, delivery, verified, attributes.
 - Product page: gallery, variants, wholesale tiers and minimum order quantity,
@@ -151,21 +157,21 @@ npm run build    # tsc -b && vite build → dist/
   `/businesses`, `/nearby` (haversine over the stored location) and
   `/wholesale`.
 - Cart across multiple sellers, grouped and totalled per business, with coupon
-  validation and delivery fees, then checkout → `create_order()`, which
-  re-reads live prices server-side, deducts stock, applies
-  `free_delivery_over`, and writes the status history.
+  validation and delivery fees, then checkout, which writes the Firestore
+  order with its embedded business/product snapshots, deducts tracked stock
+  through a matching `inventory_movements` audit row, applies
+  `free_delivery_over`, and records the status history.
 
 ### The business workspace (seller side)
-- **Onboarding wizard** (`/business/setup`) → `create_business()` creates the
-  business, the owner membership, a head-office branch, a main warehouse, an
-  online store, default expense categories, document number prefixes and the
-  base currency — in one transaction. A separate "Become a seller" flow registers
-  an existing buyer account as a seller.
+- **Onboarding wizard** (`/business/setup`) creates the business document,
+  the owner membership (a deterministic `business_members/{businessId}__{uid}`
+  row), a head-office branch, a main warehouse and a starter subscription in
+  one setup run. A separate "Become a seller" flow registers an existing buyer
+  account as a seller.
 - **Dashboard**: today / period revenue, orders, profit, cost of goods,
   receivables, overdue invoices, stock value, low-stock and out-of-stock counts,
   revenue-split and orders charts, top products, top customers, a task list
-  generated from real overdue invoices and low stock, and the growth score from
-  `compute_growth_score()`.
+  generated from real overdue invoices and low stock, and the growth score.
 - **Products**: list with search and filters, create and edit with images,
   variants, SKU, barcode (generated if you do not have one), cost price, tax,
   units, wholesale price and MOQ, per-product stock adjustment with a reason,
@@ -174,9 +180,9 @@ npm run build    # tsc -b && vite build → dist/
 - **Orders**: filter by status, channel, payment state and date range; detail
   view with items, timeline from `status_history`, payments and documents;
   status transitions that follow the real flow and refuse impossible ones
-  (cancelling a paid order is blocked in the database and restocks correctly
-  when it is allowed); assign delivery; record a payment; create an invoice from
-  the order; start a return; share the invoice or receipt.
+  (cancelling a paid order is refused; allowed cancellations and returns
+  restock through the order flow); assign delivery; record a payment; create
+  an invoice from the order; start a return; share the invoice or receipt.
 - **POS** (`/business/pos`): scan or search, add by barcode, custom item,
   per-line discount, whole-sale discount, customer picker that searches or
   creates a customer, split tenders across cash / mobile money / card / bank
@@ -198,76 +204,75 @@ have one:
   timestamped and the seller sees it immediately.
 - `/pay/<code>` — a payment page showing the amount, the seller's mobile-money
   numbers and bank account. The payer declares the payment; it lands in
-  `payment_link_submissions`; the seller confirms it, and only then
-  `record_payment()` writes the payment, updates the invoice and generates the
-  receipt. **Nothing is marked as received from the public internet.**
+  `payment_submissions`; the seller confirms it, and only then the app writes
+  the payment, updates the invoice and generates the receipt. **Nothing is
+  marked as received from the public internet.**
 - `/verify/<kind>/<token>` — the QR code on every printed document resolves
   here and proves it is genuine.
 
 ### Security model
-- **Row Level Security on every table**, with `SECURITY DEFINER` helper
-  functions that are `STABLE` and have a pinned `search_path`.
-- `can(business_id, 'permission')` → `member_permissions()` →
-  `role_permissions()`. Eight member roles with granular permissions; a
-  **cashier can sell but cannot read costs, expenses or profits** — that rule is
-  in the database, so it holds even if someone calls the API directly.
-- Financial and destructive AI actions require explicit owner approval
-  (`OWNER_APPROVAL_ACTIONS` in `src/lib/permissions.ts`, enforced by
-  `requiresOwnerApproval()` and by the `ai_actions` approval gate).
-- `audit_logs` records who did what, when, with changes and metadata.
-- Sharing is token-gated: a share token can be revoked and expires, and
-  `get_shared_document` returns only the fields a customer should see.
+- **Deny-by-default Firestore rules** (`firebase/firestore.rules`): every
+  collection is granted only what the real screens need — there is no broad
+  "authenticated can read" rule — and rules deploy with the app.
+- Platform admin is the **`admin: true` custom claim** on the Auth token, set
+  by an Admin SDK / Cloud Function. Role fields on `users/{uid}` are not
+  user-writable; registration always creates a normal buyer and no
+  `is_platform_admin`-style field on a document ever grants access.
+- Business access is membership-based: `business_members/{businessId}__{uid}`
+  carries the role (`owner`, `administrator`, `manager`, `staff`, …) and
+  status, and the deterministic id is checked inside the rules. Only active
+  members of the owning business can read or write its products, orders,
+  customers, invoices and stock. Granular role permissions gate the UI through
+  `src/lib/permissions.ts` (`can()`).
+- Buyers own their profile, addresses, wishlist, cart, conversations, messages
+  and notifications. Sellers may only notify users who belong to a linked
+  order or conversation — notification rules check the link.
+- Sharing is token-gated: creating a share stamps `share_token` and
+  `share_expires_at` on the document itself, and rules make exactly those
+  documents readable anonymously until they expire. Printed documents carry QR
+  codes that resolve to `/verify`.
+- Money: order lines are snapshots of what the buyer's client sent, and
+  identity/ownership are enforced strictly by rules. Server-side validation of
+  prices (a Cloud Function) is the remaining piece, tracked in
+  [`docs/FIREBASE_MIGRATION.md`](docs/FIREBASE_MIGRATION.md).
+- Order status changes and stock movements each leave a `status_history` /
+  `inventory_movements` trail in Firestore, and destructive AI actions require
+  explicit owner approval (`OWNER_APPROVAL_ACTIONS` in `src/lib/permissions.ts`).
 
----
+## What is built, and what honestly says "in progress"
 
-## What is scaffolded but has no screen yet
+Screens fully wired to Firestore today: the marketplace (Home, Search,
+Products, Product detail, Stores, Businesses, Services, Cart & checkout,
+Messages, Groups, Orders & tracking, Profile, Notifications with push) and the
+business workspace — Dashboard, Setup / Become a seller, Products (editor,
+variants, stock adjustments), Orders (list, detail, return), POS with customer
+display, Invoices, Quotations, Receipts and Payments.
 
-The database side of these is **applied and working**; only the interface is
-missing. Each route renders a "In progress" screen that lists exactly what will
-land there and links to what already covers part of the need — see
-`src/routes/business/ComingSoon.tsx`.
+Modules without their own screen yet render an "In progress" page
+(`src/routes/business/ComingSoon.tsx`) that lists exactly what will land there
+and links to the flows that already cover part of the need: payment links,
+returns, customers (CRM), stock & warehouses, CSV import, barcodes & labels,
+suppliers & purchases, expenses, finance & statements, reports, staff & roles,
+store settings & categories, services, marketing, audit log and the AI
+assistant.
 
-| Module | Already in the database |
-| --- | --- |
-| Invoices | `create_invoice`, `void_invoice`, numbering, credit/debit notes, reminders, `documents` mirror |
-| Quotations | `create_quotation`, pro-forma kind, `respond_to_quotation`, `convert_quotation_to_invoice` |
-| Receipts | `create_receipt`, thermal and A4 PDFs, verify tokens |
-| Payments | `record_payment` with direction, overpay rules, refunds, reconciliation |
-| Payment links | `create_payment_link` (callable from the console; the creation screen is not built) |
-| Returns & refunds | `create_return`, `process_return` with restock and automatic credit note |
-| Customers (CRM) | `upsert_customer`, statements, credit limits, groups, loyalty |
-| Inventory | `adjust_stock`, `transfer_stock`, warehouses, movements, stocktakes, valuation |
-| CSV import & sync | `import_csv_rows`, `sync_csv_source`, `due_csv_sources`, saved column mappings |
-| Suppliers & purchases | suppliers, purchase orders, goods received, bills |
-| Expenses | expense categories (seeded per business), approvals, receipts |
-| Reports | 19 report templates seeded; `sales_series`, `top_products`, `top_customers`, `low_stock_alerts`, `overdue_invoices` already power the dashboard |
-| Staff & roles | memberships, invites, the eight roles and their permissions |
-| Settings | profile, branding, taxes, currencies, rates, numbering prefixes, branches |
-| Marketing | coupons (`validate_coupon` already runs at checkout), flash sales, campaigns, AI content |
-| Messages | conversations, messages, WhatsApp hand-off |
-| Ask Seedwel AI | `propose_ai_action`, `ai_action_impact`, `resolve_ai_action` with owner approval |
-| Growth | `compute_growth_score` (the dashboard already shows the score) |
-| Documents | contracts, delivery notes, statements, digital signatures with audit trail |
-| Services | `services` table: fixed, hourly, daily, per-job or quote pricing |
-| Subscriptions | Free / Starter (K150) / Business (K450) / Professional (K1,200) / Enterprise, with limits |
-| Ads, help centre, academy, API | tables seeded, no screens |
-
-Phases 4–7 of the roadmap (advanced automation, AI, scale) are scaffolded in the
-schema and deliberately not wired to a UI yet.
-
----
+The authoritative map of collections — and of who may read or write each — is
+`firebase/firestore.rules`; the composite indexes the screens query are in
+`firebase/firestore.indexes.json`.
 
 ## Repository layout
 
 ```
-supabase/sql/          12 ordered migrations — apply these first
+firebase/              firestore.rules, firestore.indexes.json, storage.rules
 src/
   main.tsx             entry: StrictMode + BrowserRouter + App
   App.tsx              providers, every route, error boundary
   index.css            Tailwind v4 theme + sh-* design system
-  lib/                 supabase client, api (RPC wrappers), types live in src/types
-    currency dates calc barcode pdf csv share slug permissions format constants env
-  types/index.ts       domain types mirroring the Postgres schema
+  lib/                 firebase.ts (init), db.ts (the Firestore data layer),
+                       api.ts (domain services), messaging.ts, groups.ts,
+                       notifications.ts, push.ts, media.ts, plus currency dates
+                       calc barcode pdf csv share slug permissions format constants env
+  types/index.ts       domain types matching the Firestore documents
   context/             Mode, Toast, Auth, Business, Cart
   hooks/               useQuery, useBusinessQuery, useUi, useCategories, useNotifications
   components/
@@ -279,7 +284,8 @@ src/
     public/            Landing, Search, ProductDetail, StorePage, Cart + Checkout
     auth/              AuthGate, AuthPages
     account/           Account layout and its nine screens
-    business/          Setup, Dashboard, Products, Orders, Pos, ComingSoon
+    business/          Setup, Dashboard, Products, Orders, Pos, Invoices,
+                       Quotations, Receipts, Payments, ComingSoon
     shared/SharedDoc.tsx  /d/:kind/:token, /pay/:code, /verify/:kind/:token
 public/brand/          logos, icons, manifest, service worker
 assets/                original artwork (the 12 MB master logo is gitignored)
@@ -289,8 +295,9 @@ assets/                original artwork (the 12 MB master logo is gitignored)
 - **Never invent data.** If a query fails, show the error. If a module is not
   built, say it is not built.
 - Money: `toNum()` before any arithmetic; `formatMoney()` before any display.
-- RPC errors arrive as `"exception: <message>"`. `RpcError.reason` strips the
-  prefix; `isPermission()` and `isNotFound()` branch the UX.
+- Firestore errors are wrapped by the data layer into friendly messages
+  (`friendlyFirestoreError`); screens branch on `isPermissionError()` and
+  `isNotFound()` — users never see raw SDK errors or stack traces.
 - Icons are a fixed `IconName` union in `src/components/ui/Icon.tsx` — there is
   no `monitor` and no `percent`.
 - Tailwind v4 resolves `@apply` against *utilities only*: you cannot
@@ -304,10 +311,10 @@ assets/                original artwork (the 12 MB master logo is gitignored)
 
 ## Multi-country by design, Zambia first
 
-ZMW, `+260` and VAT at 16% are seeded defaults, not constants. `countries`,
-`currencies` (with configurable `exchange_rate`) and `taxes` are tables; a
-business chooses its `base_currency`, its taxes and its number prefixes; and
-`format_money()` renders any of them. Launching in Botswana or Malawi is a data
+ZMW, `+260` and VAT at 16% are seeded defaults, not constants. Registration
+captures the buyer's country, currency, language and time zone; a business
+chooses its base currency, taxes and document number prefixes; and
+`formatMoney()` renders any of them. Launching in Botswana or Malawi is a data
 change, not a code change.
 
 ---
@@ -316,12 +323,12 @@ change, not a code change.
 
 | Phase | Scope | Status |
 | --- | --- | --- |
-| 1 — Foundation | schema, auth, roles, businesses, stores, products, search, cart, checkout, orders | **working** |
-| 2 — Selling | POS, receipts, customers, quotations, invoices, payments, returns | **working at the counter and from an order**; standalone module screens pending |
-| 3 — Business management | inventory, suppliers, purchases, expenses, dashboard, reports, staff | **dashboard working**; module screens pending |
-| 4 — Advanced | marketing, messaging, subscriptions, ads, multi-branch | schema ready |
-| 5 — Automation | CSV sync, recurring invoices, approval workflows | schema ready |
-| 6 — AI | assistant, content generator, insights, monthly report | schema ready, approval gate designed |
+| 1 — Foundation | Firebase backend, auth & roles, businesses, stores, products, search, cart, checkout, orders, messages, notifications | **working** |
+| 2 — Selling | POS, receipts, quotations, invoices, payments | **working** |
+| 3 — Business management | inventory, suppliers, purchases, expenses, dashboard, reports, staff | **dashboard and stock adjustments working**; module screens pending |
+| 4 — Advanced | returns & customers CRM, marketing, subscriptions, multi-branch | data model + rules ready; screens pending |
+| 5 — Automation | CSV sync, recurring invoices, approval workflows | data model ready |
+| 6 — AI | assistant, content generator, insights, monthly report | approval gate designed; screens pending |
 | 7 — Scale | API, help centre, academy, mobile apps | not started |
 
 ---

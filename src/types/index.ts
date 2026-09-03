@@ -1,9 +1,10 @@
 /**
  * Domain types for Seedwel Hub.
  *
- * These mirror the Postgres schema in supabase/sql/*.sql. Numeric columns come
- * back from PostgREST as strings when declared `numeric`, so money fields are
- * typed `number | string` and always passed through `toNum()` before maths.
+ * Firestore documents keep the same snake_case field names the UI has always
+ * used, so these types double as the document shape. Money values are typed
+ * `number | string` (legacy rows may carry strings) and always pass through
+ * `toNum()` before maths.
  */
 
 export type UUID = string;
@@ -1586,7 +1587,7 @@ export interface CartLine extends DraftLine {
   tax_rate: number;
 }
 
-/* ── Community groups (supabase: groups / group_members / group_messages) ── */
+/* ── Community groups (Firestore: groups / group_members / group_messages) ── */
 
 export interface Group {
   id: UUID;
